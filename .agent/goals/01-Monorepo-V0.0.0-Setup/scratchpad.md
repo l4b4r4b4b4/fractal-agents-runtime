@@ -176,7 +176,7 @@ feature branch ──push──► Feature image build (sha tag)
   - Publishes to npm via `bun publish`
 - **Depends on:** Task-07, Task-08
 
-### Task-10: Branch Protection & Initial Release
+### Task-10: Initial Commit, Push & Branch Setup [L179-189]
 - Create `development` branch from `main`
 - Configure branch protection rules on GitHub (development + main)
 - Create GitHub rulesets (or use branch protection API)
@@ -197,16 +197,18 @@ feature branch ──push──► Feature image build (sha tag)
 - [x] Root `package.json` scripts delegate correctly to both apps
 - [x] `lefthook run pre-commit` succeeds
 - [x] `lefthook run pre-push` succeeds
-- [ ] Both Docker images build locally (Dockerfiles created, not tested locally yet)
-- [ ] CI workflow runs on PR and blocks merge on failure (workflow written, needs first push)
-- [ ] Feature branch push triggers image build with `sha-` tag (workflow written, needs first push)
-- [ ] Merge to `development` triggers development image build (workflow written, needs branch)
-- [ ] Merge to `main` triggers release image + library publish (workflow written, needs tag)
+- [x] Both Docker images build in CI (Python passed on initial push, TS passed after Dockerfile fix in PR #1)
+- [x] CI workflow runs on PR and blocks merge on failure (validated: PR #1 required CI Success before merge)
+- [x] Feature branch push triggers image build with `sha-` tag (validated: fix/ts-dockerfile-bun-version built images)
+- [x] Merge to `development` triggers development image build (validated: squash-merge of PR #1 triggered builds)
+- [ ] Merge to `main` triggers release image + library publish (workflow written, needs tag — deferred to Goal 02/03)
 - [x] `apps/python/openapi-spec.json` committed and served at runtime
 - [x] `apps/ts/openapi-spec.json` committed and served at runtime
-- [ ] `python-v0.0.0` tag exists and triggered PyPI publish
-- [ ] `ts-v0.0.0` tag exists and triggered npm publish
-- [ ] Branch protection active on `development` and `main` (rulesets written, needs applying)
+- [ ] `python-v0.0.0` tag exists and triggered PyPI publish (deferred to Goal 02)
+- [ ] `ts-v0.0.0` tag exists and triggered npm publish (deferred to Goal 03)
+- [x] Branch protection active on `development` and `main` (rulesets applied via `gh api`, IDs 12713513 + 12713518)
+- [x] Full branch protection flow validated: feature branch → PR → CI gate → squash merge → development
+- [x] SBOM + provenance attestation attached to GHCR images (`sbom: true`, `provenance: true`)
 
 ---
 
@@ -331,16 +333,37 @@ feature branch ──push──► Feature image build (sha tag)
 - OpenAPI specs are both generated artifacts AND source-controlled (belt and suspenders)
 - Rulesets require 0 approvals (solo dev) but enforce squash merge + CI Success
 
-### Next Session — Task-10: Initial Commit, Push & Branch Setup
+### 2026-02-11 — Session 3 (Task-10: Initial Commit, Push & Branch Setup)
 
-**Plan:**
-1. `git add -A && git commit` — initial monorepo commit
-2. `git push origin main`
-3. `git checkout -b development && git push origin development`
-4. Apply rulesets on GitHub (via API or UI)
-5. Verify CI runs on push
-6. Test feature branch → PR → merge flow
-7. Update scratchpad success criteria for pipeline validation items
+**Pre-commit cleanup:**
+- [x] Removed 8 completed/superseded old goal directories (01-Repo-Scaffolding, 02-Remove-LangSmith, 03-Add-Langfuse-Tracing, 05-LLM-Integration, 07-Bun-TypeScript-Runtime, 08-CI-CD-Feature-Parity, 11-Create-Agent-Migration, 17-Fractal-Agents-Runtime-Monorepo)
+- [x] Cleaned `.agent/tmp/misc/` staging files (old CHANGELOG, .devops, .github reference files)
+- [x] Fixed root `.gitignore` — added `node_modules/`, `.zed/`, build artifacts, coverage dirs (43MB of vendor code was about to be committed)
+
+**Task-10 — Initial Commit & Branch Setup (completed):**
+- [x] Added remote `origin` → `git@github.com:l4b4r4b4b4/fractal-agents-runtime.git`
+- [x] `git add -A && git commit` — 176 files, ~50K lines. All 4 pre-commit hooks passed (lint, openapi gen ×2, tsc)
+- [x] `git push -u origin main` — all 6 pre-push hooks passed (550 Python tests + 10 TS tests + lint + openapi validate + tsc)
+- [x] `git checkout -b development && git push -u origin development` — all hooks passed again
+- [x] Applied both rulesets via `gh api` — `main-branch-protection` (ID 12713513) + `development-branch-protection` (ID 12713518)
+- [x] CI workflows triggered on push — `CI` passed on both `main` and `development` branches
+- [x] Python image build passed on `main`, TS image build failed (`adduser` not found in `bun:1-slim`)
+
+**PR #1 — Dockerfile fix + SBOM (completed):**
+- [x] Created feature branch `fix/ts-dockerfile-bun-version`
+- [x] Fixed TS Dockerfile: pinned `oven/bun:1.3.8` (matches local dev), replaced `adduser` with manual `/etc/passwd` entry for slim images
+- [x] Added `sbom: true` + `provenance: true` to both image workflows — CycloneDX SBOM + SLSA provenance attached to GHCR images automatically
+- [x] Created PR #1 → `development`, all 12 CI checks passed (including both image builds)
+- [x] Squash-merged PR #1, cleaned up feature branch
+- [x] **Full branch protection flow validated:** feature branch → PR → CI gate → squash merge → development
+
+**Bill of Software (BoS) decision:**
+- Dependency-level BoS = lockfiles (`uv.lock` for Python, `bun.lock` for TS) — already committed and version-controlled
+- Image-level BoS = BuildKit SBOM + provenance attestation attached to GHCR images (`sbom: true`, `provenance: true`)
+- No additional SBOM generation hooks needed — lockfiles cover deps, BuildKit covers base images + system packages
+
+**Deferred to Goal 02/03:**
+- [ ] Tag `python-v0.0.0` and `ts-v0.0.0` releases (release workflow ready but awaiting runtime maturity)
 
 ---
 
