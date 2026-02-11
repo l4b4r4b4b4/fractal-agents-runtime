@@ -60,6 +60,8 @@ jobs:
           file: apps/python/Dockerfile
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          sbom: true
+          provenance: true
           cache-from: type=gha,scope=python
           cache-to: type=gha,scope=python,mode=max
           labels: |
