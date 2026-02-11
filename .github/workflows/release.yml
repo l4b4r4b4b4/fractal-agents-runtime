@@ -1,0 +1,265 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "python-v*"
+      - "ts-v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # ── Determine what's being released ─────────────────────────────────
+  meta:
+    name: Release Meta
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.parse.outputs.app }}
+      version: ${{ steps.parse.outputs.version }}
+      python: ${{ steps.parse.outputs.python }}
+      ts: ${{ steps.parse.outputs.ts }}
+    steps:
+      - name: Parse tag
+        id: parse
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "tag=${TAG}"
+
+          if [[ "$TAG" == python-v* ]]; then
+            VERSION="${TAG#python-v}"
+            echo "app=python" >> "$GITHUB_OUTPUT"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "python=true" >> "$GITHUB_OUTPUT"
+            echo "ts=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == ts-v* ]]; then
+            VERSION="${TAG#ts-v}"
+            echo "app=ts" >> "$GITHUB_OUTPUT"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "python=false" >> "$GITHUB_OUTPUT"
+            echo "ts=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ Unknown tag format: ${TAG}"
+            exit 1
+          fi
+
+          echo "Releasing: app=${{ steps.parse.outputs.app || 'pending' }}, version=${VERSION}"
+
+  # ── Python: Verify, Build, Publish to PyPI ──────────────────────────
+  publish-python:
+    name: "Python / Publish to PyPI"
+    runs-on: ubuntu-latest
+    needs: meta
+    if: needs.meta.outputs.python == 'true'
+    defaults:
+      run:
+        working-directory: apps/python
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Verify version matches tag
+        run: |
+          TOML_VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          TAG_VERSION="${{ needs.meta.outputs.version }}"
+          if [[ "$TOML_VERSION" != "$TAG_VERSION" ]]; then
+            echo "❌ Version mismatch: pyproject.toml=${TOML_VERSION}, tag=${TAG_VERSION}"
+            exit 1
+          fi
+          echo "✅ Version verified: ${TAG_VERSION}"
+
+      - name: Sync dependencies
+        run: uv sync --quiet
+
+      - name: Run linting
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Run tests
+        run: uv run pytest -v --tb=short
+
+      - name: Validate OpenAPI spec
+        run: uv run python scripts/generate_openapi.py --validate
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: apps/python/dist/
+
+  # ── Python: Release Image ───────────────────────────────────────────
+  image-python:
+    name: "Python / Release Image"
+    runs-on: ubuntu-latest
+    needs: [meta, publish-python]
+    if: needs.meta.outputs.python == 'true'
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_NAME: ${{ github.repository }}-python
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/python
+          file: apps/python/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ needs.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          cache-from: type=gha,scope=python
+          cache-to: type=gha,scope=python,mode=max
+
+  # ── TypeScript: Verify, Build, Publish to npm ───────────────────────
+  publish-ts:
+    name: "TypeScript / Publish to npm"
+    runs-on: ubuntu-latest
+    needs: meta
+    if: needs.meta.outputs.ts == 'true'
+    defaults:
+      run:
+        working-directory: apps/ts
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Verify version matches tag
+        run: |
+          PKG_VERSION=$(jq -r '.version' package.json)
+          TAG_VERSION="${{ needs.meta.outputs.version }}"
+          if [[ "$PKG_VERSION" != "$TAG_VERSION" ]]; then
+            echo "❌ Version mismatch: package.json=${PKG_VERSION}, tag=${TAG_VERSION}"
+            exit 1
+          fi
+          echo "✅ Version verified: ${TAG_VERSION}"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type check
+        run: bunx tsc --noEmit
+
+      - name: Run tests
+        run: bun test
+
+      - name: Validate OpenAPI spec
+        run: bun run scripts/generate-openapi.ts --validate
+
+      - name: Build
+        run: bun run build
+
+      - name: Publish to npm
+        run: bun publish --access public
+        env:
+          BUN_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ── TypeScript: Release Image ───────────────────────────────────────
+  image-ts:
+    name: "TypeScript / Release Image"
+    runs-on: ubuntu-latest
+    needs: [meta, publish-ts]
+    if: needs.meta.outputs.ts == 'true'
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_NAME: ${{ github.repository }}-ts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/ts
+          file: apps/ts/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ needs.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          cache-from: type=gha,scope=ts
+          cache-to: type=gha,scope=ts,mode=max
+
+  # ── GitHub Release ──────────────────────────────────────────────────
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [meta, publish-python, image-python, publish-ts, image-ts]
+    if: always() && needs.meta.result == 'success'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check publish jobs
+        run: |
+          # At least one publish path must have succeeded
+          PY="${{ needs.publish-python.result }}"
+          TS="${{ needs.publish-ts.result }}"
+
+          if [[ "$PY" == "failure" || "$TS" == "failure" ]]; then
+            echo "❌ A publish job failed — skipping release"
+            exit 1
+          fi
+
+          echo "✅ Publish succeeded for ${{ needs.meta.outputs.app }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "${{ needs.meta.outputs.app }} v${{ needs.meta.outputs.version }}"
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(needs.meta.outputs.version, 'alpha') || contains(needs.meta.outputs.version, 'beta') || contains(needs.meta.outputs.version, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

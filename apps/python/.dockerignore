@@ -1,0 +1,60 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python bytecode & caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Build artifacts
+dist/
+build/
+
+# Tests (not needed in production image)
+src/robyn_server/tests/
+tests/
+
+# Helm charts (deployed separately)
+src/robyn_server/helm/
+
+# Documentation
+src/robyn_server/CAPABILITIES.md
+src/robyn_server/DEPLOYMENT.md
+src/robyn_server/README.md
+
+# Docker files (prevent recursive copy)
+Dockerfile
+Dockerfile.*
+docker-compose.yml
+.dockerignore
+
+# Dev & editor files
+.env
+.env.*
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Scripts (build-time only)
+scripts/
+
+# Static assets (not needed for API server)
+static/
+
+# OpenAPI spec (generated at runtime)
+openapi-spec.json
+
+# Agent & archive
+.agent/
+archive/
+
+# Node/Bun workspace artifacts
+package.json
+node_modules/

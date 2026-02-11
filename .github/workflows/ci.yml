@@ -1,0 +1,244 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [development, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Change Detection ──────────────────────────────────────────────────
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      ts: ${{ steps.filter.outputs.ts }}
+      root: ${{ steps.filter.outputs.root }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'apps/python/**'
+            ts:
+              - 'apps/ts/**'
+            root:
+              - 'package.json'
+              - 'lefthook.yml'
+              - '.github/workflows/ci.yml'
+
+  # ── Python: Lint ──────────────────────────────────────────────────────
+  lint-python:
+    name: "Python / Lint"
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.root == 'true'
+    defaults:
+      run:
+        working-directory: apps/python
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync dependencies
+        run: uv sync --quiet
+
+      - name: Ruff check
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+  # ── Python: Test ──────────────────────────────────────────────────────
+  test-python:
+    name: "Python / Test"
+    runs-on: ubuntu-latest
+    needs: [changes, lint-python]
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.root == 'true'
+    defaults:
+      run:
+        working-directory: apps/python
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync dependencies
+        run: uv sync --quiet
+
+      - name: Run pytest
+        run: uv run pytest -v --tb=short
+
+  # ── Python: OpenAPI Validation ────────────────────────────────────────
+  openapi-python:
+    name: "Python / OpenAPI Spec"
+    runs-on: ubuntu-latest
+    needs: [changes, lint-python]
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.root == 'true'
+    defaults:
+      run:
+        working-directory: apps/python
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync dependencies
+        run: uv sync --quiet
+
+      - name: Validate OpenAPI spec is current
+        run: uv run python scripts/generate_openapi.py --validate
+
+  # ── TypeScript: Lint ──────────────────────────────────────────────────
+  lint-ts:
+    name: "TypeScript / Lint"
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.ts == 'true' || needs.changes.outputs.root == 'true'
+    defaults:
+      run:
+        working-directory: apps/ts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type check
+        run: bunx tsc --noEmit
+
+  # ── TypeScript: Test ──────────────────────────────────────────────────
+  test-ts:
+    name: "TypeScript / Test"
+    runs-on: ubuntu-latest
+    needs: [changes, lint-ts]
+    if: needs.changes.outputs.ts == 'true' || needs.changes.outputs.root == 'true'
+    defaults:
+      run:
+        working-directory: apps/ts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run tests
+        run: bun test
+
+  # ── TypeScript: OpenAPI Validation ────────────────────────────────────
+  openapi-ts:
+    name: "TypeScript / OpenAPI Spec"
+    runs-on: ubuntu-latest
+    needs: [changes, lint-ts]
+    if: needs.changes.outputs.ts == 'true' || needs.changes.outputs.root == 'true'
+    defaults:
+      run:
+        working-directory: apps/ts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate OpenAPI spec is current
+        run: bun run scripts/generate-openapi.ts --validate
+
+  # ── Summary Gate ──────────────────────────────────────────────────────
+  # Branch protection should require this single job.
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - changes
+      - lint-python
+      - test-python
+      - openapi-python
+      - lint-ts
+      - test-ts
+      - openapi-ts
+    steps:
+      - name: Check all required jobs
+        run: |
+          echo "=== Job Results ==="
+          echo "changes:        ${{ needs.changes.result }}"
+          echo "lint-python:    ${{ needs.lint-python.result }}"
+          echo "test-python:    ${{ needs.test-python.result }}"
+          echo "openapi-python: ${{ needs.openapi-python.result }}"
+          echo "lint-ts:        ${{ needs.lint-ts.result }}"
+          echo "test-ts:        ${{ needs.test-ts.result }}"
+          echo "openapi-ts:     ${{ needs.openapi-ts.result }}"
+          echo ""
+
+          # changes must succeed
+          if [[ "${{ needs.changes.result }}" != "success" ]]; then
+            echo "❌ Change detection failed"; exit 1
+          fi
+
+          # Each job must be success or skipped (skipped = no changes for that app)
+          FAILED=0
+          for result_pair in \
+            "lint-python:${{ needs.lint-python.result }}" \
+            "test-python:${{ needs.test-python.result }}" \
+            "openapi-python:${{ needs.openapi-python.result }}" \
+            "lint-ts:${{ needs.lint-ts.result }}" \
+            "test-ts:${{ needs.test-ts.result }}" \
+            "openapi-ts:${{ needs.openapi-ts.result }}"; do
+            job="${result_pair%%:*}"
+            result="${result_pair#*:}"
+            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              echo "❌ $job: $result"
+              FAILED=1
+            fi
+          done
+
+          if [[ "$FAILED" == "1" ]]; then
+            exit 1
+          fi
+
+          echo ""
+          echo "✅ All CI checks passed!"

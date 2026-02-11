@@ -1,0 +1,13 @@
+{
+  "name": "@fractal/agents-runtime-python",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "uv run python -m robyn_server",
+    "test": "uv run pytest",
+    "lint": "uv run ruff check . && uv run ruff format --check .",
+    "format": "uv run ruff check --fix --unsafe-fixes . && uv run ruff format .",
+    "sync": "uv sync",
+    "build": "uv build"
+  }
+}

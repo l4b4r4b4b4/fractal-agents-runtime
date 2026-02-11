@@ -1,0 +1,95 @@
+🎉 Thank you for installing {{ .Chart.Name }}!
+
+Your release is named {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+📊 Release Information:
+  - Chart Version: {{ .Chart.Version }}
+  - App Version: {{ .Chart.AppVersion }}
+  - Replicas: {{ .Values.replicaCount }}
+  {{- if .Values.autoscaling.enabled }}
+  - Autoscaling: Enabled ({{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} replicas)
+  {{- end }}
+
+🔍 To check the status of your deployment:
+
+  kubectl get deployment {{ include "robyn-runtime.fullname" . }} -n {{ .Release.Namespace }}
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "robyn-runtime.name" . }}
+
+📋 To view application logs:
+
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "robyn-runtime.name" . }} -f
+
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+
+🌐 Your application is accessible at:
+
+  {{- if $.Values.ingress.tls }}
+  https://{{ .host }}
+  {{- else }}
+  http://{{ .host }}
+  {{- end }}
+{{- end }}
+{{- else }}
+
+🔌 To access your application locally:
+
+  export POD_NAME=$(kubectl get pods -n {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "robyn-runtime.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+  kubectl port-forward -n {{ .Release.Namespace }} $POD_NAME 8081:{{ .Values.config.port }}
+
+  Then visit: http://localhost:8081
+
+{{- end }}
+
+📊 Health Check Endpoints:
+  - /health     - Server health status
+  - /ok         - LangGraph health format
+  - /info       - Detailed service information
+  - /metrics    - Prometheus metrics
+
+{{- if .Values.serviceMonitor.enabled }}
+
+📈 Prometheus Metrics:
+  ServiceMonitor is enabled. Metrics will be scraped at /metrics
+
+{{- end }}
+
+{{- if not .Values.existingSecret.name }}
+{{- if not .Values.secrets.create }}
+
+⚠️  WARNING: No secrets configured!
+
+  You need to create a secret with Supabase and LLM API keys:
+
+  kubectl create secret generic robyn-runtime-secrets \
+    --from-literal=supabase-key='YOUR_SUPABASE_KEY' \
+    --from-literal=supabase-secret='YOUR_SUPABASE_SECRET' \
+    --from-literal=openai-api-key='YOUR_OPENAI_KEY' \
+    --namespace {{ .Release.Namespace }}
+
+  Then upgrade your release:
+
+  helm upgrade {{ .Release.Name }} oap/robyn-runtime \
+    --namespace {{ .Release.Namespace }} \
+    --set existingSecret.name=robyn-runtime-secrets
+
+{{- end }}
+{{- end }}
+
+📚 Documentation:
+  - Chart README: helm show readme oap/robyn-runtime
+  - Project Docs: https://github.com/your-org/oap-langgraph-tools-agent
+
+🐛 Troubleshooting:
+
+  # Check pod status
+  kubectl describe pod -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "robyn-runtime.name" . }}
+
+  # View events
+  kubectl get events -n {{ .Release.Namespace }} --sort-by='.lastTimestamp'
+
+  # Test connectivity
+  kubectl run -it --rm debug --image=curlimages/curl --restart=Never -n {{ .Release.Namespace }} -- \
+    curl http://{{ include "robyn-runtime.fullname" . }}:{{ .Values.service.port }}/health
+
+Happy deploying! 🚀

@@ -1,0 +1,55 @@
+# Lefthook — Git hooks for Fractal Agents Runtime monorepo
+# https://github.com/evilmartians/lefthook
+
+pre-commit:
+  parallel: true
+  commands:
+    python-lint:
+      root: apps/python/
+      glob: "*.py"
+      run: uv run ruff check --fix {staged_files} && uv run ruff format {staged_files}
+      stage_fixed: true
+
+    ts-lint:
+      root: apps/ts/
+      glob: "*.{ts,tsx}"
+      run: bunx tsc --noEmit
+
+    python-openapi:
+      root: apps/python/
+      glob: "*.py"
+      run: uv run python scripts/generate_openapi.py -o openapi-spec.json
+      stage_fixed: true
+
+    ts-openapi:
+      root: apps/ts/
+      glob: "*.ts"
+      run: bun run scripts/generate-openapi.ts
+      stage_fixed: true
+
+pre-push:
+  parallel: true
+  commands:
+    python-test:
+      root: apps/python/
+      run: uv run pytest -q
+
+    ts-test:
+      root: apps/ts/
+      run: bun test
+
+    python-lint-check:
+      root: apps/python/
+      run: uv run ruff check . && uv run ruff format --check .
+
+    ts-type-check:
+      root: apps/ts/
+      run: bunx tsc --noEmit
+
+    python-openapi-validate:
+      root: apps/python/
+      run: uv run python scripts/generate_openapi.py --validate
+
+    ts-openapi-validate:
+      root: apps/ts/
+      run: bun run scripts/generate-openapi.ts --validate

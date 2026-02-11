@@ -1,0 +1,313 @@
+# Default values for robyn-runtime Helm chart
+# This is a YAML-formatted file.
+
+# Image configuration
+image:
+  repository: ghcr.io/your-org/robyn-runtime
+  pullPolicy: IfNotPresent
+  tag: "0.1.0"  # Overrides the image tag whose default is the chart appVersion
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Deployment configuration
+replicaCount: 3
+
+# Pod configuration
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8081"
+  prometheus.io/path: "/metrics"
+
+podLabels:
+  app.kubernetes.io/component: runtime
+  app.kubernetes.io/part-of: open-agent-platform
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+    - ALL
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8081
+  annotations: {}
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+  hosts:
+    - host: agent-api.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: robyn-runtime-tls
+      hosts:
+        - agent-api.example.com
+
+# Resource limits and requests
+resources:
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+# Horizontal Pod Autoscaler
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 2
+        periodSeconds: 30
+      selectPolicy: Max
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# Liveness and readiness probes
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Application configuration
+config:
+  # Server settings
+  host: "0.0.0.0"
+  port: 8081
+  workers: 4
+  devMode: false
+  
+  # Supabase configuration (use existingSecret for production)
+  supabase:
+    url: "https://your-project.supabase.co"
+    # key and secret should be provided via existingSecret
+  
+  # LLM configuration
+  llm:
+    # Use existingSecret for API keys
+    openaiApiBase: "http://ministral-vllm.testing.svc.cluster.local/v1"
+    modelName: "mistral"
+  
+  # Observability
+  observability:
+    langchainTracingV2: "true"
+    langchainProject: "production"
+
+# Secrets configuration
+# Option 1: Create secret from values (NOT recommended for production)
+secrets:
+  create: false
+  data: {}
+    # supabaseKey: "your-supabase-key"
+    # openaiApiKey: "your-openai-key"
+    # langchainApiKey: "your-langsmith-key"
+
+# Option 2: Use existing secret (recommended for production)
+existingSecret:
+  name: "robyn-runtime-secrets"
+  keys:
+    supabaseKey: "supabase-key"
+    supabaseSecret: "supabase-secret"
+    openaiApiKey: "openai-api-key"
+    langchainApiKey: "langchain-api-key"
+
+# ConfigMap for non-sensitive configuration
+configMap:
+  create: true
+  data: {}
+    # Add custom configuration here
+
+# Volume mounts
+volumeMounts:
+  - name: tmp
+    mountPath: /tmp
+  - name: data
+    mountPath: /app/data
+
+volumes:
+  - name: tmp
+    emptyDir: {}
+  - name: data
+    emptyDir: {}
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity rules
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - robyn-runtime
+        topologyKey: kubernetes.io/hostname
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automount: true
+
+# Network Policy
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: ingress-nginx
+      ports:
+      - protocol: TCP
+        port: 8081
+  egress:
+    # Allow DNS
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: UDP
+        port: 53
+    # Allow vLLM backend
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            name: testing
+        podSelector:
+          matchLabels:
+            app: ministral-vllm
+      ports:
+      - protocol: TCP
+        port: 80
+    # Allow external HTTPS (for Supabase, OpenAI, etc.)
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: 443
+
+# Monitoring with ServiceMonitor (requires Prometheus Operator)
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  relabelings: []
+  metricRelabelings: []
+
+# PrometheusRule for alerts (requires Prometheus Operator)
+prometheusRule:
+  enabled: true
+  labels: {}
+  groups:
+    - name: robyn-runtime
+      interval: 30s
+      rules:
+        - alert: RobynRuntimeHighErrorRate
+          expr: |
+            rate(robyn_errors_total[5m]) / rate(robyn_requests_total[5m]) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Robyn Runtime high error rate"
+            description: "Error rate is {{ $value | humanizePercentage }} for {{ $labels.namespace }}/{{ $labels.pod }}"
+        
+        - alert: RobynRuntimeHighLatency
+          expr: |
+            histogram_quantile(0.95, rate(robyn_request_duration_seconds_bucket[5m])) > 5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Robyn Runtime high latency"
+            description: "P95 latency is {{ $value }}s for {{ $labels.namespace }}/{{ $labels.pod }}"
+        
+        - alert: RobynRuntimePodRestarting
+          expr: |
+            rate(kube_pod_container_status_restarts_total{pod=~"robyn-runtime-.*"}[1h]) > 0.1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Robyn Runtime pod restarting frequently"
+            description: "Pod {{ $labels.pod }} is restarting frequently"
+
+# Additional environment variables
+env: []
+  # - name: CUSTOM_VAR
+  #   value: "custom-value"
+
+# Additional environment variables from ConfigMaps or Secrets
+envFrom: []
+  # - configMapRef:
+  #     name: my-configmap
+  # - secretRef:
+  #     name: my-secret

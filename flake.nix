@@ -56,6 +56,7 @@
               watchexec # File watcher for auto-reload
               jq # JSON processor
               tree # Directory tree viewer
+              lefthook # Git hooks manager (polyglot, fast)
 
               # ── Version Control ─────────────────────────────────────
               git
@@ -101,6 +102,7 @@
               fi
 
               if [ -d "apps/python/.venv" ]; then
+                unset VIRTUAL_ENV
                 source apps/python/.venv/bin/activate
                 export PYTHONPATH="$PWD/apps/python/src:''${PYTHONPATH:-}"
                 echo "✅ Python venv: activated (apps/python/.venv)"
@@ -168,10 +170,7 @@
             echo ""
           '';
 
-          runScript = ''
-            SHELL=${pkgs.zsh}/bin/zsh
-            exec ${pkgs.zsh}/bin/zsh
-          '';
+          runScript = "${pkgs.zsh}/bin/zsh";
         };
       in {
         devShells.default = pkgs.mkShell {
