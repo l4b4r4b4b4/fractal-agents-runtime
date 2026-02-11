@@ -1,20 +1,42 @@
 name: "Image / Python"
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: ["**"]
-    paths:
-      - "apps/python/**"
-      - ".github/workflows/image-python.yml"
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}-python
 
 jobs:
+  # ── Change Detection ────────────────────────────────────────────────
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'apps/python/**'
+              - '.github/workflows/image-python.yml'
+
+  # ── Build & Push ────────────────────────────────────────────────────
   build-and-push:
     name: Build & Push
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     permissions:
       contents: read
       packages: write
@@ -35,17 +57,15 @@ jobs:
       - name: Determine tags
         id: tags
         run: |
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          BRANCH="${GITHUB_REF_NAME}"
+          SHORT_SHA=$(echo "${{ github.event.workflow_run.head_sha }}" | cut -c1-7)
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
 
           # Always tag with sha
           TAGS="${IMAGE}:sha-${SHORT_SHA}"
 
           if [[ "$BRANCH" == "main" ]]; then
-            # Release: latest + version from pyproject.toml
-            VERSION=$(grep '^version' apps/python/pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-            TAGS="${TAGS},${IMAGE}:latest,${IMAGE}:v${VERSION}"
+            TAGS="${TAGS},${IMAGE}:nightly"
           elif [[ "$BRANCH" == "development" ]]; then
             TAGS="${TAGS},${IMAGE}:development"
           fi
@@ -66,5 +86,5 @@ jobs:
           cache-to: type=gha,scope=python,mode=max
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.ref.name=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
+            org.opencontainers.image.ref.name=${{ github.event.workflow_run.head_branch }}

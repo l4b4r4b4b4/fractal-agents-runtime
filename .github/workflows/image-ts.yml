@@ -1,20 +1,42 @@
 name: "Image / TypeScript"
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: ["**"]
-    paths:
-      - "apps/ts/**"
-      - ".github/workflows/image-ts.yml"
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}-ts
 
 jobs:
+  # ── Change Detection ────────────────────────────────────────────────
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    outputs:
+      ts: ${{ steps.filter.outputs.ts }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            ts:
+              - 'apps/ts/**'
+              - '.github/workflows/image-ts.yml'
+
+  # ── Build & Push ────────────────────────────────────────────────────
   build-and-push:
     name: Build & Push
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.ts == 'true'
     permissions:
       contents: read
       packages: write
@@ -35,17 +57,15 @@ jobs:
       - name: Determine tags
         id: tags
         run: |
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          BRANCH="${GITHUB_REF_NAME}"
+          SHORT_SHA=$(echo "${{ github.event.workflow_run.head_sha }}" | cut -c1-7)
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
 
           # Always tag with sha
           TAGS="${IMAGE}:sha-${SHORT_SHA}"
 
           if [[ "$BRANCH" == "main" ]]; then
-            # Release: latest + version from package.json
-            VERSION=$(jq -r '.version' apps/ts/package.json)
-            TAGS="${TAGS},${IMAGE}:latest,${IMAGE}:v${VERSION}"
+            TAGS="${TAGS},${IMAGE}:nightly"
           elif [[ "$BRANCH" == "development" ]]; then
             TAGS="${TAGS},${IMAGE}:development"
           fi
@@ -66,5 +86,5 @@ jobs:
           cache-to: type=gha,scope=ts,mode=max
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.ref.name=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
+            org.opencontainers.image.ref.name=${{ github.event.workflow_run.head_branch }}
