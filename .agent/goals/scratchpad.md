@@ -8,7 +8,7 @@
 
 | ID | Goal Name | Status | Priority | Last Updated |
 |----|-----------|--------|----------|--------------|
-| 01 | Monorepo v0.0.0 Setup — Full DevOps Pipeline | 🟡 In Progress | Critical | 2026-02-11 |
+| 01 | Monorepo v0.0.0 Setup — Full DevOps Pipeline | 🟢 Complete | Critical | 2026-02-11 |
 | 02 | Python Runtime v0.0.1 — First Real Release | ⚪ Not Started | High | 2026-02-11 |
 | 03 | TypeScript Runtime v0.0.1 — First Real TS Implementation | ⚪ Not Started | High | 2026-02-11 |
 
@@ -65,7 +65,20 @@ Goal 03 depends on Goal 02 because the pipeline validation from the Python relea
 
 ## Recent Activity
 
-### 2026-02-11
+### 2026-02-11 — Session 3
+
+- **Goal 01 🟢 Complete** — Task-10 finished: initial commit, push, branch setup, rulesets, CI validation
+- Cleaned up 8 completed/superseded old goal directories
+- Fixed root `.gitignore` (missing `node_modules/`, `.zed/`)
+- Initial commit: 176 files, ~50K lines pushed to `main` (all 10 Lefthook hooks green)
+- Created `development` branch, pushed
+- Applied rulesets via `gh api`: `main-branch-protection` + `development-branch-protection`
+- CI passed on both `main` and `development` branches
+- PR #1: Fixed TS Dockerfile (pin Bun 1.3.8, fix `adduser` on slim image), added SBOM + provenance to image builds
+- Full branch protection flow validated: feature → PR → CI gate → squash merge → development
+- **BoS decision:** lockfiles = dependency BoS, `sbom: true` + `provenance: true` = image-level BoS
+
+### 2026-02-11 — Sessions 1 & 2
 
 - Created all three goals for initial monorepo lifecycle:
   - **Goal 01:** Monorepo scaffold, Python migration, TS stub, Lefthook, CI/CD, branch protection, v0.0.0 images + releases

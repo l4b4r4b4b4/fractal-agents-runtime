@@ -2,7 +2,7 @@
 # https://bun.sh/guides/ecosystem/docker
 
 # Build stage
-FROM oven/bun:1 AS builder
+FROM oven/bun:1.3.8 AS builder
 
 WORKDIR /app
 
@@ -18,21 +18,24 @@ COPY tsconfig.json ./
 RUN bun build src/index.ts --outdir dist --target bun
 
 # Runtime stage — minimal image
-FROM oven/bun:1-slim AS runtime
+FROM oven/bun:1.3.8-slim AS runtime
 
 LABEL org.opencontainers.image.source="https://github.com/l4b4r4b4b4/fractal-agents-runtime"
 LABEL org.opencontainers.image.description="Fractal Agents Runtime — TypeScript/Bun (free, self-hostable LangGraph-compatible agent runtime)"
 LABEL org.opencontainers.image.licenses="MIT"
 
-# Create non-root user for security
-RUN adduser --disabled-password --gecos "" --uid 65532 appuser
+# Create non-root user for security (no adduser in slim images)
+RUN echo "appuser:x:65532:65532:appuser:/home/appuser:/sbin/nologin" >> /etc/passwd && \
+    echo "appuser:x:65532:" >> /etc/group && \
+    mkdir -p /home/appuser && \
+    chown 65532:65532 /home/appuser
 
 WORKDIR /app
 
 # Copy built output and production node_modules
-COPY --from=builder --chown=appuser:appuser /app/dist ./dist
-COPY --from=builder --chown=appuser:appuser /app/node_modules ./node_modules
-COPY --from=builder --chown=appuser:appuser /app/package.json ./
+COPY --from=builder --chown=65532:65532 /app/dist ./dist
+COPY --from=builder --chown=65532:65532 /app/node_modules ./node_modules
+COPY --from=builder --chown=65532:65532 /app/package.json ./
 
 # Set environment variables
 ENV NODE_ENV=production \

@@ -55,6 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: meta
     if: needs.meta.outputs.python == 'true'
+    environment: pypi
     defaults:
       run:
         working-directory: apps/python
@@ -140,6 +141,8 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ needs.meta.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          sbom: true
+          provenance: true
           cache-from: type=gha,scope=python
           cache-to: type=gha,scope=python,mode=max
 
@@ -226,6 +229,8 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ needs.meta.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          sbom: true
+          provenance: true
           cache-from: type=gha,scope=ts
           cache-to: type=gha,scope=ts,mode=max
 

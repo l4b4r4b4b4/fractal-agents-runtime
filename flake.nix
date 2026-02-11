@@ -126,13 +126,31 @@
               fi
             fi
 
+            # ── npm Registry Auth ──
+            NPM_USER=$(npm whoami 2>/dev/null || echo "")
+            if [ -n "''${NPM_USER}" ]; then
+              echo "✅ npm: logged in as ''${NPM_USER}"
+            else
+              echo "ℹ️  npm: not logged in (required for publishing)"
+              printf "   Log in now? (y/N) "
+              read -r NPM_LOGIN
+              if [ "''${NPM_LOGIN}" = "y" ] || [ "''${NPM_LOGIN}" = "Y" ]; then
+                npm login && echo "✅ npm: logged in as $(npm whoami 2>/dev/null)" || echo "⚠️  npm login failed — run 'npm login' manually"
+              fi
+            fi
+
             echo ""
 
             # ── Prevent wrong package managers ──
             alias pip='echo "❌ Use uv instead of pip! Run: uv add <package>" && false'
             alias pip3='echo "❌ Use uv instead of pip3! Run: uv add <package>" && false'
             alias pip-compile='echo "❌ Use uv instead of pip-compile! Run: uv lock" && false'
-            alias npm='echo "❌ Use bun instead of npm! Run: bun install <package>" && false'
+            npm() {
+              case "$1" in
+                login|whoami|logout|token) command npm "$@" ;;
+                *) echo "❌ Use bun instead of npm! Run: bun install <package>" && return 1 ;;
+              esac
+            }
             alias yarn='echo "❌ Use bun instead of yarn! Run: bun install" && false'
             alias pnpm='echo "❌ Use bun instead of pnpm! Run: bun install" && false'
 
