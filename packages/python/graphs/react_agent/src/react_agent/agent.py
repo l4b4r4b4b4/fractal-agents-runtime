@@ -92,7 +92,13 @@ UNEDITABLE_SYSTEM_PROMPT = (
     " authenticate."
 )
 
-DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant that has access to a variety of tools."
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a helpful assistant. You have access ONLY to the tools explicitly"
+    " provided to you below. Do NOT claim to have access to any tools, APIs,"
+    " or capabilities that are not listed. If the user asks for something that"
+    " requires a tool you do not have, tell them honestly that you cannot do it"
+    " with your current tools."
+)
 
 
 class RagConfig(BaseModel):
