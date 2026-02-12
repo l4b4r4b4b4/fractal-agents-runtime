@@ -50,8 +50,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY apps/python/pyproject.toml apps/python/uv.lock ./
 COPY apps/python/src/robyn_server/ ./src/robyn_server/
 
+# --reinstall-package forces uv to rebuild local path dependencies from
+# the freshly-copied source instead of reusing stale cached wheels
+# (package name+version don't change between commits, so uv's cache
+# can serve an outdated wheel without this flag).
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-editable
+    uv sync --locked --no-editable \
+    --reinstall-package fractal-agents-runtime \
+    --reinstall-package fractal-graph-react-agent \
+    --reinstall-package fractal-agent-infra
 
 # ── Runtime stage — minimal image ────────────────────────────────────
 FROM python:3.12-slim-bookworm AS runtime
