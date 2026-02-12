@@ -29,6 +29,8 @@ jobs:
           filters: |
             python:
               - 'apps/python/**'
+              - 'packages/python/**'
+              - '.devops/docker/python.Dockerfile'
               - '.github/workflows/image-python.yml'
 
   # ── Build & Push ────────────────────────────────────────────────────
@@ -76,8 +78,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: apps/python
-          file: apps/python/Dockerfile
+          context: .
+          file: .devops/docker/python.Dockerfile
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           sbom: true

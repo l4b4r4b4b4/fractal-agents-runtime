@@ -1,4 +1,4 @@
-"""Tests for react_agent_with_mcp_tools.tracing — Langfuse integration and LangSmith disabling.
+"""Tests for fractal_agent_infra.tracing — Langfuse integration and LangSmith disabling.
 
 Tests cover:
 - LangSmith tracing disabled by default (LANGCHAIN_TRACING_V2)
@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.runnables import RunnableConfig
 
-from react_agent_with_mcp_tools.tracing import (
+from fractal_agent_infra.tracing import (
     _reset_tracing_state,
     get_langfuse_callback_handler,
     initialize_langfuse,
@@ -127,7 +127,7 @@ class TestLangfuseInitialization:
         assert result is False
         assert is_langfuse_enabled() is False
 
-    @patch("react_agent_with_mcp_tools.tracing.Langfuse", create=True)
+    @patch("fractal_agent_infra.tracing.Langfuse", create=True)
     def test_initialize_returns_true_when_configured(
         self, mock_langfuse_cls, _langfuse_env
     ):
@@ -137,11 +137,11 @@ class TestLangfuseInitialization:
             "sys.modules", {"langfuse": MagicMock(Langfuse=mock_langfuse_cls)}
         ):
             with patch(
-                "react_agent_with_mcp_tools.tracing.is_langfuse_configured",
+                "fractal_agent_infra.tracing.is_langfuse_configured",
                 return_value=True,
             ):
                 # Simulate successful init by directly setting state
-                from react_agent_with_mcp_tools import tracing
+                from fractal_agent_infra import tracing
 
                 tracing._langfuse_initialized = True
                 assert is_langfuse_enabled() is True
@@ -165,7 +165,7 @@ class TestLangfuseInitialization:
 
     def test_shutdown_resets_initialized_flag(self):
         """shutdown_langfuse() sets _langfuse_initialized back to False."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
         assert is_langfuse_enabled() is True
@@ -178,7 +178,7 @@ class TestLangfuseInitialization:
 
     def test_shutdown_calls_client_shutdown(self):
         """shutdown_langfuse() calls client.shutdown() on the Langfuse client."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
@@ -190,7 +190,7 @@ class TestLangfuseInitialization:
 
     def test_shutdown_handles_exception_gracefully(self):
         """shutdown_langfuse() catches exceptions without propagating."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
@@ -217,7 +217,7 @@ class TestCallbackHandler:
 
     def test_returns_handler_when_initialized(self):
         """Handler is returned when Langfuse is initialised."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
@@ -232,7 +232,7 @@ class TestCallbackHandler:
 
     def test_returns_none_on_exception(self):
         """Handler returns None if CallbackHandler construction fails."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
@@ -276,13 +276,13 @@ class TestInjectTracing:
 
     def test_adds_callback_handler_when_initialized(self):
         """Callback handler is added to config when Langfuse is active."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
         mock_handler = MagicMock()
         with patch(
-            "react_agent_with_mcp_tools.tracing.get_langfuse_callback_handler",
+            "fractal_agent_infra.tracing.get_langfuse_callback_handler",
             return_value=mock_handler,
         ):
             config = self._make_config()
@@ -293,7 +293,7 @@ class TestInjectTracing:
 
     def test_preserves_existing_callbacks(self):
         """Existing callbacks in config are preserved."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
@@ -301,7 +301,7 @@ class TestInjectTracing:
         mock_handler = MagicMock(name="langfuse-handler")
 
         with patch(
-            "react_agent_with_mcp_tools.tracing.get_langfuse_callback_handler",
+            "fractal_agent_infra.tracing.get_langfuse_callback_handler",
             return_value=mock_handler,
         ):
             config = self._make_config(callbacks=[existing_callback])
@@ -314,12 +314,12 @@ class TestInjectTracing:
 
     def test_injects_user_id_metadata(self):
         """langfuse_user_id is added to config metadata."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
         with patch(
-            "react_agent_with_mcp_tools.tracing.get_langfuse_callback_handler",
+            "fractal_agent_infra.tracing.get_langfuse_callback_handler",
             return_value=MagicMock(),
         ):
             config = self._make_config()
@@ -330,12 +330,12 @@ class TestInjectTracing:
 
     def test_injects_session_id_metadata(self):
         """langfuse_session_id is added to config metadata."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
         with patch(
-            "react_agent_with_mcp_tools.tracing.get_langfuse_callback_handler",
+            "fractal_agent_infra.tracing.get_langfuse_callback_handler",
             return_value=MagicMock(),
         ):
             config = self._make_config()
@@ -346,12 +346,12 @@ class TestInjectTracing:
 
     def test_injects_tags_metadata(self):
         """langfuse_tags are added to config metadata."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
         with patch(
-            "react_agent_with_mcp_tools.tracing.get_langfuse_callback_handler",
+            "fractal_agent_infra.tracing.get_langfuse_callback_handler",
             return_value=MagicMock(),
         ):
             config = self._make_config()
@@ -362,12 +362,12 @@ class TestInjectTracing:
 
     def test_sets_run_name_from_trace_name(self):
         """trace_name parameter sets run_name on the config."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
         with patch(
-            "react_agent_with_mcp_tools.tracing.get_langfuse_callback_handler",
+            "fractal_agent_infra.tracing.get_langfuse_callback_handler",
             return_value=MagicMock(),
         ):
             config = self._make_config()
@@ -377,12 +377,12 @@ class TestInjectTracing:
 
     def test_no_metadata_when_no_attributes_provided(self):
         """No langfuse metadata keys added when attributes are None."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
         with patch(
-            "react_agent_with_mcp_tools.tracing.get_langfuse_callback_handler",
+            "fractal_agent_infra.tracing.get_langfuse_callback_handler",
             return_value=MagicMock(),
         ):
             config = self._make_config()
@@ -395,12 +395,12 @@ class TestInjectTracing:
 
     def test_preserves_existing_metadata(self):
         """Existing metadata in config is preserved alongside Langfuse keys."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
         with patch(
-            "react_agent_with_mcp_tools.tracing.get_langfuse_callback_handler",
+            "fractal_agent_infra.tracing.get_langfuse_callback_handler",
             return_value=MagicMock(),
         ):
             config = self._make_config(metadata={"existing_key": "existing_value"})
@@ -412,12 +412,12 @@ class TestInjectTracing:
 
     def test_does_not_mutate_original_config(self):
         """inject_tracing returns a new config, not a mutated original."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
         with patch(
-            "react_agent_with_mcp_tools.tracing.get_langfuse_callback_handler",
+            "fractal_agent_infra.tracing.get_langfuse_callback_handler",
             return_value=MagicMock(),
         ):
             config = self._make_config()
@@ -434,13 +434,13 @@ class TestInjectTracing:
 
     def test_all_attributes_combined(self):
         """All trace attributes can be set simultaneously."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
         mock_handler = MagicMock()
         with patch(
-            "react_agent_with_mcp_tools.tracing.get_langfuse_callback_handler",
+            "fractal_agent_infra.tracing.get_langfuse_callback_handler",
             return_value=mock_handler,
         ):
             config = self._make_config()
@@ -461,12 +461,12 @@ class TestInjectTracing:
 
     def test_configurable_preserved(self):
         """The configurable dict from the original config is preserved."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
 
         with patch(
-            "react_agent_with_mcp_tools.tracing.get_langfuse_callback_handler",
+            "fractal_agent_infra.tracing.get_langfuse_callback_handler",
             return_value=MagicMock(),
         ):
             config = self._make_config()
@@ -486,7 +486,7 @@ class TestResetTracingState:
 
     def test_resets_initialized_flag(self):
         """_reset_tracing_state() clears the initialized flag."""
-        from react_agent_with_mcp_tools import tracing
+        from fractal_agent_infra import tracing
 
         tracing._langfuse_initialized = True
         assert is_langfuse_enabled() is True

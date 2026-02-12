@@ -30,8 +30,9 @@ from robyn_server.routes.sse import (
     sse_headers,
 )
 from robyn_server.storage import get_storage
-from react_agent_with_mcp_tools.agent import graph as build_agent_graph
-from react_agent_with_mcp_tools.tracing import inject_tracing
+from react_agent import graph as build_agent_graph
+from fractal_agent_infra.tracing import inject_tracing
+from robyn_server.database import get_checkpointer, get_store
 
 logger = logging.getLogger(__name__)
 
@@ -534,7 +535,7 @@ async def execute_run_stream(
 ) -> AsyncGenerator[str, None]:
     """Execute a run using the agent graph and yield SSE events.
 
-    Invokes `react_agent_with_mcp_tools.agent.graph` with proper configuration and
+    Invokes `react_agent.agent.graph` with proper configuration and
     streams LangGraph events as SSE-formatted responses.
 
     Args:
@@ -612,7 +613,11 @@ async def execute_run_stream(
 
     # 4. Build and invoke the agent graph
     try:
-        agent = await build_agent_graph(runnable_config)
+        agent = await build_agent_graph(
+            runnable_config,
+            checkpointer=get_checkpointer(),
+            store=get_store(),
+        )
     except Exception as agent_build_error:
         logger.exception("Failed to build agent graph")
         yield format_error_event(

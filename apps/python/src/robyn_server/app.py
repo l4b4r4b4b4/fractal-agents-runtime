@@ -11,7 +11,7 @@ from robyn.openapi import OpenAPI, OpenAPIInfo
 
 # Import tracing module early so LANGCHAIN_TRACING_V2 is set before
 # any LangChain code is loaded.
-from react_agent_with_mcp_tools.tracing import (
+from fractal_agent_infra.tracing import (
     initialize_langfuse,
     is_langfuse_enabled,
     shutdown_langfuse,

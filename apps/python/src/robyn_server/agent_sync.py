@@ -51,7 +51,7 @@ class AgentSyncData(BaseModel):
     """Agent configuration materialised from Supabase for sync into assistant storage.
 
     This is the canonical shape we use downstream to build a LangGraph assistant
-    config (`config.configurable`) for the `react_agent_with_mcp_tools.agent.graph()` factory.
+    config (`config.configurable`) for the `react_agent.agent.graph()` factory.
 
     Attributes:
         agent_id: UUID of the agent in Supabase.
@@ -504,7 +504,7 @@ def _safe_mask_url(url: str | None) -> str | None:
 
 
 def _build_assistant_configurable(agent: AgentSyncData) -> dict[str, Any]:
-    """Build `config.configurable` for `react_agent_with_mcp_tools.agent.graph()`.
+    """Build `config.configurable` for `react_agent.agent.graph()`.
 
     Emits multi-server MCP configuration:
 

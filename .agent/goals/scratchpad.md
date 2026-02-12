@@ -11,6 +11,8 @@
 | 01 | Monorepo v0.0.0 Setup — Full DevOps Pipeline | 🟢 Complete | Critical | 2026-02-11 |
 | 02 | Python Runtime v0.0.1 — First Real Release | ⚪ Not Started | High | 2026-02-11 |
 | 03 | TypeScript Runtime v0.0.1 — First Real TS Implementation | ⚪ Not Started | High | 2026-02-11 |
+| 18 | Assistant Config Propagation Fix | ⚪ Not Started | High | 2026-02-11 |
+| 19 | Package Structure Refactor — 3-Layer Architecture | 🟡 In Progress | Critical | 2026-02-12 |
 
 ---
 
@@ -38,6 +40,8 @@
 - [01-Monorepo-V0.0.0-Setup](./01-Monorepo-V0.0.0-Setup/scratchpad.md)
 - [02-Python-Runtime-V0.0.1](./02-Python-Runtime-V0.0.1/scratchpad.md)
 - [03-TypeScript-Runtime-V0.0.1](./03-TypeScript-Runtime-V0.0.1/scratchpad.md)
+- [18-Assistant-Config-Propagation-Fix](./18-Assistant-Config-Propagation-Fix/scratchpad.md)
+- [19-Package-Structure-Refactor](./19-Package-Structure-Refactor/scratchpad.md)
 
 ---
 
@@ -53,17 +57,44 @@
 ## Dependency Graph
 
 ```
-Goal 01: Monorepo v0.0.0 Setup
-  └── Goal 02: Python Runtime v0.0.1 (depends on Goal 01)
-        └── Goal 03: TypeScript Runtime v0.0.1 (depends on Goal 01 + Goal 02)
+Goal 01: Monorepo v0.0.0 Setup ✅
+  └── Goal 19: Package Structure Refactor (depends on Goal 01) 🟡
+        ├── Goal 02: Python Runtime v0.0.1 (depends on Goal 19)
+        │     └── Goal 03: TypeScript Runtime v0.0.1 (depends on Goal 02)
+        └── Goal 18: Assistant Config Propagation Fix (depends on Goal 19)
 ```
 
-Goal 02 depends on Goal 01 because the DevOps pipeline must exist before we can run a release through it.
+Goal 19 must land BEFORE v0.0.0 tagging — establishes the 3-layer architecture (graphs / infra / apps).
+Goal 18 deferred until after v0.0.0 — it touches graph code that is moving in Goal 19.
+Goal 02 depends on Goal 19 because the package structure must be finalized before first release.
 Goal 03 depends on Goal 02 because the pipeline validation from the Python release confirms the workflow is trustworthy.
 
 ---
 
 ## Recent Activity
+
+### 2026-02-12 — Session 5 (Goal 19: Phase 2 Complete + Docs)
+
+- **Goal 19 🟡 In Progress** — Phase 2 (3-layer split) code complete, docs updated, awaiting commit/push/PR (Task-06)
+- **Tasks 01–05 done:** Scaffolded `packages/python/graphs/react_agent/` (PyPI: `fractal-graph-react-agent`) and `packages/python/infra/fractal_agent_infra/` (local path dep), moved all source files, refactored `graph()` for DI (`checkpointer`/`store` as kwargs), updated all imports in `robyn_server` (~30 refs in `test_tracing.py` alone), deleted old `fractal_agent_runtime/` package, updated Dockerfile COPY paths, CI release workflow, `.dockerignore`
+- **Verification:** 550 tests pass (7.72s), ruff clean on all 3 packages, 0 stale `fractal_agent_runtime` references in code/config/workflows
+- **README.md rewritten** (238 lines): 3-layer architecture diagram, dependency rules, DI code example, packages table, release tags table, corrected env vars
+- **CONTRIBUTING.md created** (441 lines): dev setup, project structure, coding standards, step-by-step "Adding a New Graph to the Catalog" guide, testing philosophy, PR process, architecture decision rationale
+- **All task scratchpads** updated with 🟢 Complete status and detailed implementation notes
+- **Next (Task-06):** `git add -A && git commit`, push, open PR to `development`, merge, tag `python-graphs-v0.0.0` + `python-runtime-v0.0.0` to validate release pipeline
+
+### 2026-02-11 — Session 4 (Goal 19: Package Structure Refactor)
+
+- **Goal 19 🟡 In Progress** — Branch `refactor/package-structure` (off `development`)
+- **Phase 1 (done):** Initial extraction — moved `react_agent_with_mcp_tools/` into `packages/python/fractal_agent_runtime/`, updated all imports in `robyn_server`, deleted old directory, 550 tests pass
+- **Phase 1 (done):** Docker + CI — rewrote `python.Dockerfile` per [uv Docker best practices](https://docs.astral.sh/uv/guides/integration/docker/) (pin uv 0.10.2, bind mounts, non-editable, no source in runtime image), created root `.dockerignore`, updated image + release workflows for 4-tag scheme
+- **Phase 1 (done):** Cleanup — removed all `react_agent_with_mcp_tools` refs from code/config (only .agent scratchpads remain as history), fixed ruff config for graph package, all ruff + tests green
+- **Architecture decision:** Refined to **3-layer architecture** after review:
+  - `packages/python/graphs/` — Pure agent graph architectures (portable catalog, future submodule candidate)
+  - `packages/python/infra/` — Shared runtime infrastructure (tracing, auth, store namespace)
+  - `apps/python/` — Thin HTTP wrapper (Robyn server, routes, Postgres persistence)
+- **Phase 2 (next session):** Restructure `packages/python/fractal_agent_runtime/` → split into `graphs/react_agent/` + `infra/fractal_agent_infra/`, proper DI for checkpointer/store, update all imports
+- See [Goal 19 scratchpad](./19-Package-Structure-Refactor/scratchpad.md) for full plan and task breakdown
 
 ### 2026-02-11 — Session 3
 
