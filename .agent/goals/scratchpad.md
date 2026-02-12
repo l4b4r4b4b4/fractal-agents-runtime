@@ -12,7 +12,7 @@
 | 02 | Python Runtime v0.0.1 — First Real Release | ⚪ Not Started | High | 2026-02-11 |
 | 03 | TypeScript Runtime v0.0.1 — First Real TS Implementation | ⚪ Not Started | High | 2026-02-11 |
 | 18 | Assistant Config Propagation Fix | ⚪ Not Started | High | 2026-02-11 |
-| 19 | Package Structure Refactor — 3-Layer Architecture | 🟡 In Progress | Critical | 2026-02-12 |
+| 19 | Package Structure Refactor — 3-Layer Architecture | 🟢 Complete | Critical | 2026-02-12 |
 
 ---
 
@@ -58,20 +58,35 @@
 
 ```
 Goal 01: Monorepo v0.0.0 Setup ✅
-  └── Goal 19: Package Structure Refactor (depends on Goal 01) 🟡
+  └── Goal 19: Package Structure Refactor (depends on Goal 01) ✅
         ├── Goal 02: Python Runtime v0.0.1 (depends on Goal 19)
         │     └── Goal 03: TypeScript Runtime v0.0.1 (depends on Goal 02)
         └── Goal 18: Assistant Config Propagation Fix (depends on Goal 19)
 ```
 
-Goal 19 must land BEFORE v0.0.0 tagging — establishes the 3-layer architecture (graphs / infra / apps).
-Goal 18 deferred until after v0.0.0 — it touches graph code that is moving in Goal 19.
+Goal 19 complete — v0.0.0 released, 3-layer architecture established, rebase workflow in place.
+Goal 18 next priority — touches graph code that has now stabilized in Goal 19.
 Goal 02 depends on Goal 19 because the package structure must be finalized before first release.
 Goal 03 depends on Goal 02 because the pipeline validation from the Python release confirms the workflow is trustworthy.
 
 ---
 
 ## Recent Activity
+
+### 2026-02-12 — Session 6 (Goal 19: v0.0.0 RELEASED 🟢)
+
+- **Goal 19 🟢 Complete** — Task-06 done: committed, PR'd, merged, released all three components
+- **PRs:** #7 (refactor→development), #9 (promote to main), #10 (rebase workflow), #11 (pipeline fixes), #13 (lint fix)
+- **Branching workflow overhaul:** Switched from squash-only to rebase-only merge method
+  - Both rulesets updated via API + `.github/rulesets/*.json`
+  - Added `no-merge-commits` lefthook pre-push guard
+  - Discovered GitHub "rebase merge" still rewrites SHAs — promotion uses force-push/fast-forward instead of PRs
+- **Release pipeline fixes:** graph placeholder test (pytest exit 5), python.Dockerfile WORKDIR path traversal, ts.Dockerfile premature COPY
+- **v0.0.0 released — all 3 pipelines succeeded:**
+  - `python-graphs-v0.0.0` → `fractal-graph-react-agent` published to PyPI ✅
+  - `python-runtime-v0.0.0` → Docker image pushed to GHCR ✅
+  - `ts-runtime-v0.0.0` → Docker image pushed to GHCR ✅
+- **Known issues for v0.0.1:** auth `assert` → explicit `raise`, CI path filter gap for `packages/python/**`, promotion workflow automation
 
 ### 2026-02-12 — Session 5 (Goal 19: Phase 2 Complete + Docs)
 
