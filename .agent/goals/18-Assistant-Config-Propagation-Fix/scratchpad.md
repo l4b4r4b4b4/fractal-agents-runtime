@@ -1,8 +1,9 @@
 # Goal 18: Assistant Config Propagation Fix
 
-> **Status:** ⚪ Not Started
+> **Status:** 🟡 In Progress
 > **Priority:** Critical (blocks agent functionality end-to-end)
 > **Created:** 2026-02-11
+> **Last Updated:** 2026-02-12
 > **Branch:** `fix/assistant-config-propagation`
 > **Depends on:** Goal 15 (Startup Agent Sync), Goal 16 (Store Namespacing)
 
@@ -105,8 +106,8 @@ End-to-end verification that the full chain works: sync → lookup → config me
 
 | Task | Description | Status | Priority |
 |------|-------------|--------|----------|
-| Task-01 | Deterministic Assistant IDs | ⚪ Not Started | Critical |
-| Task-02 | Owner Scoping Fix | ⚪ Not Started | Critical |
+| Task-01 | Deterministic Assistant IDs | 🟢 Complete | Critical |
+| Task-02 | Owner Scoping Fix | 🟢 Complete | Critical |
 | Task-03 | End-to-End Verification | ⚪ Not Started | High |
 
 ---
@@ -164,3 +165,40 @@ After all tasks are complete, the following must hold:
 
 - 2026-02-11: Goal created based on debugging session in docproc-platform (Session 72)
 - 2026-02-11: Root cause identified — two compounding bugs in postgres_storage.py and startup sync owner_id
+- 2026-02-12: Session 7 — Implemented Task-01 and Task-02, all tests passing
+
+---
+
+## Session 7 Summary (2026-02-12) — Tasks 01 + 02 Complete
+
+### What Was Done
+
+**Task-01: Deterministic Assistant IDs (Bug 1 Fix)**
+- `storage.py` (`BaseStore.create()`): Changed `resource_id = generate_id()` → `resource_id = data.get(self._id_field) or generate_id()`. When `assistant_id` is present in data, it's used as the resource ID.
+- `postgres_storage.py` (`PostgresAssistantStore.create()`): Same deterministic ID logic, plus `ON CONFLICT (id) DO UPDATE` upsert clause so re-syncing the same agent is idempotent (updates config, increments version).
+
+**Task-02: Owner Scoping Fix (Bug 2 Fix)**
+- Added `_is_synced()` static method to both `AssistantStore` and `PostgresAssistantStore` — returns True when `metadata.supabase_agent_id` is set.
+- `AssistantStore.get()` (in-memory): Overrides `BaseStore.get()` — owner match OR synced → visible.
+- `AssistantStore.list()` (in-memory): Overrides `BaseStore.list()` — includes owned AND synced assistants.
+- `PostgresAssistantStore.get()`: Two-query approach — first owner-filtered (fast path), then fallback for synced assistants (`metadata->>'supabase_agent_id' IS NOT NULL`).
+- `PostgresAssistantStore.list()`: SQL WHERE clause extended with `OR metadata->>'supabase_agent_id' IS NOT NULL`.
+- `update()` and `delete()` remain strictly owner-scoped — only the sync owner or creating user can modify/delete.
+
+**Tests: 15 new tests, 565 total passing**
+- `TestDeterministicAssistantIds` (6 tests): provided ID used, fallback generation, empty-string fallback, get-by-provided-ID, config preservation, duplicate-ID overwrites.
+- `TestSyncedAssistantVisibility` (9 tests): synced visible via get/list to any user, non-synced still isolated, mixed scenario counts correct, config round-trip, update/delete still require owner, nonexistent returns None, multiple synced all visible.
+
+### Files Modified
+- `apps/python/src/robyn_server/storage.py` — `BaseStore.create()` + new `AssistantStore.get()`/`list()`/`_is_synced()`
+- `apps/python/src/robyn_server/postgres_storage.py` — `create()` upsert + `get()` fallback + `list()` OR clause + `_is_synced()`
+- `apps/python/src/robyn_server/tests/test_storage.py` — 15 new tests in 2 new test classes
+
+### Files NOT Modified (confirmed correct as-is)
+- `agent_sync.py` — already passes `assistant_id` and builds correct config
+- `routes/streams.py` — `_build_runnable_config()` already merges assistant config correctly once lookup succeeds
+- `routes/assistants.py` — already passes `assistant_id` through to `create()`
+- Graph package — no changes needed
+
+### What Remains
+- **Task-03: End-to-End Verification** — Push feature branch, build feature Docker image, test in Next.js app with real Supabase agents. Verify: assistant lookup succeeds, config propagates to graph, MCP tools load, correct model used.

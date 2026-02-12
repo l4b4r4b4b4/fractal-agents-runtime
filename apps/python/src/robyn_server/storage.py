@@ -110,13 +110,17 @@ class BaseStore(Generic[T]):
         """Create a new resource with owner stamping.
 
         Args:
-            data: Resource data (without ID or timestamps)
+            data: Resource data (without ID or timestamps).
+                  If ``self._id_field`` (e.g. ``assistant_id``) is present
+                  in *data*, that value is used as the resource ID instead
+                  of generating a random one.  This enables deterministic
+                  IDs for synced assistants.
             owner_id: ID of the owner (from authenticated user)
 
         Returns:
             Created resource instance
         """
-        resource_id = generate_id()
+        resource_id = data.get(self._id_field) or generate_id()
         now = utc_now()
 
         # Ensure metadata exists and stamp owner
@@ -300,11 +304,23 @@ class AssistantStore(BaseStore[Assistant]):
             updated_at=data["updated_at"],
         )
 
+    @staticmethod
+    def _is_synced(resource_data: dict[str, Any]) -> bool:
+        """Return True if the assistant was created by agent sync.
+
+        Synced assistants carry ``supabase_agent_id`` in their metadata and
+        should be visible to any authenticated user regardless of owner.
+        """
+        metadata = resource_data.get("metadata", {})
+        return bool(metadata.get("supabase_agent_id"))
+
     async def create(self, data: dict[str, Any], owner_id: str) -> Assistant:
         """Create a new assistant.
 
         Args:
-            data: Assistant data with required 'graph_id'
+            data: Assistant data with required 'graph_id'.
+                  If ``assistant_id`` is present, it is used as the resource
+                  ID (deterministic ID for synced assistants).
             owner_id: ID of the owner
 
         Returns:
@@ -321,6 +337,50 @@ class AssistantStore(BaseStore[Assistant]):
             data = {**data, "version": 1}
 
         return await super().create(data, owner_id)
+
+    async def get(self, resource_id: str, owner_id: str) -> Assistant | None:
+        """Get an assistant by ID.
+
+        Owner-scoped for user-created assistants.  Synced assistants (those
+        with ``supabase_agent_id`` in metadata) are visible to any
+        authenticated user because Supabase RBAC controls which IDs the
+        frontend sends.
+        """
+        resource_data = self._data.get(resource_id)
+        if resource_data is None:
+            return None
+
+        # Owner match → always allowed
+        if self._get_owner(resource_data) == owner_id:
+            return self._to_model(resource_data)
+
+        # Synced assistants are accessible by any authenticated user
+        if self._is_synced(resource_data):
+            return self._to_model(resource_data)
+
+        logger.debug("Access denied: %s not owned by %s", resource_id, owner_id)
+        return None
+
+    async def list(self, owner_id: str, **filters: Any) -> list[Assistant]:
+        """List assistants owned by the user **plus** synced assistants.
+
+        Synced assistants (created by agent sync from Supabase) are included
+        for every authenticated user so the frontend's ``/assistants/search``
+        finds them.
+        """
+        results: list[Assistant] = []
+        for resource_data in self._data.values():
+            owned = self._get_owner(resource_data) == owner_id
+            synced = self._is_synced(resource_data)
+            if not (owned or synced):
+                continue
+
+            if not self._matches_filters(resource_data, filters):
+                continue
+
+            results.append(self._to_model(resource_data))
+
+        return results
 
     async def update(
         self, resource_id: str, data: dict[str, Any], owner_id: str

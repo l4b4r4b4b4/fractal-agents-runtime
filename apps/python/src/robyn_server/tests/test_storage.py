@@ -739,3 +739,282 @@ class TestCrossOwnerIsolation:
         )
         assert await storage.threads.get(thread_b.thread_id, user_b) is not None
         assert await storage.runs.get(run_b.run_id, user_b) is not None
+
+
+# ============================================================================
+# Deterministic Assistant ID Tests
+# ============================================================================
+
+
+class TestDeterministicAssistantIds:
+    """Tests for caller-provided assistant_id support (Bug 1 fix)."""
+
+    async def test_create_with_provided_assistant_id(
+        self, assistant_store: AssistantStore
+    ):
+        """Create uses the caller-provided assistant_id instead of generating one."""
+        provided_id = "a0000000-0000-4000-a000-000000000001"
+        data = {"graph_id": "agent", "assistant_id": provided_id}
+
+        assistant = await assistant_store.create(data, "user-123")
+
+        assert assistant.assistant_id == provided_id
+
+    async def test_create_without_assistant_id_generates_one(
+        self, assistant_store: AssistantStore
+    ):
+        """Create without assistant_id still auto-generates a unique ID."""
+        assistant = await assistant_store.create({"graph_id": "agent"}, "user-123")
+
+        assert assistant.assistant_id is not None
+        assert len(assistant.assistant_id) == 32  # UUID hex
+
+    async def test_create_with_empty_assistant_id_generates_one(
+        self, assistant_store: AssistantStore
+    ):
+        """Create with empty-string assistant_id falls back to generation."""
+        data = {"graph_id": "agent", "assistant_id": ""}
+        assistant = await assistant_store.create(data, "user-123")
+
+        assert assistant.assistant_id != ""
+        assert len(assistant.assistant_id) == 32
+
+    async def test_get_by_provided_id(self, assistant_store: AssistantStore):
+        """Retrieving by the provided assistant_id works."""
+        provided_id = "my-deterministic-id-001"
+        data = {"graph_id": "agent", "assistant_id": provided_id}
+        await assistant_store.create(data, "user-123")
+
+        retrieved = await assistant_store.get(provided_id, "user-123")
+
+        assert retrieved is not None
+        assert retrieved.assistant_id == provided_id
+        assert retrieved.graph_id == "agent"
+
+    async def test_provided_id_preserves_config(self, assistant_store: AssistantStore):
+        """Deterministic-ID assistant preserves full config including configurable."""
+        provided_id = "agent-uuid-with-config"
+        data = {
+            "graph_id": "agent",
+            "assistant_id": provided_id,
+            "config": {
+                "configurable": {
+                    "model_name": "openai:gpt-4o-mini",
+                    "system_prompt": "You are a helpful assistant.",
+                    "mcp_config": {
+                        "servers": [{"name": "s1", "url": "http://localhost:8080"}]
+                    },
+                }
+            },
+        }
+        await assistant_store.create(data, "system")
+
+        retrieved = await assistant_store.get(provided_id, "system")
+
+        assert retrieved is not None
+        assert retrieved.config.configurable["model_name"] == "openai:gpt-4o-mini"
+        assert (
+            retrieved.config.configurable["system_prompt"]
+            == "You are a helpful assistant."
+        )
+        assert "mcp_config" in retrieved.config.configurable
+
+    async def test_two_creates_with_same_id_second_overwrites(
+        self, assistant_store: AssistantStore
+    ):
+        """Creating with the same provided ID overwrites the first entry."""
+        provided_id = "duplicate-id"
+        await assistant_store.create(
+            {"graph_id": "agent", "assistant_id": provided_id, "name": "First"},
+            "user-123",
+        )
+        second = await assistant_store.create(
+            {"graph_id": "agent", "assistant_id": provided_id, "name": "Second"},
+            "user-123",
+        )
+
+        assert second.name == "Second"
+        retrieved = await assistant_store.get(provided_id, "user-123")
+        assert retrieved is not None
+        assert retrieved.name == "Second"
+
+
+# ============================================================================
+# Synced Assistant Visibility Tests
+# ============================================================================
+
+
+class TestSyncedAssistantVisibility:
+    """Tests for synced assistant cross-owner visibility (Bug 2 fix).
+
+    Synced assistants (those with ``supabase_agent_id`` in metadata) should
+    be visible to any authenticated user via ``get()`` and ``list()``, while
+    user-created assistants remain strictly owner-isolated.
+    """
+
+    @staticmethod
+    def _synced_payload(
+        assistant_id: str = "supabase-agent-uuid-001",
+        graph_id: str = "agent",
+    ) -> dict:
+        """Build a payload that mimics what agent_sync produces."""
+        return {
+            "assistant_id": assistant_id,
+            "graph_id": graph_id,
+            "config": {
+                "configurable": {
+                    "model_name": "openai:gpt-4o-mini",
+                    "mcp_config": {"servers": []},
+                }
+            },
+            "metadata": {
+                "supabase_agent_id": assistant_id,
+                "supabase_organization_id": "org-001",
+                "synced_at": "2026-02-12T00:00:00+00:00",
+            },
+        }
+
+    async def test_synced_assistant_visible_to_any_user_via_get(
+        self, assistant_store: AssistantStore
+    ):
+        """A synced assistant created by 'system' is visible to a real user via get()."""
+        payload = self._synced_payload()
+        await assistant_store.create(payload, "system")
+
+        retrieved = await assistant_store.get(payload["assistant_id"], "real-user-abc")
+
+        assert retrieved is not None
+        assert retrieved.assistant_id == payload["assistant_id"]
+        assert retrieved.config.configurable["model_name"] == "openai:gpt-4o-mini"
+
+    async def test_synced_assistant_visible_to_any_user_via_list(
+        self, assistant_store: AssistantStore
+    ):
+        """A synced assistant appears in list() for any authenticated user."""
+        payload = self._synced_payload()
+        await assistant_store.create(payload, "system")
+
+        # Also create a user-owned assistant
+        await assistant_store.create({"graph_id": "agent"}, "real-user-abc")
+
+        results = await assistant_store.list("real-user-abc")
+
+        assistant_ids = [a.assistant_id for a in results]
+        assert payload["assistant_id"] in assistant_ids
+        assert len(results) == 2  # synced + user-owned
+
+    async def test_non_synced_assistant_still_isolated(
+        self, assistant_store: AssistantStore
+    ):
+        """A regular (non-synced) assistant is NOT visible to other users."""
+        await assistant_store.create(
+            {"graph_id": "agent", "name": "Private"},
+            "user-owner",
+        )
+
+        # Different user cannot see it
+        assert await assistant_store.list("other-user") == []
+
+    async def test_synced_visible_but_non_synced_hidden_in_same_store(
+        self, assistant_store: AssistantStore
+    ):
+        """Mixed scenario: synced assistants visible, regular ones hidden."""
+        synced_payload = self._synced_payload("synced-id")
+        await assistant_store.create(synced_payload, "system")
+        await assistant_store.create(
+            {"graph_id": "agent", "name": "UserA Private"}, "user-a"
+        )
+        await assistant_store.create(
+            {"graph_id": "agent", "name": "UserB Private"}, "user-b"
+        )
+
+        results_a = await assistant_store.list("user-a")
+        results_b = await assistant_store.list("user-b")
+        results_c = await assistant_store.list("user-c")
+
+        # user-a sees: synced + own private = 2
+        assert len(results_a) == 2
+        # user-b sees: synced + own private = 2
+        assert len(results_b) == 2
+        # user-c sees: synced only = 1
+        assert len(results_c) == 1
+        assert results_c[0].assistant_id == "synced-id"
+
+    async def test_synced_assistant_config_propagates(
+        self, assistant_store: AssistantStore
+    ):
+        """Full config (model, system prompt, MCP) survives create→get round-trip."""
+        payload = self._synced_payload()
+        payload["config"]["configurable"]["system_prompt"] = (
+            "Du bist ein Rechtsassistent."
+        )
+        payload["config"]["configurable"]["temperature"] = 0.3
+        await assistant_store.create(payload, "system")
+
+        retrieved = await assistant_store.get(payload["assistant_id"], "any-user")
+
+        assert retrieved is not None
+        configurable = retrieved.config.configurable
+        assert configurable["model_name"] == "openai:gpt-4o-mini"
+        assert configurable["system_prompt"] == "Du bist ein Rechtsassistent."
+        assert configurable["temperature"] == 0.3
+        assert "mcp_config" in configurable
+
+    async def test_update_synced_assistant_requires_owner(
+        self, assistant_store: AssistantStore
+    ):
+        """Updating a synced assistant still requires the correct owner."""
+        payload = self._synced_payload()
+        await assistant_store.create(payload, "system")
+
+        # A different user can read it but NOT update it
+        result = await assistant_store.update(
+            payload["assistant_id"],
+            {"name": "Hacked"},
+            "attacker-user",
+        )
+        assert result is None
+
+        # The original owner can update
+        result = await assistant_store.update(
+            payload["assistant_id"],
+            {"name": "Updated By System"},
+            "system",
+        )
+        assert result is not None
+        assert result.name == "Updated By System"
+
+    async def test_delete_synced_assistant_requires_owner(
+        self, assistant_store: AssistantStore
+    ):
+        """Deleting a synced assistant still requires the correct owner."""
+        payload = self._synced_payload()
+        await assistant_store.create(payload, "system")
+
+        # A different user cannot delete it
+        assert (
+            await assistant_store.delete(payload["assistant_id"], "attacker") is False
+        )
+
+        # The original owner can delete
+        assert await assistant_store.delete(payload["assistant_id"], "system") is True
+        assert await assistant_store.get(payload["assistant_id"], "system") is None
+
+    async def test_get_nonexistent_synced_id_returns_none(
+        self, assistant_store: AssistantStore
+    ):
+        """Requesting a non-existent ID returns None, not an error."""
+        result = await assistant_store.get("does-not-exist", "any-user")
+        assert result is None
+
+    async def test_multiple_synced_assistants_all_visible(
+        self, assistant_store: AssistantStore
+    ):
+        """Multiple synced assistants from different orgs are all visible."""
+        for index in range(3):
+            payload = self._synced_payload(f"agent-{index}")
+            payload["metadata"]["supabase_organization_id"] = f"org-{index}"
+            await assistant_store.create(payload, "system")
+
+        results = await assistant_store.list("any-user")
+        assert len(results) == 3

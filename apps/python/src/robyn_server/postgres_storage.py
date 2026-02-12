@@ -154,14 +154,21 @@ class PostgresAssistantStore:
         self._pool = pool
 
     async def create(self, data: dict[str, Any], owner_id: str) -> Assistant:
-        """Create a new assistant.
+        """Create a new assistant (upsert if ``assistant_id`` provided).
+
+        When ``data["assistant_id"]`` is present the value is used as the
+        resource ID instead of generating a random one.  An ``ON CONFLICT``
+        clause updates the existing row so that re-syncing the same agent
+        is idempotent.
 
         Args:
             data: Assistant data with required ``graph_id``.
+                  If ``assistant_id`` is present it is used as the resource
+                  ID (deterministic ID for synced assistants).
             owner_id: ID of the owner.
 
         Returns:
-            Created Assistant instance.
+            Created (or upserted) Assistant instance.
 
         Raises:
             ValueError: If ``graph_id`` is missing.
@@ -169,7 +176,7 @@ class PostgresAssistantStore:
         if "graph_id" not in data:
             raise ValueError("graph_id is required")
 
-        resource_id = _generate_id()
+        resource_id = data.get("assistant_id") or _generate_id()
         now = _utc_now()
 
         metadata = data.get("metadata", {}).copy()
@@ -182,8 +189,18 @@ class PostgresAssistantStore:
             await connection.execute(
                 f"""
                 INSERT INTO {_SCHEMA}.assistants
-                    (id, graph_id, config, context, metadata, name, description, version, created_at, updated_at)
+                    (id, graph_id, config, context, metadata, name,
+                     description, version, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    graph_id    = EXCLUDED.graph_id,
+                    config      = EXCLUDED.config,
+                    context     = EXCLUDED.context,
+                    metadata    = EXCLUDED.metadata,
+                    name        = EXCLUDED.name,
+                    description = EXCLUDED.description,
+                    version     = {_SCHEMA}.assistants.version + 1,
+                    updated_at  = EXCLUDED.updated_at
                 """,
                 (
                     resource_id,
@@ -212,9 +229,24 @@ class PostgresAssistantStore:
             updated_at=now,
         )
 
+    @staticmethod
+    def _is_synced(row: dict[str, Any]) -> bool:
+        """Return True if the row represents a synced (Supabase-originated) assistant."""
+        metadata = row.get("metadata", {})
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+        return bool(metadata.get("supabase_agent_id"))
+
     async def get(self, resource_id: str, owner_id: str) -> Assistant | None:
-        """Get an assistant by ID if owned by the user."""
+        """Get an assistant by ID.
+
+        Owner-scoped for user-created assistants.  Synced assistants (those
+        with ``supabase_agent_id`` in metadata) are visible to any
+        authenticated user because Supabase RBAC controls which IDs the
+        frontend sends.
+        """
         async with self._pool.connection() as connection:
+            # First try owner-scoped lookup (fast path)
             result = await connection.execute(
                 f"""
                 SELECT id, graph_id, config, context, metadata, name,
@@ -226,13 +258,33 @@ class PostgresAssistantStore:
             )
             row = await result.fetchone()
 
+            if row is not None:
+                return self._row_to_model(row)
+
+            # Fallback: check for synced assistant (any owner)
+            result = await connection.execute(
+                f"""
+                SELECT id, graph_id, config, context, metadata, name,
+                       description, version, created_at, updated_at
+                FROM {_SCHEMA}.assistants
+                WHERE id = %s AND metadata->>'supabase_agent_id' IS NOT NULL
+                """,
+                (resource_id,),
+            )
+            row = await result.fetchone()
+
         if row is None:
             return None
 
         return self._row_to_model(row)
 
     async def list(self, owner_id: str, **filters: Any) -> list[Assistant]:
-        """List assistants owned by the user."""
+        """List assistants owned by the user **plus** synced assistants.
+
+        Synced assistants (created by agent sync from Supabase) are included
+        for every authenticated user so the frontend's ``/assistants/search``
+        finds them.
+        """
         async with self._pool.connection() as connection:
             result = await connection.execute(
                 f"""
@@ -240,6 +292,7 @@ class PostgresAssistantStore:
                        description, version, created_at, updated_at
                 FROM {_SCHEMA}.assistants
                 WHERE metadata->>'owner' = %s
+                   OR metadata->>'supabase_agent_id' IS NOT NULL
                 ORDER BY created_at DESC
                 """,
                 (owner_id,),
