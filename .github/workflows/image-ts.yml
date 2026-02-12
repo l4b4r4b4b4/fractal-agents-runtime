@@ -29,6 +29,8 @@ jobs:
           filters: |
             ts:
               - 'apps/ts/**'
+              - 'packages/ts/**'
+              - '.devops/docker/ts.Dockerfile'
               - '.github/workflows/image-ts.yml'
 
   # ── Build & Push ────────────────────────────────────────────────────
@@ -76,8 +78,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: apps/ts
-          file: apps/ts/Dockerfile
+          context: .
+          file: .devops/docker/ts.Dockerfile
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           sbom: true

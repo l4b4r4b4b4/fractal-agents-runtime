@@ -5,7 +5,7 @@ A2A handlers) can call to run the LangGraph agent.
 
 This module is intentionally self-contained — it does NOT import from
 ``robyn_server.routes.streams`` to avoid circular dependencies. It reuses
-the same ``graph()`` factory from ``react_agent_with_mcp_tools.agent`` and builds its own
+the same ``graph()`` factory from ``react_agent.agent`` and builds its own
 ``RunnableConfig``.
 
 Example::
@@ -25,7 +25,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 
-from react_agent_with_mcp_tools.tracing import inject_tracing
+from fractal_agent_infra.tracing import inject_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ def _build_mcp_runnable_config(
     configurable["user_id"] = owner_id
 
     # Include assistant config reference for
-    # _merge_assistant_configurable_into_run_config in react_agent_with_mcp_tools.agent
+    # _merge_assistant_configurable_into_run_config in react_agent.agent
     if assistant_config and isinstance(assistant_config, dict):
         configurable["assistant"] = assistant_config
 
@@ -172,8 +172,9 @@ async def execute_agent_run(
         print(text)
     """
     # Import inside function to avoid circular imports at module level.
+    from robyn_server.database import get_checkpointer, get_store
     from robyn_server.storage import get_storage
-    from react_agent_with_mcp_tools.agent import graph as build_agent_graph
+    from react_agent.agent import graph as build_agent_graph
 
     storage = get_storage()
 
@@ -241,7 +242,11 @@ async def execute_agent_run(
         thread_id,
     )
 
-    agent = await build_agent_graph(runnable_config)
+    agent = await build_agent_graph(
+        runnable_config,
+        checkpointer=get_checkpointer(),
+        store=get_store(),
+    )
 
     # --- Invoke ---
     input_message = HumanMessage(content=message, id=str(uuid.uuid4()))

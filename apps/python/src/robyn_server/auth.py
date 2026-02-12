@@ -5,7 +5,7 @@ This module provides:
 - Robyn middleware for authenticating requests
 - User context extraction for downstream handlers
 
-The authentication flow mirrors `react_agent_with_mcp_tools/security/auth.py` but adapted
+The authentication flow mirrors `fractal_agent_infra/security/auth.py` but adapted
 for Robyn's middleware system.
 """
 

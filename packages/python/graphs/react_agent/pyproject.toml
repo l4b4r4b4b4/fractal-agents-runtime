@@ -1,0 +1,94 @@
+[project]
+name = "fractal-graph-react-agent"
+version = "0.0.0"
+description = "Portable ReAct agent graph with MCP tools and RAG — part of the fractal-agent-graphs catalog"
+authors = [
+    { name = "l4b4r4b4b4" },
+]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.11.0,<3.13"
+keywords = ["langgraph", "langchain", "mcp", "agent", "rag", "react", "fractal"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "langgraph>=1.0.8",
+    "langchain-core>=1.2.11",
+    "langchain>=1.2.10",
+    "langchain-openai>=1.1.9",
+    "langchain-mcp-adapters>=0.2.1",
+    "pydantic>=2.11.0,<3",
+    "aiohttp>=3.8.0",
+    "mcp>=1.9.1",
+    # Shared infrastructure (local path dep for now)
+    "fractal-agent-infra",
+]
+
+[project.urls]
+Homepage = "https://github.com/l4b4r4b4b4/fractal-agents-runtime"
+Repository = "https://github.com/l4b4r4b4b4/fractal-agents-runtime"
+Issues = "https://github.com/l4b4r4b4b4/fractal-agents-runtime/issues"
+
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["react_agent*"]
+
+[tool.uv.sources]
+fractal-agent-infra = { path = "../../infra/fractal_agent_infra", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.8.4",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+norecursedirs = ["__pycache__"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D",        # pydocstyle — we use Google-style docstrings checked manually
+    "ANN",      # flake8-annotations — we use type hints but not exhaustively yet
+    "COM812",   # trailing comma — conflicts with ruff format
+    "ISC001",   # implicit string concat — conflicts with ruff format
+    "S101",     # assert — used in tests and LangGraph auth handlers
+    "S105",     # hardcoded password — false positive on store key names
+    "T201",     # print — acceptable in scripts
+    "FBT",      # boolean trap — too strict for config objects
+    "PLR0913",  # too many arguments — graph factories are naturally wide
+    "TCH",      # type-checking imports — not worth the complexity yet
+    # ── Integration-code patterns (intentional) ───────────────────────
+    "BLE001",   # blind exception — we catch broad exceptions at integration boundaries
+    "ERA001",   # commented-out code — ruff misidentifies doc comments as dead code
+    "PLC0415",  # non-top-level import — lazy imports to break circular deps
+    "PLW0603",  # global statement — module-level state for langfuse init
+    "TRY300",   # try/except return — style preference, not a bug
+    "TRY301",   # abstract raise — style preference, not a bug
+    # ── Complexity thresholds (graph() is inherently complex) ─────────
+    "C901",     # mccabe complexity
+    "PLR0911",  # too many return statements
+    "PLR0912",  # too many branches
+    "PLR0915",  # too many statements
+    "PLR2004",  # magic value comparison — acceptable in protocol code
+]
