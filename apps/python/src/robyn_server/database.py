@@ -4,15 +4,22 @@ Manages the shared async connection pool and provides per-request
 LangGraph checkpointer / store factories.  All components share a single
 ``AsyncConnectionPool`` to minimise Postgres connections.
 
-**Why per-request factories?**
+**Why per-request factories with no-op Locks?**
 
 ``AsyncPostgresSaver`` and ``AsyncPostgresStore`` each create an internal
-``asyncio.Lock`` at construction time, bound to the active event loop.
-Robyn may dispatch HTTP requests on an event loop different from the one
-used during the startup handler.  Reusing a singleton created at startup
-causes ``RuntimeError: Lock is bound to a different event loop`` on the
-second+ request.  Creating lightweight wrapper instances per-request
-(sharing the same pool) avoids this entirely.
+``asyncio.Lock`` that binds lazily to the first event loop that calls
+``acquire()``.  Robyn (via Actix) may resume an SSE async generator on a
+**different** event loop mid-stream — the checkpoint *read* at stream
+start binds the Lock to Loop-A, then the checkpoint *write* at stream
+end runs on Loop-B → ``RuntimeError: Lock is bound to a different event
+loop``.
+
+Creating per-request instances is necessary but not sufficient because
+the Lock still binds on first use within the request.  Since each
+per-request instance is used by exactly one request and the underlying
+``AsyncConnectionPool`` already serialises connection checkout, the
+instance-level Lock is redundant.  We replace it with a no-op async
+context manager.
 
 Usage at server startup::
 
@@ -159,14 +166,48 @@ def get_pool() -> AsyncConnectionPool | None:
     return _pool
 
 
-def get_checkpointer() -> AsyncPostgresSaver | None:
-    """Create a **fresh** ``AsyncPostgresSaver`` from the shared connection pool.
+class _NoOpLock:
+    """Async context manager that replaces ``asyncio.Lock`` for per-request use.
 
-    A new instance is returned on every call so that the internal
-    ``asyncio.Lock`` is created on the **caller's** event loop.  This
-    avoids the ``RuntimeError: Lock is bound to a different event loop``
-    that occurs when Robyn dispatches requests on a loop different from
-    the one used during startup.
+    ``AsyncPostgresSaver`` and ``AsyncPostgresStore`` use an instance-level
+    ``asyncio.Lock`` to serialise cursor access.  In Robyn's Actix-backed
+    runtime, SSE generators may be resumed on a **different** event loop
+    mid-stream, causing ``RuntimeError: Lock is bound to a different event
+    loop``.
+
+    Because each per-request instance is used by exactly one request, and
+    the underlying ``AsyncConnectionPool`` already handles connection-level
+    concurrency, the instance Lock is redundant.  This no-op replacement
+    avoids the cross-loop error entirely.
+    """
+
+    async def __aenter__(self) -> "_NoOpLock":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        return None
+
+    async def acquire(self) -> bool:
+        return True
+
+    def release(self) -> None:
+        pass
+
+    def locked(self) -> bool:
+        return False
+
+
+def get_checkpointer() -> AsyncPostgresSaver | None:
+    """Create a **fresh** ``AsyncPostgresSaver`` with a no-op Lock.
+
+    A new instance is returned on every call.  Its internal
+    ``asyncio.Lock`` is replaced with :class:`_NoOpLock` so that Robyn's
+    multi-loop SSE streaming cannot trigger cross-loop Lock errors.
 
     The underlying ``AsyncConnectionPool`` is shared and event-loop-safe,
     so creating lightweight wrappers per-request is cheap.  Table setup
@@ -175,8 +216,8 @@ def get_checkpointer() -> AsyncPostgresSaver | None:
     here.
 
     Returns:
-        A new ``AsyncPostgresSaver`` bound to the current event loop,
-        or ``None`` when Postgres is disabled.
+        A new ``AsyncPostgresSaver`` (Lock-free), or ``None`` when
+        Postgres is disabled.
     """
     if _pool is None:
         return None
@@ -185,25 +226,31 @@ def get_checkpointer() -> AsyncPostgresSaver | None:
         AsyncPostgresSaver as _AsyncPostgresSaver,
     )
 
-    return _AsyncPostgresSaver(conn=_pool)
+    checkpointer = _AsyncPostgresSaver(conn=_pool)
+    checkpointer.lock = _NoOpLock()
+    return checkpointer
 
 
 def get_store() -> AsyncPostgresStore | None:
-    """Create a **fresh** ``AsyncPostgresStore`` from the shared connection pool.
+    """Create a **fresh** ``AsyncPostgresStore`` with a no-op Lock.
 
-    Same rationale as :func:`get_checkpointer` — each call returns a new
-    instance whose ``asyncio.Lock`` belongs to the current event loop.
+    Same rationale as :func:`get_checkpointer` — the instance Lock is
+    replaced with :class:`_NoOpLock` to avoid cross-loop errors in
+    Robyn's SSE streaming.
 
     Returns:
-        A new ``AsyncPostgresStore`` bound to the current event loop,
-        or ``None`` when Postgres is disabled.
+        A new ``AsyncPostgresStore`` (Lock-free), or ``None`` when
+        Postgres is disabled.
     """
     if _pool is None:
         return None
 
     from langgraph.store.postgres.aio import AsyncPostgresStore as _AsyncPostgresStore
 
-    return _AsyncPostgresStore(conn=_pool)
+    store = _AsyncPostgresStore(conn=_pool)
+    if hasattr(store, "lock"):
+        store.lock = _NoOpLock()
+    return store
 
 
 def is_postgres_enabled() -> bool:
