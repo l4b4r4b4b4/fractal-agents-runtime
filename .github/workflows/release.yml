@@ -3,8 +3,10 @@ name: Release
 on:
   push:
     tags:
-      - "python-v*"
-      - "ts-v*"
+      - "python-graphs-v*"
+      - "python-runtime-v*"
+      - "ts-graphs-v*"
+      - "ts-runtime-v*"
 
 concurrency:
   group: release-${{ github.ref }}
@@ -19,10 +21,12 @@ jobs:
     name: Release Meta
     runs-on: ubuntu-latest
     outputs:
-      app: ${{ steps.parse.outputs.app }}
+      component: ${{ steps.parse.outputs.component }}
       version: ${{ steps.parse.outputs.version }}
-      python: ${{ steps.parse.outputs.python }}
-      ts: ${{ steps.parse.outputs.ts }}
+      python_graphs: ${{ steps.parse.outputs.python_graphs }}
+      python_runtime: ${{ steps.parse.outputs.python_runtime }}
+      ts_graphs: ${{ steps.parse.outputs.ts_graphs }}
+      ts_runtime: ${{ steps.parse.outputs.ts_runtime }}
     steps:
       - name: Parse tag
         id: parse
@@ -30,35 +34,46 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           echo "tag=${TAG}"
 
-          if [[ "$TAG" == python-v* ]]; then
-            VERSION="${TAG#python-v}"
-            echo "app=python" >> "$GITHUB_OUTPUT"
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "python=true" >> "$GITHUB_OUTPUT"
-            echo "ts=false" >> "$GITHUB_OUTPUT"
-          elif [[ "$TAG" == ts-v* ]]; then
-            VERSION="${TAG#ts-v}"
-            echo "app=ts" >> "$GITHUB_OUTPUT"
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "python=false" >> "$GITHUB_OUTPUT"
-            echo "ts=true" >> "$GITHUB_OUTPUT"
+          # Initialize all outputs to false
+          echo "python_graphs=false" >> "$GITHUB_OUTPUT"
+          echo "python_runtime=false" >> "$GITHUB_OUTPUT"
+          echo "ts_graphs=false" >> "$GITHUB_OUTPUT"
+          echo "ts_runtime=false" >> "$GITHUB_OUTPUT"
+
+          if [[ "$TAG" == python-graphs-v* ]]; then
+            VERSION="${TAG#python-graphs-v}"
+            echo "component=python-graphs" >> "$GITHUB_OUTPUT"
+            echo "python_graphs=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == python-runtime-v* ]]; then
+            VERSION="${TAG#python-runtime-v}"
+            echo "component=python-runtime" >> "$GITHUB_OUTPUT"
+            echo "python_runtime=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == ts-graphs-v* ]]; then
+            VERSION="${TAG#ts-graphs-v}"
+            echo "component=ts-graphs" >> "$GITHUB_OUTPUT"
+            echo "ts_graphs=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == ts-runtime-v* ]]; then
+            VERSION="${TAG#ts-runtime-v}"
+            echo "component=ts-runtime" >> "$GITHUB_OUTPUT"
+            echo "ts_runtime=true" >> "$GITHUB_OUTPUT"
           else
             echo "❌ Unknown tag format: ${TAG}"
             exit 1
           fi
 
-          echo "Releasing: app=${{ steps.parse.outputs.app || 'pending' }}, version=${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Releasing: component=${TAG%%-v*}, version=${VERSION}"
 
-  # ── Python: Verify, Build, Publish to PyPI ──────────────────────────
-  publish-python:
-    name: "Python / Publish to PyPI"
+  # ── Python Graphs: Verify, Build, Publish to PyPI ───────────────────
+  publish-python-graphs:
+    name: "Python Graphs / Publish to PyPI"
     runs-on: ubuntu-latest
     needs: meta
-    if: needs.meta.outputs.python == 'true'
+    if: needs.meta.outputs.python_graphs == 'true'
     environment: pypi
     defaults:
       run:
-        working-directory: apps/python
+        working-directory: packages/python/graphs/react_agent
     permissions:
       contents: read
       id-token: write
@@ -95,23 +110,20 @@ jobs:
       - name: Run tests
         run: uv run pytest -v --tb=short
 
-      - name: Validate OpenAPI spec
-        run: uv run python scripts/generate_openapi.py --validate
-
       - name: Build package
         run: uv build
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: apps/python/dist/
+          packages-dir: packages/python/graphs/react_agent/dist/
 
-  # ── Python: Release Image ───────────────────────────────────────────
+  # ── Python Runtime: Release Image ───────────────────────────────────
   image-python:
-    name: "Python / Release Image"
+    name: "Python Runtime / Release Image"
     runs-on: ubuntu-latest
-    needs: [meta, publish-python]
-    if: needs.meta.outputs.python == 'true'
+    needs: meta
+    if: needs.meta.outputs.python_runtime == 'true'
     permissions:
       contents: read
       packages: write
@@ -134,8 +146,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: apps/python
-          file: apps/python/Dockerfile
+          context: .
+          file: .devops/docker/python.Dockerfile
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
@@ -146,15 +158,15 @@ jobs:
           cache-from: type=gha,scope=python
           cache-to: type=gha,scope=python,mode=max
 
-  # ── TypeScript: Verify, Build, Publish to npm ───────────────────────
-  publish-ts:
-    name: "TypeScript / Publish to npm"
+  # ── TypeScript Graphs: Verify, Build, Publish to npm ────────────────
+  publish-ts-graphs:
+    name: "TypeScript Graphs / Publish to npm"
     runs-on: ubuntu-latest
     needs: meta
-    if: needs.meta.outputs.ts == 'true'
+    if: needs.meta.outputs.ts_graphs == 'true'
     defaults:
       run:
-        working-directory: apps/ts
+        working-directory: packages/ts/fractal-agent-runtime
     permissions:
       contents: read
     steps:
@@ -183,9 +195,6 @@ jobs:
       - name: Run tests
         run: bun test
 
-      - name: Validate OpenAPI spec
-        run: bun run scripts/generate-openapi.ts --validate
-
       - name: Build
         run: bun run build
 
@@ -194,12 +203,12 @@ jobs:
         env:
           BUN_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  # ── TypeScript: Release Image ───────────────────────────────────────
+  # ── TypeScript Runtime: Release Image ───────────────────────────────
   image-ts:
-    name: "TypeScript / Release Image"
+    name: "TypeScript Runtime / Release Image"
     runs-on: ubuntu-latest
-    needs: [meta, publish-ts]
-    if: needs.meta.outputs.ts == 'true'
+    needs: meta
+    if: needs.meta.outputs.ts_runtime == 'true'
     permissions:
       contents: read
       packages: write
@@ -222,8 +231,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: apps/ts
-          file: apps/ts/Dockerfile
+          context: .
+          file: .devops/docker/ts.Dockerfile
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
@@ -238,7 +247,8 @@ jobs:
   github-release:
     name: GitHub Release
     runs-on: ubuntu-latest
-    needs: [meta, publish-python, image-python, publish-ts, image-ts]
+    needs:
+      [meta, publish-python-graphs, image-python, publish-ts-graphs, image-ts]
     if: always() && needs.meta.result == 'success'
     permissions:
       contents: write
@@ -246,23 +256,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check publish jobs
+      - name: Check job results
         run: |
-          # At least one publish path must have succeeded
-          PY="${{ needs.publish-python.result }}"
-          TS="${{ needs.publish-ts.result }}"
+          # Check which jobs ran and whether any failed
+          PY_GRAPHS="${{ needs.publish-python-graphs.result }}"
+          PY_RUNTIME="${{ needs.image-python.result }}"
+          TS_GRAPHS="${{ needs.publish-ts-graphs.result }}"
+          TS_RUNTIME="${{ needs.image-ts.result }}"
 
-          if [[ "$PY" == "failure" || "$TS" == "failure" ]]; then
-            echo "❌ A publish job failed — skipping release"
-            exit 1
-          fi
+          for JOB_RESULT in "$PY_GRAPHS" "$PY_RUNTIME" "$TS_GRAPHS" "$TS_RUNTIME"; do
+            if [[ "$JOB_RESULT" == "failure" ]]; then
+              echo "❌ A release job failed — skipping GitHub release"
+              exit 1
+            fi
+          done
 
-          echo "✅ Publish succeeded for ${{ needs.meta.outputs.app }}"
+          echo "✅ Release succeeded for ${{ needs.meta.outputs.component }}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "${{ needs.meta.outputs.app }} v${{ needs.meta.outputs.version }}"
+          name: "${{ needs.meta.outputs.component }} v${{ needs.meta.outputs.version }}"
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(needs.meta.outputs.version, 'alpha') || contains(needs.meta.outputs.version, 'beta') || contains(needs.meta.outputs.version, 'rc') }}

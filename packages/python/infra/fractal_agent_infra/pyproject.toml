@@ -1,0 +1,82 @@
+[project]
+name = "fractal-agent-infra"
+version = "0.0.0"
+description = "Shared runtime infrastructure for fractal-agents-runtime — tracing, auth, and store namespace conventions"
+authors = [
+    { name = "l4b4r4b4b4" },
+]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.11.0,<3.13"
+keywords = ["langgraph", "langchain", "langfuse", "tracing", "auth", "fractal"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "langfuse>=3.14.1",
+    "langchain-core>=1.2.11",
+    "langgraph-sdk>=0.1.0",
+    "supabase>=2.15.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/l4b4r4b4b4/fractal-agents-runtime"
+Repository = "https://github.com/l4b4r4b4b4/fractal-agents-runtime"
+Issues = "https://github.com/l4b4r4b4b4/fractal-agents-runtime/issues"
+
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["fractal_agent_infra*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.8.4",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+norecursedirs = ["__pycache__"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D",        # pydocstyle — we use Google-style docstrings checked manually
+    "ANN",      # flake8-annotations — we use type hints but not exhaustively yet
+    "COM812",   # trailing comma — conflicts with ruff format
+    "ISC001",   # implicit string concat — conflicts with ruff format
+    "S101",     # assert — used in tests and LangGraph auth handlers
+    "S105",     # hardcoded password — false positive on store key names
+    "T201",     # print — acceptable in scripts
+    "FBT",      # boolean trap — too strict for config objects
+    "PLR0913",  # too many arguments — graph factories are naturally wide
+    "TCH",      # type-checking imports — not worth the complexity yet
+    "BLE001",   # blind exception — we catch broad exceptions at integration boundaries
+    "ERA001",   # commented-out code — ruff misidentifies doc comments as dead code
+    "PLC0415",  # non-top-level import — lazy imports to break circular deps
+    "PLW0603",  # global statement — module-level state for langfuse init
+    "TRY300",   # try/except return — style preference, not a bug
+    "TRY301",   # abstract raise — style preference, not a bug
+]
+
+[tool.ruff.lint.per-file-ignores]
+# LangGraph auth handlers have protocol-required unused args
+"src/fractal_agent_infra/security/auth.py" = ["ARG001"]

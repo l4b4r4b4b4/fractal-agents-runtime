@@ -1,0 +1,78 @@
+# ── Root .dockerignore ────────────────────────────────────────────────
+# Build context is the repo root (used by .devops/docker/*.Dockerfile).
+# The old apps/python/.dockerignore is NOT read by Docker when the
+# build context is the repo root — this file replaces it.
+
+# ── Virtual environments & Python caches ──────────────────────────────
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/*.egg-info/
+**/.ruff_cache/
+**/.pytest_cache/
+**/.mypy_cache/
+
+# ── Build artifacts ───────────────────────────────────────────────────
+**/dist/
+**/build/
+
+# ── Node / Bun artifacts ─────────────────────────────────────────────
+**/node_modules/
+**/.bun/
+
+# ── Tests (not needed in production images) ───────────────────────────
+apps/python/src/robyn_server/tests/
+packages/python/graphs/react_agent/tests/
+packages/python/infra/fractal_agent_infra/tests/
+apps/ts/src/**/*.test.ts
+apps/ts/src/**/*.spec.ts
+
+# ── Git & editor / IDE ────────────────────────────────────────────────
+.git/
+.gitignore
+.gitattributes
+**/.vscode/
+**/.idea/
+
+# ── Environment & secrets ─────────────────────────────────────────────
+**/.env
+**/.env.*
+!**/.env.example
+
+# ── DevOps (prevent recursive copy of Dockerfiles) ────────────────────
+.devops/docker/
+docker-compose*.yml
+docker-compose*.yaml
+
+# ── Documentation & non-runtime files ─────────────────────────────────
+*.md
+!packages/python/graphs/react_agent/README.md
+!packages/python/infra/fractal_agent_infra/README.md
+!packages/ts/fractal-agent-runtime/README.md
+LICENSE
+CHANGELOG.md
+CONTRIBUTING.md
+
+# ── CI / GitHub ───────────────────────────────────────────────────────
+.github/
+
+# ── Agent workspace & archives ────────────────────────────────────────
+.agent/
+**/archive/
+
+# ── Helm charts (deployed separately) ─────────────────────────────────
+**/helm/
+
+# ── Nix / Flake ───────────────────────────────────────────────────────
+flake.nix
+flake.lock
+.direnv/
+result
+
+# ── Miscellaneous ─────────────────────────────────────────────────────
+**/openapi-spec.json
+**/.lefthook/
+lefthook.yml
