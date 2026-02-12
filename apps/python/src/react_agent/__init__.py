@@ -21,8 +21,7 @@ from react_agent.agent import graph
 __all__ = ["graph"]
 
 try:
-    __version__ = version("fractal-graph-react-agent")
+    __version__ = version("fractal-agents-runtime")
 except PackageNotFoundError:
-    # Package is not installed (running from source / editable install
-    # before first ``uv sync``).
+    # Running from source / editable install before first ``uv sync``.
     __version__ = "0.0.0-dev"
