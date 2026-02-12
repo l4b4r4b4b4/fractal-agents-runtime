@@ -15,7 +15,6 @@ def test_package_version_is_string() -> None:
 
 def test_graph_is_callable() -> None:
     """The graph entry point is an async callable."""
-    import asyncio
     import inspect
 
     assert callable(graph)
