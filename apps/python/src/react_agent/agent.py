@@ -342,13 +342,17 @@ async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
     supabase_token = config.get("configurable", {}).get("x-supabase-access-token")
     if cfg.rag and cfg.rag.rag_url and cfg.rag.collections and supabase_token:
         for collection in cfg.rag.collections:
-            rag_tool = await create_rag_tool(cfg.rag.rag_url, collection, supabase_token)
+            rag_tool = await create_rag_tool(
+                cfg.rag.rag_url, collection, supabase_token
+            )
             tools.append(rag_tool)
 
     if cfg.mcp_config and cfg.mcp_config.servers:
         mcp_server_entries: dict[str, dict] = {}
         server_tool_filters: dict[str, set[str] | None] = {}
-        any_auth_required = any(server.auth_required for server in cfg.mcp_config.servers)
+        any_auth_required = any(
+            server.auth_required for server in cfg.mcp_config.servers
+        )
 
         if any_auth_required:
             mcp_tokens = await fetch_tokens(config)
@@ -387,7 +391,9 @@ async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
                 "url": server_url,
                 "headers": headers,
             }
-            server_tool_filters[server_key] = set(server.tools) if server.tools else None
+            server_tool_filters[server_key] = (
+                set(server.tools) if server.tools else None
+            )
 
         if mcp_server_entries:
             try:
@@ -413,7 +419,10 @@ async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
                 logger.info(
                     "MCP tools loaded: count=%d servers=%s",
                     len(filtered_tools),
-                    [_safe_mask_url(entry["url"]) for entry in mcp_server_entries.values()],
+                    [
+                        _safe_mask_url(entry["url"])
+                        for entry in mcp_server_entries.values()
+                    ],
                 )
             except Exception as e:
                 logger.warning("Failed to fetch MCP tools: %s", str(e))
@@ -423,7 +432,9 @@ async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
         # Custom endpoint - use ChatOpenAI with OpenAI-compatible base URL.
         # LangChain's vLLM integration docs recommend `openai_api_base` + `openai_api_key="EMPTY"`.
         masked_base_url = _safe_mask_url(cfg.base_url)
-        logger.info("LLM routing: custom endpoint enabled; base_url=%s", masked_base_url)
+        logger.info(
+            "LLM routing: custom endpoint enabled; base_url=%s", masked_base_url
+        )
 
         # Get API key for custom endpoint (do not log the key)
         api_key = get_api_key_for_model("custom:", config)
@@ -449,7 +460,9 @@ async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
         )
     else:
         # Standard provider - use init_chat_model
-        logger.info("LLM routing: standard provider enabled; model_name=%s", cfg.model_name)
+        logger.info(
+            "LLM routing: standard provider enabled; model_name=%s", cfg.model_name
+        )
         api_key = get_api_key_for_model(cfg.model_name, config)
         logger.info("LLM auth: standard provider api key present=%s", bool(api_key))
 

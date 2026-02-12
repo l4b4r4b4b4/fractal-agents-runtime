@@ -31,7 +31,6 @@ jobs:
           filters: |
             python:
               - 'apps/python/**'
-              - 'packages/python/**'
               - '.devops/docker/python.Dockerfile'
               - '.github/workflows/image-python.yml'
 

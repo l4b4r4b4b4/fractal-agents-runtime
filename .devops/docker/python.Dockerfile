@@ -1,6 +1,9 @@
 # Multi-stage Dockerfile for Fractal Agents Runtime — Python/Robyn
-# Build context: repo root (so we can access both apps/ and packages/)
+# Build context: repo root
 # Usage: docker build -f .devops/docker/python.Dockerfile .
+#
+# All Python packages (robyn_server, react_agent, fractal_agent_infra) are
+# consolidated under apps/python/src/ — no more separate packages/ copies.
 #
 # Best practices from https://docs.astral.sh/uv/guides/integration/docker/
 #   - Pin uv version via COPY --from distroless image
@@ -26,39 +29,27 @@ ENV UV_LINK_MODE=copy
 # Omit development dependencies in all uv sync calls
 ENV UV_NO_DEV=1
 
-# ── Copy path dependencies first (change less often than app code) ────
-# The app's pyproject.toml references these via:
-#   [tool.uv.sources]
-#   fractal-graph-react-agent = { path = "../../packages/python/graphs/react_agent" }
-#   fractal-agent-infra = { path = "../../packages/python/infra/fractal_agent_infra" }
-# From WORKDIR /repo/apps/python, ../../packages resolves to /repo/packages.
-COPY packages/python/infra/fractal_agent_infra/ /repo/packages/python/infra/fractal_agent_infra/
-COPY packages/python/graphs/react_agent/ /repo/packages/python/graphs/react_agent/
-
 # ── Install dependencies only (cached layer) ─────────────────────────
 # Bind-mount pyproject.toml + uv.lock so they don't create an extra image layer.
-# --no-install-project skips installing our project but DOES install all deps
-# (including the graph + infra path dependencies copied above).
+# --no-install-project skips installing our project but DOES install all deps.
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=apps/python/uv.lock,target=uv.lock \
     --mount=type=bind,source=apps/python/pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project --no-editable
 
 # ── Install the project itself ────────────────────────────────────────
-# Now copy project metadata + source for the final sync that installs
-# the robyn_server package into the venv (non-editable).
+# Copy project metadata + all source packages for the final sync that
+# installs everything into the venv (non-editable).
 COPY apps/python/pyproject.toml apps/python/uv.lock ./
 COPY apps/python/src/robyn_server/ ./src/robyn_server/
+COPY apps/python/src/react_agent/ ./src/react_agent/
+COPY apps/python/src/fractal_agent_infra/ ./src/fractal_agent_infra/
 
-# --reinstall-package forces uv to rebuild local path dependencies from
-# the freshly-copied source instead of reusing stale cached wheels
-# (package name+version don't change between commits, so uv's cache
-# can serve an outdated wheel without this flag).
+# Single --reinstall-package for the one consolidated package to ensure
+# fresh source is always picked up (version 0.0.0 doesn't change).
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-editable \
-    --reinstall-package fractal-agents-runtime \
-    --reinstall-package fractal-graph-react-agent \
-    --reinstall-package fractal-agent-infra
+    --reinstall-package fractal-agents-runtime
 
 # ── Runtime stage — minimal image ────────────────────────────────────
 FROM python:3.12-slim-bookworm AS runtime
@@ -78,7 +69,7 @@ RUN useradd --create-home --uid 65532 appuser
 WORKDIR /app
 
 # Copy only the virtual environment from builder.
-# Because we used --no-editable, the project + path dependency are fully
+# Because we used --no-editable, all source packages are fully
 # installed into site-packages — no source code needed in the final image.
 COPY --from=builder --chown=appuser:appuser /repo/apps/python/.venv /app/.venv
 
