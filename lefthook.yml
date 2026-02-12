@@ -30,6 +30,18 @@ pre-commit:
 pre-push:
   parallel: true
   commands:
+    no-merge-commits:
+      run: |
+        # Reject merge commits — enforce rebase workflow for linear history.
+        # Checks all commits being pushed that aren't on the remote yet.
+        MERGE_COMMITS=$(git log --merges --oneline @{upstream}..HEAD 2>/dev/null)
+        if [ -n "$MERGE_COMMITS" ]; then
+          echo "❌ Merge commits detected — use rebase instead:"
+          echo "$MERGE_COMMITS"
+          echo ""
+          echo "Fix: git rebase --onto <target> <merge-base> <branch>"
+          exit 1
+        fi
     python-test:
       root: apps/python/
       run: uv run pytest -q
