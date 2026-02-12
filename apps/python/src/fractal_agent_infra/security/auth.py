@@ -25,7 +25,9 @@ async def get_current_user(authorization: str | None) -> Auth.types.MinimalUserD
 
     # Ensure we have authorization header
     if not authorization:
-        raise Auth.exceptions.HTTPException(status_code=401, detail="Authorization header missing")
+        raise Auth.exceptions.HTTPException(
+            status_code=401, detail="Authorization header missing"
+        )
 
     # Parse the authorization header
     try:

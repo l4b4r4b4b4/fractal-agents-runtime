@@ -80,7 +80,9 @@ async def create_rag_tool(rag_url: str, collection_id: str, access_token: str):
                 for doc in documents:
                     doc_id = doc.get("id", "unknown")
                     content = doc.get("page_content", "")
-                    formatted_docs += f'  <document id="{doc_id}">\n    {content}\n  </document>\n'
+                    formatted_docs += (
+                        f'  <document id="{doc_id}">\n    {content}\n  </document>\n'
+                    )
 
                 formatted_docs += "</all-documents>"
                 return formatted_docs
