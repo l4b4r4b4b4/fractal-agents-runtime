@@ -1,10 +1,10 @@
-# Task-06: Commit, Push & PR
+# Task-06: Commit, Push, PR & v0.0.0 Release
 
-> **Status:** 🟡 In Progress (pre-commit checks done, awaiting commit/push/PR)
+> **Status:** 🟢 Complete
 > **Parent:** [Goal 19 — Package Structure Refactor](../scratchpad.md)
 > **Phase:** 2 (3-Layer Split)
 > **Depends on:** Task-05 (CI/Release) ✅
-> **Last Updated:** 2026-02-12 — Session 5
+> **Last Updated:** 2026-02-12 — Session 6
 
 ---
 
@@ -167,30 +167,40 @@ After the PR is opened:
 
 - [x] All pre-commit checks pass (see checklist above)
 - [ ] Commit message follows Conventional Commits with breaking change notation
-- [ ] PR opened against `development` with clear description
-- [ ] CI passes on the PR
-- [ ] PR is merged via squash merge
-- [ ] Tags `python-graphs-v0.0.0` and `python-runtime-v0.0.0` pushed after merge
-- [ ] Release pipeline succeeds for both tags
-- [ ] Goal 19 scratchpad updated to 🟢 Complete
+- [x] PR #7 opened against `development` with clear description
+- [x] CI passes on the PR
+- [x] PR #7 merged via squash merge (switched to rebase-only workflow after this)
+- [x] Tags `python-graphs-v0.0.0`, `python-runtime-v0.0.0`, `ts-runtime-v0.0.0` pushed on `main` HEAD
+- [x] All 3 release pipelines succeeded (PyPI + 2x GHCR Docker images)
+- [x] Goal 19 scratchpad updated to 🟢 Complete
 
 ---
 
 ## Notes
 
-- This is the largest single commit in the repo's history — the diff will be substantial
-- Squash merge is preferred to keep `development` history clean
-- The PR body uses the goals scratchpad as the source of truth for context
-- After v0.0.0 tags are pushed, the package structure is "locked in" — further changes require new versions
+- This was the largest single commit in the repo's history — 57 files, +6835/-864 lines
+- Switched from squash merge to rebase-only workflow mid-task (PRs #10, rulesets updated)
+- Discovered GitHub "rebase merge" rewrites commit SHAs — promotion from `development` → `main` must use force-push, not PRs
+- PyPI trusted publisher required one-time manual setup on pypi.org
+- Three release pipeline failures required follow-up fixes (PRs #11, #13) before all pipelines succeeded
 
-## Session 5 State (2026-02-12)
+## Session 6 Completion (2026-02-12)
 
-All Phase 1 + Phase 2 work is complete and verified but **nothing is committed yet**.
-The branch `refactor/package-structure` is at the same commit as `origin/development` (`c9a4464`).
-All changes are in the working tree. Next session should:
-1. Run final verification (pytest, ruff, grep)
-2. `git add -A && git commit` with the message above
-3. `git push origin refactor/package-structure`
-4. Open PR to `development`
-5. After merge: tag `python-graphs-v0.0.0` and `python-runtime-v0.0.0`
-6. Monitor release pipeline (PyPI publish + GHCR image build)
+**Executed steps:**
+1. ✅ Final verification: 550 tests pass, ruff clean, 0 stale references
+2. ✅ Added `packages/python/.gitignore` (caught .pyc/.egg-info in staging)
+3. ✅ Committed `76d30db` with `refactor!:` + `BREAKING CHANGE` footer
+4. ✅ Pushed, opened PR #7 to `development`, CI green, Copilot review (4 minor comments)
+5. ✅ Squash merged PR #7 into `development`
+6. ✅ Promoted to `main` via `release/v0.0.0` branch (PR #9, resolved divergence conflicts)
+7. ✅ Established rebase-only workflow (PR #10): rulesets, lefthook guard
+8. ✅ Fixed 3 release pipeline failures (PR #11): graph test, Dockerfile WORKDIR, ts.Dockerfile COPY
+9. ✅ Fixed lint (PR #13): unused asyncio import
+10. ✅ One-time branch sync: force-pushed `main` + `development` to `e293279`
+11. ✅ Tagged `python-graphs-v0.0.0`, `python-runtime-v0.0.0`, `ts-runtime-v0.0.0`
+12. ✅ All 3 release pipelines succeeded:
+    - `fractal-graph-react-agent` → PyPI ✅
+    - Python runtime Docker → GHCR ✅
+    - TS runtime Docker → GHCR ✅
+13. ✅ 3 GitHub Releases created with auto-generated changelogs
+14. ✅ Goal 19 scratchpad updated to 🟢 Complete

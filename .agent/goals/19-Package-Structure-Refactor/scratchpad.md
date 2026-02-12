@@ -250,14 +250,25 @@ apps/python/
 - [x] Zero workflow references to `packages/python/fractal_agent_runtime/` — confirmed via grep
 - [ ] `python-infra-v*` tag — deferred (infra is local path dep only for v0.0.0)
 
-#### Task-06: Commit, Push, PR — 🟡 IN PROGRESS
-
-Pre-commit checks all passing (verified Session 5). Remaining steps:
+#### Task-06: Commit, Push, PR & v0.0.0 Release — 🟢 COMPLETE
 
 - [x] Run full verification: `uv sync`, `pytest` (550 pass), `ruff check/format` on all dirs
-- [ ] `git add` all changes (new dirs, deleted dirs, modified files)
-- [ ] Commit with descriptive message
-- [ ] Push `refactor/package-structure` → PR to `development`
+- [x] Add `packages/python/.gitignore` (Python-standard patterns — was missing, caused .pyc/.egg-info staging)
+- [x] `git add -A && git commit` with `refactor!:` conventional commit + `BREAKING CHANGE` footer
+- [x] Push `refactor/package-structure`, open PR #7 to `development`
+- [x] CI green, Copilot review (4 comments — all pre-existing patterns, noted for v0.0.1)
+- [x] Squash merge PR #7 into `development` (`c349f6b`)
+- [x] Promote to `main` via `release/v0.0.0` branch (PR #9, resolved squash-merge divergence conflicts)
+- [x] Establish rebase-only workflow: updated rulesets via API + `.github/rulesets/*.json` + lefthook `no-merge-commits` guard (PR #10)
+- [x] Fix release pipeline failures (PR #11): graph placeholder test, python.Dockerfile WORKDIR, ts.Dockerfile premature COPY
+- [x] Fix lint in graph test (PR #13): unused asyncio import
+- [x] One-time sync: force-pushed `development` and `main` to same commit (`e293279`) — eliminated all divergence
+- [x] Tag `python-graphs-v0.0.0`, `python-runtime-v0.0.0`, `ts-runtime-v0.0.0` on `main` HEAD
+- [x] All 3 release pipelines succeeded:
+  - `fractal-graph-react-agent` published to PyPI ✅
+  - Python runtime Docker image pushed to GHCR ✅
+  - TS runtime Docker image pushed to GHCR ✅
+- [x] 3 GitHub Releases created with auto-generated changelogs
 
 ---
 
@@ -293,6 +304,8 @@ Pre-commit checks all passing (verified Session 5). Remaining steps:
 - [x] ~~Should the graph package on PyPI be `fractal-graph-react-agent` or something shorter?~~ → `fractal-graph-react-agent` (decided Session 4)
 - [x] ~~Should infra be published to PyPI for v0.0.0 or stay as local path dep only?~~ → Local path dep only for v0.0.0
 - [ ] Does `security/auth.py` (LangGraph SDK auth) belong in infra or should it travel with the graph when deploying to LangGraph Platform? → Staying in infra for now; revisit when Platform deploy is implemented
+- [ ] CI path filter gap: `ci.yml` only watches `apps/python/**` and `apps/ts/**` — changes to `packages/python/**` alone won't trigger Python CI jobs. Needs `packages/python/**` added to the filter.
+- [ ] GitHub rebase merge rewrites commit SHAs even for fast-forward-able cases — promotion from `development` → `main` must use force-push (with temporary protection disable) or API-based fast-forward, NOT PR-based rebase merge. Consider automating this.
 
 ---
 
@@ -319,14 +332,33 @@ Pre-commit checks all passing (verified Session 5). Remaining steps:
 - Full verification: 550 tests pass (7.72s), ruff clean on all 3 packages, 0 stale `fractal_agent_runtime` references
 - All task scratchpads updated with 🟢 Complete status and detailed implementation notes
 
-**What remains (Task-06 — next session):**
-1. Re-run final verification (pytest, ruff, grep) as sanity check
-2. `git add -A && git commit` with conventional commit message (see Task-06 scratchpad for exact message)
-3. `git push origin refactor/package-structure`
-4. Open PR to `development` (see Task-06 scratchpad for PR body)
-5. Wait for CI to pass
-6. Squash merge into `development`
-7. Tag `python-graphs-v0.0.0` → triggers PyPI publish of `fractal-graph-react-agent`
-8. Tag `python-runtime-v0.0.0` → triggers Docker image build + push to GHCR
-9. Monitor both release pipeline jobs
-10. Update Goal 19 status to 🟢 Complete
+---
+
+## Session 6 Summary (2026-02-12) — v0.0.0 RELEASED 🟢
+
+**What was done:**
+1. **Commit & PR:** Added `packages/python/.gitignore`, committed all Phase 1+2 changes (`76d30db`), pushed, opened PR #7 to `development`, squash merged
+2. **Promotion to main:** Created `release/v0.0.0` branch to resolve squash-merge divergence conflicts, merged to `main` via PR #9
+3. **Branching workflow overhaul:** Discovered squash merges cause permanent divergence between `main` and `development`. Switched to rebase-only:
+   - Updated both GitHub rulesets (`allowed_merge_methods: ["squash"]` → `["rebase"]`) via API + committed `.github/rulesets/*.json`
+   - Added `no-merge-commits` lefthook pre-push guard
+   - Learned that GitHub's "rebase merge" still rewrites commit SHAs — promotion must use force-push/fast-forward, not PRs
+4. **Release pipeline fixes (3 failures):**
+   - Graph package: added placeholder test (`test_package.py`) — pytest exit 5 on empty test dir
+   - Python Dockerfile: `WORKDIR /app` → `/repo/apps/python` — relative `../../packages` path couldn't traverse above `/app`
+   - TS Dockerfile: removed premature COPY of non-existent `packages/ts/fractal-agent-runtime/`
+   - Lint fix: removed unused `asyncio` import in graph test
+5. **One-time branch sync:** Force-pushed both `main` and `development` to same commit (`e293279`), eliminating all historical divergence
+6. **v0.0.0 release — ALL THREE SUCCEEDED:**
+   - `python-graphs-v0.0.0` → `fractal-graph-react-agent` published to PyPI ✅
+   - `python-runtime-v0.0.0` → Docker image pushed to GHCR ✅
+   - `ts-runtime-v0.0.0` → Docker image pushed to GHCR ✅
+   - PyPI required manual trusted publisher setup (one-time)
+7. **PRs:** #7 (refactor), #9 (promote), #10 (rebase workflow), #11 (pipeline fixes), #13 (lint fix)
+
+**Known issues for follow-up (v0.0.1):**
+- Copilot review: `assert` used for auth checks (should be explicit `raise`), `verify_token()` return type mismatch, string concat O(n²) in tools.py
+- CI path filter doesn't include `packages/python/**` — changes there won't trigger Python CI
+- Promotion workflow needs automation (force-push or API-based fast-forward instead of PR)
+
+**Goal 19 Status: 🟢 COMPLETE — Phase 2 merged, v0.0.0 released, rebase workflow established**
