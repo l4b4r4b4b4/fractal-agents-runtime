@@ -1,8 +1,18 @@
 """Database module for Postgres persistence.
 
-Manages the shared async connection pool, LangGraph checkpointer and store
-lifecycle. All components share a single ``AsyncConnectionPool`` to minimise
-Postgres connections.
+Manages the shared async connection pool and provides per-request
+LangGraph checkpointer / store factories.  All components share a single
+``AsyncConnectionPool`` to minimise Postgres connections.
+
+**Why per-request factories?**
+
+``AsyncPostgresSaver`` and ``AsyncPostgresStore`` each create an internal
+``asyncio.Lock`` at construction time, bound to the active event loop.
+Robyn may dispatch HTTP requests on an event loop different from the one
+used during the startup handler.  Reusing a singleton created at startup
+causes ``RuntimeError: Lock is bound to a different event loop`` on the
+second+ request.  Creating lightweight wrapper instances per-request
+(sharing the same pool) avoids this entirely.
 
 Usage at server startup::
 
@@ -14,7 +24,7 @@ Usage at server startup::
     # In Robyn shutdown handler
     await shutdown_database()
 
-Access components after initialisation::
+Access components per-request::
 
     from robyn_server.database import (
         get_checkpointer,
@@ -24,9 +34,9 @@ Access components after initialisation::
     )
 
     if is_postgres_enabled():
-        checkpointer = get_checkpointer()  # AsyncPostgresSaver
-        store = get_store()                 # AsyncPostgresStore
-        pool = get_pool()                   # AsyncConnectionPool
+        checkpointer = get_checkpointer()  # fresh AsyncPostgresSaver per call
+        store = get_store()                 # fresh AsyncPostgresStore per call
+        pool = get_pool()                   # shared AsyncConnectionPool
 """
 
 from __future__ import annotations
@@ -46,8 +56,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _pool: AsyncConnectionPool | None = None
-_checkpointer: AsyncPostgresSaver | None = None
-_store: AsyncPostgresStore | None = None
 _initialized: bool = False
 
 
@@ -76,7 +84,7 @@ async def initialize_database() -> bool:
         Nothing — connection errors are caught and logged so the server can
         fall back to in-memory mode.
     """
-    global _pool, _checkpointer, _store, _initialized  # noqa: PLW0603
+    global _pool, _initialized  # noqa: PLW0603
 
     from robyn_server.config import get_config
 
@@ -127,7 +135,7 @@ async def shutdown_database() -> None:
 
     Safe to call even when Postgres was never initialised.
     """
-    global _pool, _checkpointer, _store, _initialized  # noqa: PLW0603
+    global _pool, _initialized  # noqa: PLW0603
 
     if _pool is not None:
         try:
@@ -138,8 +146,6 @@ async def shutdown_database() -> None:
         finally:
             _pool = None
 
-    _checkpointer = None
-    _store = None
     _initialized = False
 
 
@@ -154,22 +160,50 @@ def get_pool() -> AsyncConnectionPool | None:
 
 
 def get_checkpointer() -> AsyncPostgresSaver | None:
-    """Return the ``AsyncPostgresSaver`` checkpointer, or ``None`` when Postgres is disabled.
+    """Create a **fresh** ``AsyncPostgresSaver`` from the shared connection pool.
 
-    The checkpointer provides short-term (thread-level) conversation memory.
-    Pass it to ``create_agent(checkpointer=...)`` to persist graph state.
+    A new instance is returned on every call so that the internal
+    ``asyncio.Lock`` is created on the **caller's** event loop.  This
+    avoids the ``RuntimeError: Lock is bound to a different event loop``
+    that occurs when Robyn dispatches requests on a loop different from
+    the one used during startup.
+
+    The underlying ``AsyncConnectionPool`` is shared and event-loop-safe,
+    so creating lightweight wrappers per-request is cheap.  Table setup
+    (``CREATE TABLE IF NOT EXISTS``) was already executed once at startup
+    via :func:`_create_checkpointer_and_store`, so it is **not** repeated
+    here.
+
+    Returns:
+        A new ``AsyncPostgresSaver`` bound to the current event loop,
+        or ``None`` when Postgres is disabled.
     """
-    return _checkpointer
+    if _pool is None:
+        return None
+
+    from langgraph.checkpoint.postgres.aio import (
+        AsyncPostgresSaver as _AsyncPostgresSaver,
+    )
+
+    return _AsyncPostgresSaver(conn=_pool)
 
 
 def get_store() -> AsyncPostgresStore | None:
-    """Return the ``AsyncPostgresStore``, or ``None`` when Postgres is disabled.
+    """Create a **fresh** ``AsyncPostgresStore`` from the shared connection pool.
 
-    The store provides cross-thread long-term memory (user preferences,
-    facts, etc.).  Pass it to ``create_agent(store=...)`` for namespace-
-    scoped persistence.
+    Same rationale as :func:`get_checkpointer` — each call returns a new
+    instance whose ``asyncio.Lock`` belongs to the current event loop.
+
+    Returns:
+        A new ``AsyncPostgresStore`` bound to the current event loop,
+        or ``None`` when Postgres is disabled.
     """
-    return _store
+    if _pool is None:
+        return None
+
+    from langgraph.store.postgres.aio import AsyncPostgresStore as _AsyncPostgresStore
+
+    return _AsyncPostgresStore(conn=_pool)
 
 
 def is_postgres_enabled() -> bool:
@@ -317,8 +351,6 @@ async def _create_checkpointer_and_store() -> None:
     After construction, ``.setup()`` is called on each to ensure the
     required tables exist (idempotent ``CREATE TABLE IF NOT EXISTS``).
     """
-    global _checkpointer, _store  # noqa: PLW0603
-
     if _pool is None:
         raise RuntimeError("Connection pool must be created before checkpointer/store")
 
@@ -327,13 +359,16 @@ async def _create_checkpointer_and_store() -> None:
     )
     from langgraph.store.postgres.aio import AsyncPostgresStore as _AsyncPostgresStore
 
-    _checkpointer = _AsyncPostgresSaver(conn=_pool)
-    _store = _AsyncPostgresStore(conn=_pool)
+    # Create temporary instances solely to run the idempotent DDL setup.
+    # These are discarded after setup — per-request instances are created
+    # by get_checkpointer() / get_store() on the caller's event loop.
+    setup_checkpointer = _AsyncPostgresSaver(conn=_pool)
+    setup_store = _AsyncPostgresStore(conn=_pool)
 
-    await _checkpointer.setup()
+    await setup_checkpointer.setup()
     logger.info("LangGraph checkpointer tables ready")
 
-    await _store.setup()
+    await setup_store.setup()
     logger.info("LangGraph store tables ready")
 
     await _enable_rls_on_langgraph_tables()
