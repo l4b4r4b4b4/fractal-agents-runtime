@@ -375,60 +375,110 @@ wheels = [
 ]
 
 [[package]]
+name = "fractal-agent-infra"
+version = "0.0.0"
+source = { editable = "../../packages/python/infra/fractal_agent_infra" }
+dependencies = [
+    { name = "langchain-core" },
+    { name = "langfuse" },
+    { name = "langgraph-sdk" },
+    { name = "supabase" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "langchain-core", specifier = ">=1.2.11" },
+    { name = "langfuse", specifier = ">=3.14.1" },
+    { name = "langgraph-sdk", specifier = ">=0.1.0" },
+    { name = "supabase", specifier = ">=2.15.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "ruff", specifier = ">=0.8.4" },
+]
+
+[[package]]
 name = "fractal-agents-runtime"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
-    { name = "aiohttp" },
     { name = "apscheduler" },
     { name = "croniter" },
     { name = "deepagents" },
-    { name = "langchain" },
+    { name = "fractal-agent-infra" },
+    { name = "fractal-graph-react-agent" },
     { name = "langchain-anthropic" },
-    { name = "langchain-core" },
-    { name = "langchain-mcp-adapters" },
-    { name = "langchain-openai" },
-    { name = "langfuse" },
-    { name = "langgraph" },
     { name = "langgraph-checkpoint-postgres" },
-    { name = "mcp" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic" },
     { name = "robyn" },
-    { name = "supabase" },
     { name = "tavily-python" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.8.0" },
     { name = "apscheduler", specifier = ">=3.11.2" },
     { name = "croniter", specifier = ">=6.0.0" },
     { name = "deepagents", specifier = ">=0.3.9" },
-    { name = "langchain", specifier = ">=1.2.10" },
+    { name = "fractal-agent-infra", editable = "../../packages/python/infra/fractal_agent_infra" },
+    { name = "fractal-graph-react-agent", editable = "../../packages/python/graphs/react_agent" },
     { name = "langchain-anthropic", specifier = ">=1.3.3" },
-    { name = "langchain-core", specifier = ">=1.2.11" },
-    { name = "langchain-mcp-adapters", specifier = ">=0.2.1" },
-    { name = "langchain-openai", specifier = ">=1.1.9" },
-    { name = "langfuse", specifier = ">=3.14.1" },
-    { name = "langgraph", specifier = ">=1.0.8" },
     { name = "langgraph-checkpoint-postgres", specifier = ">=3.0.4" },
-    { name = "mcp", specifier = ">=1.9.1" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2.0" },
-    { name = "pydantic", specifier = "==2.11.3" },
+    { name = "pydantic", specifier = ">=2.11.0,<3" },
     { name = "robyn", specifier = ">=0.76.0" },
-    { name = "supabase", specifier = ">=2.15.1" },
     { name = "tavily-python", specifier = ">=0.7.20" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "ruff", specifier = ">=0.8.4" },
+]
+
+[[package]]
+name = "fractal-graph-react-agent"
+version = "0.0.0"
+source = { editable = "../../packages/python/graphs/react_agent" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "fractal-agent-infra" },
+    { name = "langchain" },
+    { name = "langchain-core" },
+    { name = "langchain-mcp-adapters" },
+    { name = "langchain-openai" },
+    { name = "langgraph" },
+    { name = "mcp" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.8.0" },
+    { name = "fractal-agent-infra", editable = "../../packages/python/infra/fractal_agent_infra" },
+    { name = "langchain", specifier = ">=1.2.10" },
+    { name = "langchain-core", specifier = ">=1.2.11" },
+    { name = "langchain-mcp-adapters", specifier = ">=0.2.1" },
+    { name = "langchain-openai", specifier = ">=1.1.9" },
+    { name = "langgraph", specifier = ">=1.0.8" },
+    { name = "mcp", specifier = ">=1.9.1" },
+    { name = "pydantic", specifier = ">=2.11.0,<3" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "ruff", specifier = ">=0.8.4" },
 ]
