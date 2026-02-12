@@ -11,15 +11,9 @@ FROM oven/bun:1.3.8 AS builder
 
 WORKDIR /app
 
-# ── Install graph package dependencies first (changes less often) ─────
-COPY packages/ts/fractal-agent-runtime/package.json /packages/ts/fractal-agent-runtime/package.json
-
 # ── Install runtime dependencies (cached layer) ──────────────────────
 COPY apps/ts/package.json apps/ts/bun.lock* ./
 RUN bun install --frozen-lockfile --production
-
-# ── Copy graph package source ─────────────────────────────────────────
-COPY packages/ts/fractal-agent-runtime/ /packages/ts/fractal-agent-runtime/
 
 # ── Copy runtime application source ──────────────────────────────────
 COPY apps/ts/src/ ./src/

@@ -17,7 +17,7 @@ FROM python:3.12-slim-bookworm AS builder
 # Pin uv version — update deliberately, not by accident
 COPY --from=ghcr.io/astral-sh/uv:0.10.2 /uv /uvx /bin/
 
-WORKDIR /app
+WORKDIR /repo/apps/python
 
 # Enable bytecode compilation for faster startup
 ENV UV_COMPILE_BYTECODE=1
@@ -31,9 +31,9 @@ ENV UV_NO_DEV=1
 #   [tool.uv.sources]
 #   fractal-graph-react-agent = { path = "../../packages/python/graphs/react_agent" }
 #   fractal-agent-infra = { path = "../../packages/python/infra/fractal_agent_infra" }
-# From WORKDIR /app, ../../packages resolves to /packages — matching these COPY targets.
-COPY packages/python/infra/fractal_agent_infra/ /packages/python/infra/fractal_agent_infra/
-COPY packages/python/graphs/react_agent/ /packages/python/graphs/react_agent/
+# From WORKDIR /repo/apps/python, ../../packages resolves to /repo/packages.
+COPY packages/python/infra/fractal_agent_infra/ /repo/packages/python/infra/fractal_agent_infra/
+COPY packages/python/graphs/react_agent/ /repo/packages/python/graphs/react_agent/
 
 # ── Install dependencies only (cached layer) ─────────────────────────
 # Bind-mount pyproject.toml + uv.lock so they don't create an extra image layer.
@@ -73,7 +73,7 @@ WORKDIR /app
 # Copy only the virtual environment from builder.
 # Because we used --no-editable, the project + path dependency are fully
 # installed into site-packages — no source code needed in the final image.
-COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
+COPY --from=builder --chown=appuser:appuser /repo/apps/python/.venv /app/.venv
 
 # Place venv at front of PATH; configure Python for containers
 ENV PATH="/app/.venv/bin:$PATH" \
