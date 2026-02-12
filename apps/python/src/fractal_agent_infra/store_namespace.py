@@ -165,7 +165,9 @@ def build_namespace(
     }
     for name, value in components.items():
         if not value or not value.strip():
-            error_message = f"build_namespace: {name} must be a non-empty string, got {value!r}"
+            error_message = (
+                f"build_namespace: {name} must be a non-empty string, got {value!r}"
+            )
             raise ValueError(error_message)
 
     return (

@@ -14,13 +14,14 @@ from datetime import UTC
 from typing import Any
 
 import aiohttp
+from langchain_core.runnables import RunnableConfig
+from langgraph.config import get_store
+
 from fractal_agent_infra.store_namespace import (
     CATEGORY_TOKENS,
     build_namespace,
     extract_namespace_components,
 )
-from langchain_core.runnables import RunnableConfig
-from langgraph.config import get_store
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +233,9 @@ async def fetch_tokens(config: RunnableConfig) -> dict[str, Any] | None:
     if not base_mcp_url:
         return None
 
-    mcp_tokens: dict[str, Any] | None = await get_mcp_access_token(supabase_token, base_mcp_url)
+    mcp_tokens: dict[str, Any] | None = await get_mcp_access_token(
+        supabase_token, base_mcp_url
+    )
     if mcp_tokens is None:
         return None
 
