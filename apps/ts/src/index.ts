@@ -1,61 +1,95 @@
 /**
- * Fractal Agents Runtime — TypeScript/Bun HTTP Server (v0.0.0)
+ * Fractal Agents Runtime — TypeScript/Bun HTTP Server (v0.0.1)
  *
- * Minimal pipeline-validation stub. Serves health, info, and OpenAPI spec
- * endpoints. Will grow into a full LangGraph-compatible agent runtime.
+ * Entrypoint for the LangGraph-compatible agent runtime. Uses Bun.serve()
+ * with a pattern-matching router and graceful shutdown on SIGTERM/SIGINT.
+ *
+ * This file:
+ *   1. Creates a Router instance.
+ *   2. Registers all route modules (system routes, and later assistants,
+ *      threads, runs, etc.).
+ *   3. Starts the Bun HTTP server.
+ *   4. Installs signal handlers for graceful shutdown.
  */
 
-import { OPENAPI_SPEC } from "./openapi";
+import { Router } from "./router";
+import { config, VERSION, SERVICE_NAME } from "./config";
+import { registerHealthRoutes } from "./routes/health";
+import { registerAssistantRoutes } from "./routes/assistants";
+import { registerThreadRoutes } from "./routes/threads";
+import { registerRunRoutes } from "./routes/runs";
+import { registerStreamRoutes } from "./routes/streams";
+import { registerStatelessRunRoutes } from "./routes/runs-stateless";
 
-const PORT = parseInt(process.env.PORT || "3000", 10);
-const VERSION = "0.0.0";
-const SERVICE_NAME = "fractal-agents-runtime-ts";
+// ---------------------------------------------------------------------------
+// Router setup
+// ---------------------------------------------------------------------------
 
-function jsonResponse(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
+const router = new Router();
 
-function handleRequest(request: Request): Response {
-  const url = new URL(request.url);
-  const path = url.pathname.replace(/\/+$/, "") || "/";
+// System routes: GET /, /health, /ok, /info, /openapi.json
+registerHealthRoutes(router);
 
-  if (request.method !== "GET") {
-    return jsonResponse({ error: "Method not allowed" }, 405);
-  }
+// Assistant routes: POST/GET/PATCH/DELETE /assistants, search, count
+registerAssistantRoutes(router);
 
-  switch (path) {
-    case "/":
-    case "/health":
-      return jsonResponse({ status: "ok" });
+// Thread routes: POST/GET/PATCH/DELETE /threads, state, history, search, count
+registerThreadRoutes(router);
 
-    case "/info":
-      return jsonResponse({
-        service: SERVICE_NAME,
-        version: VERSION,
-        runtime: "bun",
-        bun_version: Bun.version,
-      });
+// Run routes: POST/GET/DELETE /threads/:id/runs/*, cancel, join, wait
+registerRunRoutes(router);
 
-    case "/openapi.json":
-      return jsonResponse(OPENAPI_SPEC);
+// Stream routes: POST /threads/:id/runs/stream, GET .../runs/:id/stream
+registerStreamRoutes(router);
 
-    default:
-      return jsonResponse({ error: "Not found" }, 404);
-  }
-}
+// Stateless run routes: POST /runs, /runs/stream, /runs/wait
+registerStatelessRunRoutes(router);
+
+// ---------------------------------------------------------------------------
+// Server
+// ---------------------------------------------------------------------------
 
 let server: ReturnType<typeof Bun.serve> | undefined;
 
+/**
+ * Start the Bun HTTP server.
+ *
+ * Only starts when this module is the main entry point (not when imported
+ * by tests). Tests can import `router` and call `router.handle()` directly.
+ */
 if (import.meta.main) {
   server = Bun.serve({
-    port: PORT,
-    fetch: handleRequest,
+    port: config.port,
+    fetch: (request: Request) => router.handle(request),
   });
 
-  console.log(`🧬 ${SERVICE_NAME} v${VERSION} listening on http://localhost:${server.port}`);
+  console.log(
+    `🧬 ${SERVICE_NAME} v${VERSION} listening on http://localhost:${server.port}`,
+  );
+  console.log(
+    `   Routes registered: ${router.routeCount}`,
+  );
+
+  // -------------------------------------------------------------------------
+  // Graceful shutdown
+  // -------------------------------------------------------------------------
+
+  function shutdown(signal: string): void {
+    console.log(`\n⏹  Received ${signal}, shutting down gracefully...`);
+    if (server) {
+      server.stop(true); // true = close idle connections immediately
+      server = undefined;
+    }
+    console.log("👋 Server stopped.");
+    process.exit(0);
+  }
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
-export { handleRequest, server, PORT, VERSION, SERVICE_NAME };
+// ---------------------------------------------------------------------------
+// Exports (for tests and programmatic use)
+// ---------------------------------------------------------------------------
+
+export { router, server, config };

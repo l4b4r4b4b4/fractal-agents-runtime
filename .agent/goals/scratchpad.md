@@ -10,7 +10,7 @@
 |----|-----------|--------|----------|--------------|
 | 01 | Monorepo v0.0.0 Setup — Full DevOps Pipeline | 🟢 Complete | Critical | 2026-02-11 |
 | 02 | Python Runtime v0.0.1 — First Real Release | 🟡 In Progress | High | 2026-02-13 |
-| 03 | TypeScript Runtime v0.0.1 — First Real TS Implementation | ⚪ Not Started | High | 2026-02-11 |
+| 03 | TypeScript Runtime v0.0.1 — Basic ReAct Agent + LangGraph Runtime API Parity | 🟢 Complete | High | 2025-07-16 |
 | 18 | Assistant Config Propagation Fix | 🟢 Complete | High | 2026-02-13 |
 | 19 | Package Structure Refactor — 3-Layer Architecture | 🟢 Complete | Critical | 2026-02-12 |
 | 20 | Rename `robyn_server` Module → `server` + BUG-01 Fix | 🟢 Complete | Medium | 2026-02-13 |
@@ -18,6 +18,9 @@
 | 22 | Unified Helm Chart | 🟢 Complete | High | 2026-02-13 |
 | 23 | Research Agent Graph (Parallel Research with HIL) | 🟢 Complete | High | 2026-02-14 |
 | 24 | Langfuse Prompt Template Integration | 🟡 In Progress | Medium | 2026-02-13 |
+| 25 | TS Runtime v0.0.2 — Auth, Persistence, Store & Multi-Provider LLM | ⚪ Not Started | High | 2026-02-15 |
+| 26 | TS Runtime v0.0.3 — MCP Tools, Tracing, Crons & Observability | ⚪ Not Started | High | 2026-02-15 |
+| 27 | TS Runtime v0.1.0 — Full Python Feature Parity | ⚪ Not Started | High | 2026-02-15 |
 
 ---
 
@@ -49,6 +52,9 @@
 - [19-Package-Structure-Refactor](./19-Package-Structure-Refactor/scratchpad.md)
 - [20-Rename-Robyn-Server-Module](./20-Rename-Robyn-Server-Module/scratchpad.md)
 - [21-Test-Coverage-73-Percent](./21-Test-Coverage-73-Percent/scratchpad.md)
+- [25-TS-Runtime-V0.0.2-Auth-Persistence-Store](./25-TS-Runtime-V0.0.2-Auth-Persistence-Store/scratchpad.md)
+- [26-TS-Runtime-V0.0.3-MCP-Tracing-Crons](./26-TS-Runtime-V0.0.3-MCP-Tracing-Crons/scratchpad.md)
+- [27-TS-Runtime-V0.1.0-Full-Feature-Parity](./27-TS-Runtime-V0.1.0-Full-Feature-Parity/scratchpad.md)
 
 ---
 
@@ -73,9 +79,23 @@ Goal 01: Monorepo v0.0.0 Setup ✅
         ├── Goal 24: Langfuse Prompt Templates 🟡 (Task-01+03 ✅, Task-02 blocked by Goal 23 ✅)
         ├── Goal 18: Assistant Config Propagation Fix ✅
         ├── Goal 02: Python Runtime v0.0.1 (depends on Goal 18, 21, 23)
-        │     └── Goal 03: TypeScript Runtime v0.0.1 (depends on Goal 02)
+        │     └── Goal 03: TS Runtime v0.0.1 — ReAct Agent + LangGraph API (depends on Goal 02)
+        │           └── Goal 25: TS v0.0.2 — Auth, Persistence, Store, Multi-Provider LLM
+        │                 └── Goal 26: TS v0.0.3 — MCP, Tracing, Crons, Metrics
+        │                       └── Goal 27: TS v0.1.0 — Full Feature Parity (A2A, Research Agent, RAG, Prompts)
         └── (future) GHCR image build + deploy from development
 ```
+
+### TS Runtime Parity Roadmap (Goals 03 → 25 → 26 → 27)
+
+| Goal | Version | Paths | Ops | Key Features |
+|------|---------|-------|-----|--------------|
+| 03 | v0.0.1 | 25 | 37 | ReAct agent (OpenAI), assistants/threads/runs CRUD, SSE streaming, in-memory storage |
+| 25 | v0.0.2 | +3=28 | +5=42 | Supabase JWT auth, Postgres persistence, Store API, multi-provider LLM |
+| 26 | v0.0.3 | +6=34 | +8=50 | MCP tools, Langfuse tracing, Prometheus metrics, agent sync, Crons API |
+| 27 | v0.1.0 | +1=35 | +1=51 | Research agent, A2A protocol, RAG tools, Langfuse prompts, full CI gates |
+
+Reference: Python runtime OpenAPI spec = 34 paths, 44 operations (+ /openapi.json = 35 paths).
 
 Goal 23 complete — research agent graph with two-phase parallel workers, HIL review, Langfuse prompts, graph registry.
 Goal 24 mostly complete — `infra/prompts.py` done, react_agent integrated, research_agent integrated. Remaining: docs/Helm.
@@ -84,6 +104,158 @@ Goal 02 next priority — commit all, push, PR, Docker build, AKS deploy, tag v0
 ---
 
 ## Recent Activity
+
+### 2025-07-16 — Session 19 (Goal 03 Task-06 🟢 Complete — OpenAPI Spec, Docker & Pipeline — Goal 03 🟢 COMPLETE)
+
+**Goal 03 — TypeScript Runtime v0.0.1 — ALL TASKS COMPLETE 🟢**
+
+Task-06: OpenAPI Spec, Docker & Pipeline — **🟢 Complete**
+- Rewrote `src/openapi.ts` — Full OpenAPI 3.1 spec: 25 paths, 31 operations, 18 component schemas
+  - Tags: System, Assistants, Threads, Thread Runs, Stateless Runs (matches Python)
+  - All schemas match Python `openapi-spec.json` field-for-field (Config, Assistant, AssistantCreate,
+    AssistantPatch, AssistantSearchRequest, AssistantCountRequest, Thread, ThreadCreate, ThreadPatch,
+    ThreadSearchRequest, ThreadCountRequest, ThreadState, Run, RunCreateStateful, RunCreateStateless,
+    ErrorResponse, HealthResponse, OkResponse)
+  - DRY helper functions: errorResponses(), conflictErrorResponses(), jsonRequestBody(),
+    jsonResponse200(), sseResponse200(), uuidPathParam()
+- Regenerated `openapi-spec.json` (76,728 bytes, 25 paths, 31 ops) — CI validates with --validate
+- Fixed `scripts/generate-openapi.ts` type annotations for `Record<string, unknown>` paths type
+- Bumped `package.json` version `0.0.0` → `0.0.1`
+- Rewrote `.devops/docker/ts.Dockerfile` following official Bun Docker best practices:
+  - `oven/bun:1` base (not pinned minor), `/temp/prod/` dep caching, `USER bun` (built-in),
+    `ENTRYPOINT` not `CMD`, no `--compile` (LangChain dynamic imports), HEALTHCHECK + EXPOSE + labels
+- Created `CHANGELOG.md` with comprehensive v0.0.1 entry
+- CI already configured (no changes needed): lint-ts, test-ts, openapi-ts, image-ts.yml
+- **716 tests pass, 0 failures, 0 TypeScript errors**
+
+**Goal 03 Final Stats:**
+- 31 routes registered across 25 paths
+- 18 OpenAPI component schemas
+- 716 tests, 1,404 expect() calls
+- 6 tasks completed across 5 sessions (Sessions 15–19)
+
+### 2025-07-16 — Session 18 (Goal 03 Task-05 🟢 Complete — Runs Routes + SSE Streaming)
+
+**Goal 03 — TypeScript Runtime v0.0.1**
+
+Task-05: Runs Routes + SSE Streaming — **🟢 Complete**
+- Created `src/routes/sse.ts` — SSE formatting utilities (formatSseEvent, formatMetadataEvent, formatValuesEvent, formatUpdatesEvent, formatMessagesTupleEvent, formatErrorEvent, formatEndEvent, sseHeaders, createHumanMessage, createAiMessage, asyncGeneratorToReadableStream, sseResponse)
+- Created `src/routes/runs.ts` — Stateful run routes (create, list, get, delete, cancel, join, wait) + shared helpers (resolveAssistant, handleMultitaskConflict, buildRunKwargs, buildRunnableConfig, executeRunSync)
+- Created `src/routes/streams.ts` — SSE streaming routes (createRunStream, joinRunStream) + `executeRunStream` async generator engine
+- Created `src/routes/runs-stateless.ts` — Stateless run routes (POST /runs, /runs/stream, /runs/wait) + handleOnCompletion lifecycle
+- Extended `ThreadPatch` model with `status` and `values` fields (internal use by runs system)
+- Extended `InMemoryThreadStore.update()` to handle `status` and `values` patches
+- SSE streaming uses Bun `ReadableStream` via async generator adapter
+- SSE wire format matches Python's `sse.py` exactly: `event: <type>\ndata: <json>\n\n`
+- Agent execution pipeline: resolve assistant → resolve graph factory → build agent → invoke
+- Multitask conflict handling: reject (409), interrupt, rollback, enqueue strategies
+- Stateless runs: ephemeral thread creation, `on_completion` delete/keep lifecycle
+- All SSE headers match Python: Content-Type, Cache-Control, X-Accel-Buffering, CORS, Location
+- 12 new endpoints, 1,985 lines of new source, 3,043 lines of new tests
+- 183 new tests (70 SSE + 62 runs CRUD + 34 streams + 35 stateless)
+- **716 total tests**, 0 failures, 0 TypeScript errors, 1,404 expect() calls
+
+**Next:** Task-06 (OpenAPI Spec, Docker & Pipeline)
+
+### 2025-07-16 — Session 17 (Goal 03 Task-04 🟢 Complete — ReAct Agent Graph + Graph Registry)
+
+**Goal 03 — TypeScript Runtime v0.0.1**
+
+Task-04: ReAct Agent Graph + Graph Registry — **🟢 Complete**
+- Created `src/graphs/types.ts` — `GraphFactory` type, `GraphFactoryOptions`, `DEFAULT_GRAPH_ID`
+- Created `src/graphs/registry.ts` — Map-based graph registry with lazy loading, fallback to "agent", reset for testing
+- Created `src/graphs/react-agent/configuration.ts` — `GraphConfigValues`, `parseGraphConfig()`, defaults matching Python exactly (model_name="openai:gpt-4o", temperature=0.7, max_tokens=4000)
+- Created `src/graphs/react-agent/agent.ts` — Async graph factory using LangChain v1 `createAgent` + `ChatOpenAI`
+- Created barrel exports: `src/graphs/react-agent/index.ts`, `src/graphs/index.ts`
+- Updated `src/routes/health.ts` — replaced static stub with real `getAvailableGraphIds()` from registry
+- Installed: `langchain@1.2.24`, `@langchain/openai@1.2.7`, `@langchain/core@1.1.24`, `@langchain/langgraph@1.1.4`
+- **Key finding:** LangChain v1 deprecates `createReactAgent` → use `createAgent` from `langchain` (matches Python's `from langchain.agents import create_agent`)
+- **Key finding:** `FakeListChatModel` (not `FakeChatModel`) is needed for tests — only it supports `bindTools` required by `createAgent`
+- 93 new tests (34 registry + 43 configuration + 16 agent), all passing without `OPENAI_API_KEY`
+- **533 total tests**, 0 failures, 0 type errors
+
+**Next:** Task-05 (Runs Routes + SSE Streaming)
+
+### 2025-07-15 — Session 16 (Goal 03 Task-02 🟢 + Task-03 🟢 Complete — Storage + Routes)
+
+**Goal 03 — TypeScript Runtime v0.0.1**
+
+Task-02: Type Definitions & In-Memory Storage — **🟢 Complete**
+- Created `src/storage/types.ts` — `AssistantStore`, `ThreadStore`, `RunStore`, `Storage` interfaces
+- Created `src/storage/memory.ts` — Full in-memory implementations:
+  - `InMemoryAssistantStore`: CRUD, search (metadata/graph_id/name filtering, sort, pagination), count, versioning, if_exists
+  - `InMemoryThreadStore`: CRUD, search (ids/metadata/values/status filtering, sort, pagination), count, state snapshots, history (reverse-chrono, limit, before filter), delete cascades history
+  - `InMemoryRunStore`: CRUD, listByThread (sort/paginate/status filter), getByThread, deleteByThread (thread-scoped), getActiveRun, updateStatus, countByThread
+  - `InMemoryStorage`: Container bundling all three stores with `clearAll()`
+- Created `src/storage/index.ts` — Singleton `getStorage()` / `resetStorage()` factory (mirrors Python pattern)
+- **287 tests passing, 0 type errors** (134 new storage tests + 153 previous)
+- All storage operations verified: CRUD, search with metadata filters, sort_by/sort_order, pagination (limit/offset), count, thread state/history, run thread-scoping
+- UUID format: `crypto.randomUUID()` with dashes (matches OpenAPI `format: uuid`) — verified in tests
+- ISO 8601 timestamps with Z suffix — verified in tests
+- Assistant `version` starts at 1, incremented on each PATCH — verified in tests
+- Metadata shallow-merge on update — matching Python behaviour
+- `if_exists` strategies (raise/do_nothing) for both assistants and threads
+- No `owner_id` in v0.0.1 (no auth) — deferred to Goal 25
+
+Task-03: Assistants & Threads Routes — **🟢 Complete**
+- Created `src/routes/assistants.ts` — 6 endpoints:
+  - `POST /assistants` — Create (if_exists: raise→409, do_nothing→return existing)
+  - `GET /assistants/:assistant_id` — Get by UUID (404 if missing)
+  - `PATCH /assistants/:assistant_id` — Partial update (version increment)
+  - `DELETE /assistants/:assistant_id` — Delete → `{}` (Critical Finding #2)
+  - `POST /assistants/search` — Search (metadata/graph_id/name, sort, pagination)
+  - `POST /assistants/count` — Count → bare integer
+- Created `src/routes/threads.ts` — 8 endpoints:
+  - `POST /threads` — Create (if_exists handling, accepts empty body)
+  - `GET /threads/:thread_id` — Get by UUID
+  - `PATCH /threads/:thread_id` — Update metadata (shallow merge)
+  - `DELETE /threads/:thread_id` — Delete → `{}` (cascades state history)
+  - `GET /threads/:thread_id/state` — Get current ThreadState
+  - `GET /threads/:thread_id/history` — State history (query: limit clamped 1–1000, before)
+  - `POST /threads/search` — Search (ids/metadata/values/status, sort, pagination)
+  - `POST /threads/count` — Count → bare integer
+- Updated `src/index.ts` — Register assistant + thread routes with router
+- **440 tests passing, 0 type errors** (153 new route tests + 287 previous)
+- All response shapes match Python spec: 200 for success (not 201), `{}` for delete, bare int for count
+- Error responses: 404 (not found), 409 (conflict), 422 (validation) — all `{"detail": "..."}`
+- Route disambiguation: `/search` and `/count` registered before `/:id` param routes
+- Lenient body parsing for search/count (accepts empty body without Content-Type)
+- E2E CRUD flow tests for both assistants and threads
+
+**Next: Task-04 (ReAct Agent Graph + Graph Registry)**
+
+### 2025-07-15 — Session 15 (Goal 03 Task-01 🟢 Complete + Task-02 In Progress)
+
+**Goal 03 — TypeScript Runtime v0.0.1**
+
+Task-01: Core Server, Router & Config — **🟢 Complete**
+- Created `src/config.ts` — Typed env config (PORT, OPENAI_API_KEY, MODEL_NAME, capabilities, tiers)
+- Created `src/router.ts` — Pattern-matching router (path params `:name`, method dispatch, error boundary, query parsing)
+- Rewrote `src/index.ts` — Bun.serve() + router + SIGTERM/SIGINT graceful shutdown
+- Created `src/routes/health.ts` — System routes: GET /, /health, /ok, /info, /openapi.json
+- Created `src/routes/helpers.ts` — jsonResponse, errorResponse, parseBody, requireBody, notFound, methodNotAllowed, conflictResponse, validationError
+- Created `src/models/errors.ts` — ErrorResponse, ValidationErrorResponse, FieldError types
+- Updated `src/openapi.ts` — v0.0.1 with all system endpoints + components.schemas
+- **153 tests passing, 0 type errors**
+- All response shapes verified against Python OpenAPI spec
+
+Task-02: Type Definitions & In-Memory Storage — **🟡 In Progress**
+- Created `src/models/assistant.ts` — Config, Assistant, AssistantCreate, AssistantPatch, AssistantSearchRequest, AssistantCountRequest
+- Created `src/models/thread.ts` — Thread, ThreadCreate, ThreadPatch, ThreadSearchRequest, ThreadCountRequest, ThreadState
+- Created `src/models/run.ts` — Run, RunCreateStateful, RunCreateStateless + all enums (RunStatus, MultitaskStrategy, StreamMode, etc.)
+- **Verified Python OpenAPI spec is up-to-date** (regenerated, diff is empty)
+- **Key finding**: `graph_id` is `str` in Python Pydantic models (not an enum) — fixed TS types to use `string`
+- **Key finding**: Delete endpoints return `{}` (empty object), not `{"ok": true}` — scratchpad was wrong
+- Fixed health route: graph ID "react-agent" → "agent" to match Python convention
+- **Remaining**: Storage interfaces (`src/storage/types.ts`), in-memory implementation (`src/storage/memory.ts`), singleton (`src/storage/index.ts`), tests
+
+**Critical research findings for future sessions:**
+1. Python OpenAPI spec is hand-crafted in `src/server/openapi_spec.py`, NOT auto-generated from Pydantic models
+2. Regen script: `cd apps/python && uv run python scripts/generate_openapi.py --validate`
+3. Python storage uses `owner_id` on every operation (multi-tenant) — TS v0.0.1 skips this (no auth), added in Goal 25
+4. Python `RunCreate` is a single model for both stateful/stateless — TS splits into `RunCreateStateful`/`RunCreateStateless` (cleaner API contract)
+5. Python uses `uuid4().hex` (no dashes) for IDs — TS uses `crypto.randomUUID()` (with dashes, matches spec's `format: uuid`)
+6. Python `Assistant.version` starts at 1, incremented on each patch
 
 ### 2026-02-14 — Session 14 (Goal 23 Task-05: Tests Complete — Goal 23 🟢 Complete)
 
