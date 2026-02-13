@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from server.models import Assistant, AssistantConfig, Run, Thread, ThreadState
+from server.storage import SYSTEM_OWNER_ID
 
 if TYPE_CHECKING:
     from psycopg import AsyncConnection
@@ -178,7 +179,7 @@ class PostgresAssistantStore:
         if "graph_id" not in data:
             raise ValueError("graph_id is required")
 
-        resource_id = _generate_id()
+        resource_id = data.get("assistant_id", _generate_id())
         now = _utc_now()
 
         metadata = data.get("metadata", {}).copy()
@@ -222,16 +223,21 @@ class PostgresAssistantStore:
         )
 
     async def get(self, resource_id: str, owner_id: str) -> Assistant | None:
-        """Get an assistant by ID if owned by the user."""
+        """Get an assistant by ID if owned by the user or system-synced.
+
+        System-owned assistants (created by startup agent sync) are visible
+        to all authenticated users for read access.
+        """
         async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 SELECT id, graph_id, config, context, metadata, name,
                        description, version, created_at, updated_at
                 FROM {_SCHEMA}.assistants
-                WHERE id = %s AND metadata->>'owner' = %s
+                WHERE id = %s
+                  AND (metadata->>'owner' = %s OR metadata->>'owner' = %s)
                 """,
-                (resource_id, owner_id),
+                (resource_id, owner_id, SYSTEM_OWNER_ID),
             )
             row = await result.fetchone()
 
@@ -241,17 +247,21 @@ class PostgresAssistantStore:
         return self._row_to_model(row)
 
     async def list(self, owner_id: str, **filters: Any) -> list[Assistant]:
-        """List assistants owned by the user."""
+        """List assistants owned by the user plus system-synced assistants.
+
+        System-owned assistants are included so that real users can discover
+        assistants that were synced from Supabase at startup.
+        """
         async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 SELECT id, graph_id, config, context, metadata, name,
                        description, version, created_at, updated_at
                 FROM {_SCHEMA}.assistants
-                WHERE metadata->>'owner' = %s
+                WHERE (metadata->>'owner' = %s OR metadata->>'owner' = %s)
                 ORDER BY created_at DESC
                 """,
-                (owner_id,),
+                (owner_id, SYSTEM_OWNER_ID),
             )
             rows = await result.fetchall()
 
