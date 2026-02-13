@@ -120,19 +120,10 @@ class MCPServerConfig(BaseModel):
         auth_required: Whether this server requires auth token exchange.
     """
 
-    name: str = Field(
-        default="default",
-        optional=True,
-    )
+    name: str = Field(default="default")
     url: str
-    tools: list[str] | None = Field(
-        default=None,
-        optional=True,
-    )
-    auth_required: bool = Field(
-        default=False,
-        optional=True,
-    )
+    tools: list[str] | None = Field(default=None)
+    auth_required: bool = Field(default=False)
 
 
 class MCPConfig(BaseModel):
@@ -144,7 +135,7 @@ class MCPConfig(BaseModel):
 class GraphConfigPydantic(BaseModel):
     model_name: str | None = Field(
         default="openai:gpt-4o",
-        metadata={
+        json_schema_extra={
             "x_oap_ui_config": {
                 "type": "select",
                 "default": "openai:gpt-4o",
@@ -183,7 +174,7 @@ class GraphConfigPydantic(BaseModel):
     )
     temperature: float | None = Field(
         default=0.7,
-        metadata={
+        json_schema_extra={
             "x_oap_ui_config": {
                 "type": "slider",
                 "default": 0.7,
@@ -196,7 +187,7 @@ class GraphConfigPydantic(BaseModel):
     )
     max_tokens: int | None = Field(
         default=4000,
-        metadata={
+        json_schema_extra={
             "x_oap_ui_config": {
                 "type": "number",
                 "default": 4000,
@@ -207,7 +198,7 @@ class GraphConfigPydantic(BaseModel):
     )
     system_prompt: str | None = Field(
         default=DEFAULT_SYSTEM_PROMPT,
-        metadata={
+        json_schema_extra={
             "x_oap_ui_config": {
                 "type": "textarea",
                 "placeholder": "Enter a system prompt...",
@@ -223,8 +214,7 @@ class GraphConfigPydantic(BaseModel):
     )
     mcp_config: MCPConfig | None = Field(
         default=None,
-        optional=True,
-        metadata={
+        json_schema_extra={
             "x_oap_ui_config": {
                 "type": "mcp",
             }
@@ -232,8 +222,7 @@ class GraphConfigPydantic(BaseModel):
     )
     rag: RagConfig | None = Field(
         default=None,
-        optional=True,
-        metadata={
+        json_schema_extra={
             "x_oap_ui_config": {
                 "type": "rag",
                 # Here is where you would set the default collection. Use collection IDs
@@ -249,8 +238,7 @@ class GraphConfigPydantic(BaseModel):
     # Custom endpoint configuration
     base_url: str | None = Field(
         default=None,
-        optional=True,
-        metadata={
+        json_schema_extra={
             "x_oap_ui_config": {
                 "type": "text",
                 "placeholder": "http://localhost:7374/v1",
@@ -261,8 +249,7 @@ class GraphConfigPydantic(BaseModel):
     )
     custom_model_name: str | None = Field(
         default=None,
-        optional=True,
-        metadata={
+        json_schema_extra={
             "x_oap_ui_config": {
                 "type": "text",
                 "placeholder": "mistralai/ministral-3b-instruct",
@@ -273,8 +260,7 @@ class GraphConfigPydantic(BaseModel):
     )
     custom_api_key: str | None = Field(
         default=None,
-        optional=True,
-        metadata={
+        json_schema_extra={
             "x_oap_ui_config": {
                 "type": "password",
                 "placeholder": "Leave empty for local vLLM",
