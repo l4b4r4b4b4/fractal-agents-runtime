@@ -40,16 +40,15 @@ def _reset_storage():
 USER = make_auth_user("user-1", "u1@test.com")
 OTHER = make_auth_user("user-2", "u2@test.com")
 
-# All route modules import ``require_user`` into their own namespace via
+# Most route modules import ``require_user`` into their own namespace via
 # ``from server.auth import require_user``.  We must patch the name in
 # every consuming module, not in ``server.auth`` itself.
+# NOTE: metrics.py and mcp.py do NOT import require_user — omitted here.
 _AUTH_TARGETS = [
     "server.routes.assistants.require_user",
     "server.routes.threads.require_user",
     "server.routes.runs.require_user",
     "server.routes.store.require_user",
-    "server.routes.metrics.require_user",
-    "server.routes.mcp.require_user",
     "server.routes.crons.require_user",
     "server.routes.streams.require_user",
     "server.routes.a2a.require_user",
@@ -592,7 +591,7 @@ class TestThreadRouteGetHistory:
     async def test_get_history(self):
         cap = _thread_capture()
         create_h = cap.get_handler("POST", "/threads")
-        hist_h = cap.get_handler("POST", "/threads/:thread_id/history")
+        hist_h = cap.get_handler("GET", "/threads/:thread_id/history")
 
         with _patch_auth():
             create_resp = await create_h(MockRequest(body={}))
@@ -1075,7 +1074,11 @@ class TestMetricsRouteJson:
             pytest.skip("metrics JSON handler not found")
 
         resp = await handler(MockRequest())
-        assert resp.status_code == 200
+        # Handler returns a raw dict (not a Response object)
+        if isinstance(resp, dict):
+            assert "uptime_seconds" in resp
+        else:
+            assert resp.status_code == 200
 
 
 # ============================================================================
@@ -1090,8 +1093,9 @@ class TestInfraSecurityAuth:
         """Module must be importable."""
         import infra.security.auth as auth_mod
 
-        assert hasattr(auth_mod, "SupabaseAuth") or hasattr(
-            auth_mod, "verify_supabase_jwt"
+        # Module exports auth handler functions, not a class
+        assert hasattr(auth_mod, "get_current_user") or hasattr(
+            auth_mod, "on_thread_create"
         )
 
     def test_verify_invalid_token(self):
@@ -1389,8 +1393,14 @@ class TestAppModule:
         import asyncio
 
         result = asyncio.get_event_loop().run_until_complete(health())
-        assert result["status"] == "ok"
-        assert "persistence" in result
+        # Robyn decorator may wrap the dict return in a Response object
+        if isinstance(result, dict):
+            assert result["status"] == "ok"
+            assert "persistence" in result
+        else:
+            body = response_json(result)
+            assert body["status"] == "ok"
+            assert "persistence" in body
 
     def test_ok_endpoint(self):
         from server.app import ok
@@ -1398,7 +1408,11 @@ class TestAppModule:
         import asyncio
 
         result = asyncio.get_event_loop().run_until_complete(ok())
-        assert result == {"ok": True}
+        if isinstance(result, dict):
+            assert result == {"ok": True}
+        else:
+            body = response_json(result)
+            assert body == {"ok": True}
 
     def test_root_endpoint(self):
         from server.app import root
@@ -1406,4 +1420,8 @@ class TestAppModule:
         import asyncio
 
         result = asyncio.get_event_loop().run_until_complete(root())
-        assert "service" in result or "name" in result
+        if isinstance(result, dict):
+            assert "service" in result or "name" in result
+        else:
+            body = response_json(result)
+            assert "service" in body or "name" in body

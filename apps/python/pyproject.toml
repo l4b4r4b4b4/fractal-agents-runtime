@@ -47,6 +47,8 @@ exclude = ["server.tests*", "server.helm*"]
 
 [dependency-groups]
 dev = [
+    "coverage-threshold>=0.6.2",
+    "diff-cover>=10.2.0",
     "pytest>=8.0",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
@@ -73,6 +75,45 @@ exclude_lines = [
     "if __name__ == .__main__.",
     "raise NotImplementedError",
 ]
+
+[tool.coverage.json]
+output = "coverage.json"
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+# ---------------------------------------------------------------------------
+# coverage-threshold — per-file coverage floor
+# Runs after: pytest --cov --cov-report=json && coverage-threshold
+# ---------------------------------------------------------------------------
+[tool.coverage-threshold]
+line_coverage_min = 73           # global average (matches pytest-cov fail_under)
+file_line_coverage_min = 10      # absolute floor — no file at 0%
+
+# Integration-heavy modules that legitimately need external services to test
+# further.  Ratchet these up as coverage improves.
+[tool.coverage-threshold.modules."src/graphs/react_agent/utils/tools.py"]
+file_line_coverage_min = 10      # requires live MCP servers
+
+[tool.coverage-threshold.modules."src/graphs/react_agent/utils/token.py"]
+file_line_coverage_min = 10      # requires HTTP token exchange
+
+[tool.coverage-threshold.modules."src/graphs/react_agent/utils/mcp_interceptors.py"]
+file_line_coverage_min = 20      # MCP interceptor wiring
+
+[tool.coverage-threshold.modules."src/server/routes/a2a.py"]
+file_line_coverage_min = 20      # A2A JSON-RPC protocol
+
+[tool.coverage-threshold.modules."src/server/routes/streams.py"]
+file_line_coverage_min = 30      # SSE streaming — hard to unit-test
+
+# ---------------------------------------------------------------------------
+# diff-cover — enforce coverage on new/changed lines in PRs
+# Runs after: pytest --cov --cov-report=xml && diff-cover coverage.xml ...
+# ---------------------------------------------------------------------------
+[tool.diff_cover]
+compare_branch = "origin/development"
+fail_under = 80                  # new/changed code must be ≥80% covered
 
 [tool.ruff]
 src = ["src"]

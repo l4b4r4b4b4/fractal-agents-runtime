@@ -76,9 +76,13 @@ jobs:
     defaults:
       run:
         working-directory: apps/python
+    outputs:
+      coverage: ${{ steps.coverage.outputs.total }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # diff-cover needs full history
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -91,8 +95,77 @@ jobs:
       - name: Sync dependencies
         run: uv sync --quiet
 
-      - name: Run pytest
-        run: uv run pytest -v --tb=short
+      - name: Run pytest with coverage
+        run: >
+          uv run pytest -v --tb=short
+          --cov --cov-report=json --cov-report=xml
+          --cov-report=term-missing:skip-covered
+
+      - name: Extract coverage percentage
+        id: coverage
+        run: |
+          TOTAL=$(python3 -c "import json; print(int(json.load(open('coverage.json'))['totals']['percent_covered']))")
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "### 📊 Python Coverage: ${TOTAL}%" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Per-file coverage threshold
+        run: uv run coverage-threshold
+
+      - name: Diff coverage (PR only)
+        if: github.event_name == 'pull_request'
+        run: >
+          uv run diff-cover coverage.xml
+          --compare-branch=origin/${{ github.base_ref }}
+          --fail-under=80
+          --markdown-report=diff-cover.md
+        continue-on-error: false
+
+      - name: Post diff-cover summary (PR only)
+        if: github.event_name == 'pull_request' && always()
+        run: |
+          if [ -f diff-cover.md ]; then
+            echo "### 🔍 Diff Coverage Report" >> "$GITHUB_STEP_SUMMARY"
+            cat diff-cover.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage
+          path: |
+            apps/python/coverage.json
+            apps/python/coverage.xml
+          retention-days: 30
+
+  # ── Python: Coverage Badge ──────────────────────────────────────────────
+  # Updates a Gist used by shields.io to render a dynamic coverage badge.
+  # One-time setup:
+  #   1. Create a Gist (any filename, e.g. "coverage.json")
+  #   2. Copy the Gist ID from the URL
+  #   3. Create a PAT with "gist" scope
+  #   4. Add repo secrets: COVERAGE_GIST_ID and COVERAGE_GIST_TOKEN
+  coverage-badge:
+    name: "Python / Coverage Badge"
+    runs-on: ubuntu-latest
+    needs: test-python
+    if: github.ref == 'refs/heads/development' && needs.test-python.outputs.coverage != ''
+    steps:
+      - name: Update coverage badge
+        if: env.HAS_GIST_CONFIG == 'true'
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        env:
+          HAS_GIST_CONFIG: ${{ secrets.COVERAGE_GIST_TOKEN != '' && secrets.COVERAGE_GIST_ID != '' }}
+        with:
+          auth: ${{ secrets.COVERAGE_GIST_TOKEN }}
+          gistID: ${{ secrets.COVERAGE_GIST_ID }}
+          filename: python-coverage.json
+          label: coverage
+          message: "${{ needs.test-python.outputs.coverage }}%"
+          valColorRange: ${{ needs.test-python.outputs.coverage }}
+          minColorRange: 50
+          maxColorRange: 90
+          namedLogo: pytest
 
   # ── Python: OpenAPI Validation ────────────────────────────────────────
   openapi-python:
@@ -197,6 +270,7 @@ jobs:
       - changes
       - lint-python
       - test-python
+      - coverage-badge
       - openapi-python
       - lint-ts
       - test-ts
@@ -208,6 +282,7 @@ jobs:
           echo "changes:        ${{ needs.changes.result }}"
           echo "lint-python:    ${{ needs.lint-python.result }}"
           echo "test-python:    ${{ needs.test-python.result }}"
+          echo "coverage-badge: ${{ needs.coverage-badge.result }}"
           echo "openapi-python: ${{ needs.openapi-python.result }}"
           echo "lint-ts:        ${{ needs.lint-ts.result }}"
           echo "test-ts:        ${{ needs.test-ts.result }}"
@@ -224,6 +299,7 @@ jobs:
           for result_pair in \
             "lint-python:${{ needs.lint-python.result }}" \
             "test-python:${{ needs.test-python.result }}" \
+            "coverage-badge:${{ needs.coverage-badge.result }}" \
             "openapi-python:${{ needs.openapi-python.result }}" \
             "lint-ts:${{ needs.lint-ts.result }}" \
             "test-ts:${{ needs.test-ts.result }}" \

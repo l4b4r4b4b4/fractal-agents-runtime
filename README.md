@@ -1,5 +1,16 @@
 # Fractal Agents Runtime
 
+[![CI](https://github.com/l4b4r4b4b4/fractal-agents-runtime/actions/workflows/ci.yml/badge.svg?branch=development)](https://github.com/l4b4r4b4b4/fractal-agents-runtime/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/l4b4r4b4b4/COVERAGE_GIST_ID/raw/python-coverage.json)](https://github.com/l4b4r4b4b4/fractal-agents-runtime/actions/workflows/ci.yml)
+
+<!-- Coverage badge setup (one-time):
+  1. Create a public Gist at https://gist.github.com (any content, e.g. {})
+  2. Copy the Gist ID from the URL (the hex string after your username)
+  3. Replace COVERAGE_GIST_ID in the badge URL above with your actual Gist ID
+  4. Create a PAT at https://github.com/settings/tokens with "gist" scope
+  5. Add repo secrets: COVERAGE_GIST_ID and COVERAGE_GIST_TOKEN
+  6. Push to development — the badge updates automatically -->
+
 A polyglot monorepo providing LangGraph-based AI agent runtimes with MCP (Model Context Protocol) tool integration, RAG capabilities, and a production-ready HTTP server.
 
 ## Architecture

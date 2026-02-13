@@ -44,7 +44,13 @@ pre-push:
         fi
     python-test:
       root: apps/python/
-      run: uv run pytest -q
+      run: >
+        uv run pytest -q --cov --cov-report=json --cov-report=xml --cov-report=term:skip-covered
+        && uv run coverage-threshold
+
+    python-diff-cover:
+      root: apps/python/
+      run: uv run diff-cover coverage.xml --fail-under=80 --compare-branch=origin/development
 
     ts-test:
       root: apps/ts/
