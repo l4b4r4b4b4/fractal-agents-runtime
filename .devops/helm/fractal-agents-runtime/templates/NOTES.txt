@@ -1,0 +1,103 @@
+🎉 Thank you for installing {{ .Chart.Name }}!
+
+📊 Release Information:
+  - Chart Version: {{ .Chart.Version }}
+  - App Version:   {{ .Chart.AppVersion }}
+  - Runtime:       {{ .Values.runtime }}
+  - Replicas:      {{ .Values.replicaCount }}
+  {{- if .Values.autoscaling.enabled }}
+  - Autoscaling:   Enabled ({{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} replicas)
+  {{- end }}
+
+Your release is named {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+🔍 Check deployment status:
+
+  kubectl get deployment {{ include "fractal-agents-runtime.fullname" . }} -n {{ .Release.Namespace }}
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "fractal-agents-runtime.name" . }}
+
+📋 View application logs:
+
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "fractal-agents-runtime.name" . }} -f
+
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+
+🌐 Your application is accessible at:
+
+  {{- if $.Values.ingress.tls }}
+  https://{{ .host }}
+  {{- else }}
+  http://{{ .host }}
+  {{- end }}
+{{- end }}
+{{- else }}
+
+🔌 Access your application locally:
+
+  export POD_NAME=$(kubectl get pods -n {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "fractal-agents-runtime.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+  kubectl port-forward -n {{ .Release.Namespace }} $POD_NAME {{ include "fractal-agents-runtime.port" . }}:{{ include "fractal-agents-runtime.port" . }}
+
+  Then visit: http://localhost:{{ include "fractal-agents-runtime.port" . }}
+
+{{- end }}
+
+📊 Health Check Endpoints:
+  - /health     — Server health status
+  - /ok         — LangGraph health format
+  - /info       — Detailed service information
+{{- if eq .Values.runtime "python" }}
+  - /metrics    — Prometheus metrics
+{{- end }}
+  - /openapi.json — OpenAPI 3.1 specification
+
+{{- if .Values.serviceMonitor.enabled }}
+
+📈 Prometheus Metrics:
+  ServiceMonitor is enabled. Metrics will be scraped at /metrics.
+
+{{- end }}
+
+{{- if not .Values.existingSecret.name }}
+{{- if not .Values.secrets.create }}
+
+⚠️  WARNING: No secrets configured!
+
+  You need to create a Kubernetes Secret with your API keys:
+
+  kubectl create secret generic {{ include "fractal-agents-runtime.fullname" . }}-secrets \
+    --from-literal=supabase-key='YOUR_SUPABASE_ANON_KEY' \
+    --from-literal=supabase-secret='YOUR_SUPABASE_SERVICE_ROLE_KEY' \
+    --from-literal=supabase-jwt-secret='YOUR_SUPABASE_JWT_SECRET' \
+    --from-literal=openai-api-key='YOUR_OPENAI_KEY' \
+{{- if eq .Values.runtime "python" }}
+    --from-literal=database-url='postgresql://user:pass@host:5432/db' \
+{{- end }}
+    --namespace {{ .Release.Namespace }}
+
+  Then upgrade your release:
+
+  helm upgrade {{ .Release.Name }} .devops/helm/fractal-agents-runtime \
+    --namespace {{ .Release.Namespace }} \
+    --set existingSecret.name={{ include "fractal-agents-runtime.fullname" . }}-secrets
+
+{{- end }}
+{{- end }}
+
+📚 Documentation:
+  - Chart README: helm show readme .devops/helm/fractal-agents-runtime
+  - Project:      https://github.com/l4b4r4b4b4/fractal-agents-runtime
+
+🐛 Troubleshooting:
+
+  # Check pod status and events
+  kubectl describe pod -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "fractal-agents-runtime.name" . }}
+
+  # View recent events
+  kubectl get events -n {{ .Release.Namespace }} --sort-by='.lastTimestamp' | tail -20
+
+  # Test connectivity from within the cluster
+  kubectl run -it --rm debug --image=curlimages/curl --restart=Never -n {{ .Release.Namespace }} -- \
+    curl http://{{ include "fractal-agents-runtime.fullname" . }}:{{ .Values.service.port }}/health
+
+Happy deploying! 🚀

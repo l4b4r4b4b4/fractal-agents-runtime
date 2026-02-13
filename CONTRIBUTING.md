@@ -1,18 +1,18 @@
 # Contributing to Fractal Agents Runtime
 
-Thank you for your interest in contributing! This guide covers development setup, project structure, coding standards, and how to add new agent graphs to the catalog.
+Thank you for your interest in contributing! This guide covers development setup, project structure, coding standards, and the pull request process.
 
 ## Table of Contents
 
 - [Development Setup](#development-setup)
 - [Project Structure](#project-structure)
+- [Dependency Rules](#dependency-rules)
 - [Development Workflow](#development-workflow)
 - [Coding Standards](#coding-standards)
-- [Adding a New Graph to the Catalog](#adding-a-new-graph-to-the-catalog)
-- [Adding Infra Modules](#adding-infra-modules)
 - [Testing](#testing)
 - [Pull Request Process](#pull-request-process)
 - [Architecture Decisions](#architecture-decisions)
+- [Release Process](#release-process)
 
 ---
 
@@ -26,7 +26,7 @@ cd fractal-agents-runtime
 nix develop
 ```
 
-The Nix dev shell provides Python 3.12, UV, Bun, Docker, Helm, and Lefthook — and automatically runs `uv sync` and `bun install`.
+The Nix dev shell provides Python 3.12, UV, Bun, Docker, Helm, kubectl, and Lefthook — and automatically runs `uv sync` and `bun install`.
 
 ### Option B: Manual
 
@@ -39,7 +39,7 @@ cd fractal-agents-runtime
 # Root workspace (TypeScript tooling)
 bun install
 
-# Python app (resolves graph + infra path dependencies)
+# Python app
 cd apps/python
 uv sync
 cp .env.example .env  # Edit with your API keys
@@ -49,68 +49,111 @@ cp .env.example .env  # Edit with your API keys
 
 ```bash
 cd apps/python
-uv run pytest          # Should pass 550+ tests
-uv run ruff check .    # Should report "All checks passed"
+uv run pytest                  # Should pass 867+ tests
+uv run ruff check .            # Should report "All checks passed"
+uv run ruff format --check .   # Should report all files formatted
 ```
 
 ---
 
 ## Project Structure
 
-The monorepo follows a **3-layer architecture**:
+All Python source lives under `apps/python/src/` in three modules:
 
 ```text
 fractal-agents-runtime/
-├── packages/python/
-│   ├── graphs/                         # Layer 1: Portable agent architectures
-│   │   └── react_agent/               #   ReAct agent with MCP tools
-│   │       ├── pyproject.toml          #   PyPI: fractal-graph-react-agent
-│   │       └── src/react_agent/
-│   │           ├── agent.py            #   Graph factory (DI for persistence)
-│   │           └── utils/              #   MCP interceptors, token exchange, RAG
-│   └── infra/                          # Layer 2: Shared runtime infrastructure
-│       └── fractal_agent_infra/        #   PyPI: fractal-agent-infra
-│           └── src/fractal_agent_infra/
-│               ├── tracing.py          #   Langfuse init + inject_tracing()
-│               ├── store_namespace.py  #   Canonical 4-component namespace
-│               └── security/auth.py    #   LangGraph SDK auth (Supabase JWT)
 ├── apps/
-│   ├── python/                         # Layer 3: HTTP server (Robyn)
-│   │   ├── src/robyn_server/           #   Routes, config, Postgres, wiring
-│   │   └── pyproject.toml              #   Depends on graph + infra packages
-│   └── ts/                             # TypeScript runtime (Bun)
-├── .devops/docker/                     # Multi-stage Dockerfiles
-├── .github/workflows/                  # CI/CD pipelines
+│   ├── python/                         # Python runtime — v0.0.1
+│   │   ├── src/
+│   │   │   ├── server/                 # HTTP server (Robyn)
+│   │   │   │   ├── routes/             #   Route handlers (assistants, threads, runs, etc.)
+│   │   │   │   ├── crons/              #   APScheduler cron scheduling
+│   │   │   │   ├── mcp/                #   MCP tool management
+│   │   │   │   ├── a2a/                #   Agent-to-Agent protocol
+│   │   │   │   ├── tests/              #   867+ tests (74% coverage)
+│   │   │   │   ├── app.py              #   Robyn application + startup hooks
+│   │   │   │   ├── config.py           #   Env var configuration
+│   │   │   │   ├── agent.py            #   Agent graph wiring + invocation
+│   │   │   │   ├── agent_sync.py       #   Startup assistant sync from Supabase
+│   │   │   │   ├── auth.py             #   JWT auth middleware
+│   │   │   │   ├── database.py         #   Postgres connection management
+│   │   │   │   ├── storage.py          #   In-memory storage adapter
+│   │   │   │   └── postgres_storage.py #   Full Postgres storage adapter
+│   │   │   ├── graphs/
+│   │   │   │   └── react_agent/        #   Portable ReAct agent graph
+│   │   │   │       ├── agent.py        #     Graph factory (DI for persistence)
+│   │   │   │       └── utils/          #     MCP interceptors, token exchange, RAG
+│   │   │   └── infra/
+│   │   │       ├── tracing.py          #   Langfuse init + inject_tracing()
+│   │   │       ├── store_namespace.py  #   Canonical 4-component namespace
+│   │   │       └── security/auth.py    #   Supabase JWT verification
+│   │   ├── pyproject.toml
+│   │   └── uv.lock
+│   └── ts/                             # TypeScript runtime (Bun) — v0.0.0 stub
+│       └── src/
+├── .devops/
+│   ├── docker/                         # Multi-stage Dockerfiles
+│   │   ├── python.Dockerfile
+│   │   └── ts.Dockerfile
+│   └── helm/fractal-agents-runtime/    # Unified Helm chart (runtime toggle)
+├── .github/workflows/                  # CI, image builds, release pipelines
+├── docker-compose.yml                  # Local dev stack
+├── lefthook.yml                        # Git hooks config
 └── flake.nix                           # Nix dev environment
 ```
 
-### Dependency Rules
+---
 
-| Direction | Allowed? | Example |
-|-----------|----------|---------|
-| Graphs → Infra | ✅ Yes | `from fractal_agent_infra.store_namespace import build_namespace` |
-| Apps → Graphs | ✅ Yes | `from react_agent import graph` |
-| Apps → Infra | ✅ Yes | `from fractal_agent_infra.tracing import inject_tracing` |
-| Graphs → Apps | ❌ Never | No `from robyn_server...` in graph code |
-| Infra → Apps | ❌ Never | |
-| Infra → Graphs | ❌ Never | |
+## Dependency Rules
 
-### Dependency Injection
+The three Python modules form a strict one-way dependency hierarchy. Dependencies flow **downward only**:
 
-Graphs receive persistence components as parameters — they never import them from a server:
+```text
+  server          ← top-level: wires everything together
+    ↓  ↓
+  graphs  infra   ← mid-level: graphs can use infra
+    ↓     
+  infra           ← bottom-level: no upward imports
+```
+
+| Import direction | Allowed? | Example |
+|------------------|----------|---------|
+| `server` → `graphs` | ✅ Yes | `from graphs.react_agent import graph` |
+| `server` → `infra` | ✅ Yes | `from infra.tracing import inject_tracing` |
+| `graphs` → `infra` | ✅ Yes | `from infra.store_namespace import build_namespace` |
+| `graphs` → `server` | ❌ **Never** | No `from server.config import ...` in graph code |
+| `infra` → `server` | ❌ **Never** | Infra is the lowest layer |
+| `infra` → `graphs` | ❌ **Never** | Infra knows nothing about agents |
+
+### Why This Matters
+
+The agent graph (`graphs/react_agent/`) must remain **portable** — it should work when:
+
+- Served by the Robyn HTTP server (current runtime)
+- Deployed to [LangGraph Platform](https://langchain-ai.github.io/langgraph/concepts/langgraph_platform/)
+- Embedded in FastAPI, Lambda, or a CLI tool
+- Run in tests without any server infrastructure
+
+If the graph imports from `server`, it becomes coupled to Robyn and breaks portability.
+
+### Dependency Injection for Persistence
+
+Graphs receive persistence components as parameters — they never import them from a specific server:
 
 ```python
-# In the graph package (portable):
+# In the graph module (portable — no server imports):
 async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
     ...
     return agent.compile(checkpointer=checkpointer, store=store)
 
-# In the app (wiring layer):
-from robyn_server.database import get_checkpointer, get_store
-from react_agent import graph
+# In the server module (wiring layer):
+from server.database import get_checkpointer, get_store
+from graphs.react_agent import graph
 
 agent = await graph(config, checkpointer=get_checkpointer(), store=get_store())
 ```
+
+When `checkpointer` and `store` are `None`, the agent runs without persistence — useful for testing or stateless invocations.
 
 ---
 
@@ -118,25 +161,26 @@ agent = await graph(config, checkpointer=get_checkpointer(), store=get_store())
 
 ### Branch Strategy
 
-- `main` — stable releases only
-- `development` — integration branch, PRs merge here
-- `feature/*` or `refactor/*` — working branches off `development`
+- **`main`** — stable releases only (protected, requires CI + PR)
+- **`development`** — integration branch, PRs merge here (protected, requires CI + PR)
+- **`feature/*`**, **`fix/*`**, **`goal/*`** — working branches off `development`
 
 ### Day-to-Day Commands
 
 ```bash
-# Sync dependencies after pulling
-cd apps/python && uv sync
+cd apps/python
 
-# Run tests
+# Sync dependencies after pulling
+uv sync
+
+# Run tests with coverage
 uv run pytest
 
 # Lint and format (run before committing)
 uv run ruff check . --fix --unsafe-fixes && uv run ruff format .
 
-# Run linting on a specific package
-cd packages/python/graphs/react_agent && uv run ruff check .
-cd packages/python/infra/fractal_agent_infra && uv run ruff check .
+# Validate OpenAPI spec
+uv run python -c "from server.openapi_spec import validate_spec; validate_spec()"
 ```
 
 ### Dependency Management
@@ -155,7 +199,13 @@ uv add --group dev <package>
 
 - **Runtime deps** go in `[project.dependencies]`
 - **Dev deps** go in `[dependency-groups.dev]`
-- **Path deps** between packages use `[tool.uv.sources]`
+
+### Git Hooks (Lefthook)
+
+Lefthook runs automatically if installed:
+
+- **pre-commit:** Ruff lint + format on staged files
+- **pre-push:** Full test suite + coverage enforcement + diff-cover + OpenAPI validation
 
 ---
 
@@ -169,12 +219,14 @@ uv add --group dev <package>
 - **Pydantic models** for public API data structures
 - **Google-style docstrings** with summary, parameters, returns, and exceptions
 - **No bare `except:`** — always catch specific exceptions
+- **`__all__` alphabetically sorted** (enforced by Ruff RUF022)
 
 ### Naming
 
 - **No single-letter variable names** — always descriptive
 - **No abbreviations** — `user_repository` not `usr_repo`
-- **No "Utils" or "Helper" classes** — organize into proper modules
+- **No "Utils" or "Helper" classes** — organise into proper modules
+- **Include units in names** only when types can't encode them
 
 ### Before Committing
 
@@ -183,131 +235,6 @@ cd apps/python
 uv run ruff check . --fix --unsafe-fixes && uv run ruff format .
 uv run pytest
 ```
-
-Lefthook runs these automatically on `git commit` and `git push` if installed.
-
----
-
-## Adding a New Graph to the Catalog
-
-The `packages/python/graphs/` directory is a catalog of portable agent architectures. Here's how to add a new one:
-
-### 1. Scaffold the Package
-
-```bash
-mkdir -p packages/python/graphs/my_agent/src/my_agent
-mkdir -p packages/python/graphs/my_agent/tests
-```
-
-### 2. Create `pyproject.toml`
-
-```toml
-[project]
-name = "fractal-graph-my-agent"
-version = "0.0.0"
-description = "My custom agent graph"
-requires-python = ">=3.11.0,<3.13"
-dependencies = [
-    "langgraph>=1.0.8",
-    "langchain-core>=1.2.11",
-    # Add only what your graph actually imports
-    "fractal-agent-infra",  # If you need tracing or store namespace
-]
-
-[build-system]
-requires = ["setuptools>=75.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["my_agent*"]
-
-[tool.uv.sources]
-fractal-agent-infra = { path = "../../infra/fractal_agent_infra", editable = true }
-```
-
-### 3. Implement the Graph
-
-Create `src/my_agent/agent.py`:
-
-```python
-from langchain_core.runnables import RunnableConfig
-
-async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
-    """Build and return a compiled agent graph.
-
-    Args:
-        config: LangGraph RunnableConfig with model settings, tool config, etc.
-        checkpointer: Optional thread-level persistence (injected by runtime).
-        store: Optional cross-thread memory store (injected by runtime).
-
-    Returns:
-        A compiled LangGraph agent ready for invocation.
-    """
-    # Your graph logic here...
-
-    return agent.compile(checkpointer=checkpointer, store=store)
-```
-
-**Critical rules:**
-- Accept `checkpointer` and `store` as keyword-only arguments with `None` defaults
-- **Never** import from `robyn_server` or any app package
-- Only import from `fractal_agent_infra` or third-party packages
-
-### 4. Export from `__init__.py`
-
-Create `src/my_agent/__init__.py`:
-
-```python
-from importlib.metadata import PackageNotFoundError, version
-from my_agent.agent import graph
-
-__all__ = ["graph"]
-
-try:
-    __version__ = version("fractal-graph-my-agent")
-except PackageNotFoundError:
-    __version__ = "0.0.0-dev"
-```
-
-### 5. Wire into the App
-
-Add the new graph as a dependency in `apps/python/pyproject.toml`:
-
-```toml
-[project]
-dependencies = [
-    "fractal-graph-my-agent",
-    # ...
-]
-
-[tool.uv.sources]
-fractal-graph-my-agent = { path = "../../packages/python/graphs/my_agent", editable = true }
-```
-
-### 6. Verify
-
-```bash
-cd packages/python/graphs/my_agent
-uv lock && uv sync
-uv run ruff check . --fix --unsafe-fixes && uv run ruff format .
-
-cd ../../../../apps/python
-uv sync
-uv run pytest
-```
-
----
-
-## Adding Infra Modules
-
-The `packages/python/infra/fractal_agent_infra/` package contains shared runtime infrastructure. To add a new module:
-
-1. Create the module in `src/fractal_agent_infra/`
-2. Keep it self-contained — no imports from graphs or apps
-3. Export public API from `__init__.py` (keep `__all__` alphabetically sorted)
-4. Add any new dependencies to `pyproject.toml`
-5. Run `uv lock` to update the lockfile
 
 ---
 
@@ -319,7 +246,7 @@ We follow a **pragmatic testing** approach: implement → manual test → write 
 
 ### Rules
 
-- **Test behavior, not implementation** — tests should survive refactoring
+- **Test behaviour, not implementation** — tests should survive refactoring
 - **One thing per test** — focused test cases with clear assertions
 - **Deterministic tests** — mock time, randomness, and I/O
 - **Test error paths** — exceptions with correct types and messages
@@ -328,30 +255,43 @@ We follow a **pragmatic testing** approach: implement → manual test → write 
 ### Running Tests
 
 ```bash
-# Full suite (550+ tests)
-cd apps/python && uv run pytest
+cd apps/python
+
+# Full suite (867+ tests, 74% coverage)
+uv run pytest
 
 # Specific test file
-uv run pytest src/robyn_server/tests/test_tracing.py -v
+uv run pytest src/server/tests/test_tracing.py -v
 
 # With short traceback
 uv run pytest --tb=short
 
-# Package integration tests
-uv run pytest tests/test_placeholder.py -v
+# Just route handler tests
+uv run pytest src/server/tests/test_route_handlers.py -v
 ```
 
-### Test Coverage
+### Coverage Enforcement (Three Tiers)
 
-Maintain ≥73% code coverage. The test suite covers:
+1. **Global floor:** `pytest-cov` with `fail_under=73` — the full suite must maintain ≥73% coverage
+2. **Per-file floor:** `coverage-threshold` — no individual file can drop to 0% (minimum 10% line coverage)
+3. **New code:** `diff-cover` with `fail_under=80` — changed lines in PRs must be ≥80% covered
+
+### Test Coverage Areas
+
+The 867+ tests cover:
+
 - Agent configuration and graph building
 - Streaming and SSE event formatting
 - Thread, run, and assistant CRUD operations
-- Authentication and authorization middleware
+- Route handler request/response cycles
+- Authentication and authorisation middleware
+- Postgres storage adapter (unit + integration)
+- Agent sync startup behaviour
 - Tracing integration (Langfuse)
 - A2A protocol handling
 - Cron scheduling
 - Store namespace conventions
+- OpenAPI spec validation
 
 ---
 
@@ -362,17 +302,13 @@ Maintain ≥73% code coverage. The test suite covers:
 1. **Branch off `development`** (not `main`)
 2. **Run the full verification suite:**
    ```bash
-   # Lint all packages
-   cd packages/python/graphs/react_agent && uv run ruff check . --fix --unsafe-fixes && uv run ruff format .
-   cd ../../infra/fractal_agent_infra && uv run ruff check . --fix --unsafe-fixes && uv run ruff format .
-   cd ../../../../apps/python && uv run ruff check . --fix --unsafe-fixes && uv run ruff format .
-
-   # Run all tests
-   cd apps/python && uv run pytest
+   cd apps/python
+   uv run ruff check . --fix --unsafe-fixes && uv run ruff format .
+   uv run pytest
    ```
-3. **Check for stale references** if you moved or renamed packages:
+3. **Check for stale references** if you moved or renamed modules:
    ```bash
-   grep -rn "old_package_name" --include="*.py" --include="*.toml" apps/ packages/
+   grep -rn "robyn_server\|fractal_agent_infra\|react_agent" --include="*.py" apps/python/src/
    ```
 4. **Commit `pyproject.toml` + `uv.lock` together** for any dependency changes
 
@@ -381,58 +317,79 @@ Maintain ≥73% code coverage. The test suite covers:
 - Use descriptive commit messages ([Conventional Commits](https://www.conventionalcommits.org/) preferred)
 - Keep PRs focused — one logical change per PR
 - Update docstrings and README if the public API changed
-- Add or update tests for new behavior
-- Target `development` as the base branch
+- Add or update tests for new behaviour
+- Target **`development`** as the base branch
 
 ### What Reviewers Check
 
-- [ ] Tests pass (550+ in Python suite)
-- [ ] Ruff clean (all three packages)
+- [ ] Tests pass (867+ in Python suite)
+- [ ] Coverage ≥73% globally, ≥80% on changed lines
+- [ ] Ruff clean
 - [ ] No stale import references
-- [ ] Dependency rules respected (no graphs → apps imports)
+- [ ] Dependency rules respected (no `graphs → server` or `infra → server` imports)
 - [ ] Public APIs have docstrings
 - [ ] Lock files committed alongside `pyproject.toml` changes
+- [ ] OpenAPI spec valid (34 paths, 44 operations, 28 schemas)
 
 ---
 
 ## Architecture Decisions
 
-### Why 3 Layers?
+### Why a Flat `src/` Layout?
 
-The separation enables **portable agent graphs** that can be:
-- Deployed to [LangGraph Platform](https://langchain-ai.github.io/langgraph/concepts/langgraph_platform/)
-- Embedded in any runtime (Robyn, FastAPI, Lambda, CLI)
-- Published independently to PyPI
-- Eventually extracted into a separate repository as a git submodule
+The Python source was consolidated from a multi-package `packages/` layout into a single `apps/python/src/` tree in Goals 19–20. This simplifies:
+
+- **Dependency resolution** — no complex path dependencies between packages
+- **Testing** — single `pytest` invocation covers everything
+- **Docker builds** — one `COPY` for all source
+- **IDE support** — standard Python path resolution
+
+The three modules (`server`, `graphs`, `infra`) are still logically separated via the [dependency rules](#dependency-rules), but they share a single `pyproject.toml` and venv.
 
 ### Why Dependency Injection for Persistence?
 
-If `graph()` imports `get_checkpointer()` from a specific server, it's coupled to that server. DI makes the graph a pure function of its inputs — the runtime decides how to persist state.
+If `graph()` imports `get_checkpointer()` from a specific server, it's coupled to that server. Dependency injection makes the graph a pure function of its inputs — the runtime decides how to persist state.
 
 ### Why UV over pip?
 
-UV is 10–100× faster, follows PEP 621, provides reproducible lockfiles, and is our single source of truth for dependency management. See the [UV docs](https://docs.astral.sh/uv/).
+UV is 10–100× faster, follows PEP 621, provides reproducible lockfiles, and is the single source of truth for dependency management. See the [UV docs](https://docs.astral.sh/uv/).
 
 ### Why Ruff `select = ["ALL"]`?
 
-We enable all rules and explicitly ignore the ones that don't fit. This catches issues early and ensures consistency. The ignore list in each `pyproject.toml` documents exactly which rules we've opted out of and why.
+We enable all rules and explicitly ignore the ones that don't fit. This catches issues early and ensures consistency. The ignore list in `pyproject.toml` documents exactly which rules we've opted out of and why.
+
+### Why a Unified Helm Chart?
+
+Both the Python and TypeScript runtimes serve the same LangGraph API — same endpoints, same health checks, same secrets. A single Helm chart at `.devops/helm/fractal-agents-runtime/` with a `runtime` toggle (`python` or `ts`) avoids duplication. See the [Helm chart README](.devops/helm/fractal-agents-runtime/README.md).
 
 ---
 
 ## Release Process
 
-Releases are triggered by git tags:
+### Versioning
 
-| Tag | Published Artifact |
-|-----|--------------------|
-| `python-graphs-v0.0.1` | `fractal-graph-react-agent` → PyPI |
-| `python-runtime-v0.0.1` | Docker image → GHCR |
-| `ts-graphs-v0.0.1` | npm package (future) |
-| `ts-runtime-v0.0.1` | Docker image → GHCR |
+All versions start at `0.0.0` and increment through patches before reaching `0.1.0`. This is intentional — it validates both the code and the release pipeline from day one.
 
-**Version progression:** `0.0.0` → `0.0.x` (patches) → `0.1.0` (after 5–10 patches) → `1.0.0` (production-ready).
+**Version progression:** `0.0.0` → `0.0.x` (patches) → `0.1.0` (after 5–10 stable patches) → `1.0.0` (production-ready).
 
-Versions must be synchronized between the git tag and `pyproject.toml` / `package.json` — the release workflow verifies this automatically.
+### Current Versions
+
+| Component | Current | Source |
+|-----------|---------|--------|
+| Python runtime | 0.0.1 | `apps/python/pyproject.toml` |
+| TypeScript runtime | 0.0.0 | `apps/ts/package.json` |
+| Helm chart | 0.0.1 | `.devops/helm/fractal-agents-runtime/Chart.yaml` |
+
+### Image Tags
+
+Docker images are published to GHCR by GitHub Actions:
+
+| Branch/Tag | Image Tag |
+|------------|-----------|
+| Feature branch push | `sha-<short>` |
+| Merge to `development` | `development` |
+| Merge to `main` | `nightly` |
+| Release tag (`v0.0.1`) | `v0.0.1`, `latest` |
 
 ---
 

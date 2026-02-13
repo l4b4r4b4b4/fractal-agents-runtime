@@ -1,0 +1,102 @@
+# =============================================================================
+# Fractal Agents Runtime — Development Environment Overrides
+# =============================================================================
+# Usage:
+#   helm install agent-runtime .devops/helm/fractal-agents-runtime \
+#     -f .devops/helm/fractal-agents-runtime/values-dev.yaml \
+#     -n dev
+# =============================================================================
+
+runtime: python
+
+image:
+  repository: ghcr.io/l4b4r4b4b4/fractal-agents-runtime-python
+  tag: "development"
+  pullPolicy: Always
+
+replicaCount: 1
+
+# Python dev settings
+python:
+  host: "0.0.0.0"
+  port: 8081
+  workers: 1
+  devMode: true
+  database:
+    url: ""  # provide via --set or existingSecret
+    poolMinSize: 1
+    poolMaxSize: 5
+    poolTimeout: 30
+  agentSync:
+    scope: "none"
+
+config:
+  supabase:
+    url: "http://127.0.0.1:54321"
+  llm:
+    openaiApiBase: "http://localhost:8001/v1"
+    modelName: ""
+  tracing:
+    langchainTracingV2: "false"
+    langchainProject: "development"
+
+# Minimal resources for dev
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 512Mi
+
+# Disable production features
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+ingress:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+
+serviceMonitor:
+  enabled: false
+
+prometheusRule:
+  enabled: false
+
+# Relaxed security for dev (allow writing to filesystem)
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 65532
+
+# Faster probes for dev
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Debug logging
+env:
+  - name: LOG_LEVEL
+    value: "DEBUG"
+  - name: PYTHONUNBUFFERED
+    value: "1"
