@@ -188,10 +188,15 @@ jobs:
         run: bun run build
 
       - name: Configure npm auth
-        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
 
       - name: Publish to npm
         run: bun publish --access public
+        env:
+          NPM_CONFIG_USERCONFIG: ${{ github.workspace }}/apps/ts/.npmrc
+          BUN_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   image-ts:
     name: "TypeScript / Release Docker Image"
