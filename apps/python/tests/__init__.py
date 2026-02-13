@@ -1,1 +1,1 @@
-"""Tests for react_agent and fractal_agent_infra package integration."""
+"""Tests for graphs and infra package integration."""

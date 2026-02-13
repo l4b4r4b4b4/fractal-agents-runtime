@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate OpenAPI spec JSON from the Robyn runtime's Python spec definition.
+"""Generate OpenAPI spec JSON from the server's Python spec definition.
 
 Usage:
     python scripts/generate_openapi.py                  # writes to openapi-spec.json
@@ -16,14 +16,14 @@ import re
 import sys
 from pathlib import Path
 
-# Ensure the src/ directory is on sys.path so we can import robyn_server
+# Ensure the src/ directory is on sys.path so we can import server
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 
 def load_spec() -> dict:
     """Import and return the OpenAPI spec dict."""
-    from robyn_server.openapi_spec import get_openapi_spec
+    from server.openapi_spec import get_openapi_spec
 
     return get_openapi_spec()
 

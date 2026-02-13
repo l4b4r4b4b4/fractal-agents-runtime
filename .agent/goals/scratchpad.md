@@ -13,6 +13,7 @@
 | 03 | TypeScript Runtime v0.0.1 — First Real TS Implementation | ⚪ Not Started | High | 2026-02-11 |
 | 18 | Assistant Config Propagation Fix | ⚪ Not Started | High | 2026-02-11 |
 | 19 | Package Structure Refactor — 3-Layer Architecture | 🟢 Complete | Critical | 2026-02-12 |
+| 20 | Rename `robyn_server` Module → `server` | ⚪ Not Started | Medium | 2026-02-12 |
 
 ---
 
@@ -42,6 +43,7 @@
 - [03-TypeScript-Runtime-V0.0.1](./03-TypeScript-Runtime-V0.0.1/scratchpad.md)
 - [18-Assistant-Config-Propagation-Fix](./18-Assistant-Config-Propagation-Fix/scratchpad.md)
 - [19-Package-Structure-Refactor](./19-Package-Structure-Refactor/scratchpad.md)
+- [20-Rename-Robyn-Server-Module](./20-Rename-Robyn-Server-Module/scratchpad.md)
 
 ---
 
@@ -59,12 +61,14 @@
 ```
 Goal 01: Monorepo v0.0.0 Setup ✅
   └── Goal 19: Package Structure Refactor (depends on Goal 01) ✅
+        ├── Goal 20: Rename robyn_server → server (depends on Goal 19)
         ├── Goal 02: Python Runtime v0.0.1 (depends on Goal 19)
         │     └── Goal 03: TypeScript Runtime v0.0.1 (depends on Goal 02)
         └── Goal 18: Assistant Config Propagation Fix (depends on Goal 19)
 ```
 
-Goal 19 complete — v0.0.0 released, 3-layer architecture established, rebase workflow in place.
+Goal 19 complete — v0.0.0 released, packages consolidated into apps/python/src/.
+Goal 20 is cosmetic — rename `robyn_server` → `server` to decouple naming from framework.
 Goal 18 next priority — touches graph code that has now stabilized in Goal 19.
 Goal 02 depends on Goal 19 because the package structure must be finalized before first release.
 Goal 03 depends on Goal 02 because the pipeline validation from the Python release confirms the workflow is trustworthy.
@@ -72,6 +76,18 @@ Goal 03 depends on Goal 02 because the pipeline validation from the Python relea
 ---
 
 ## Recent Activity
+
+### 2026-02-12 — Session 7 (Monorepo Consolidation + BUG-01/BUG-03 Fixes)
+
+- **Monorepo consolidation complete:** Moved `react_agent` and `fractal_agent_infra` from `packages/python/` into `apps/python/src/` — single package eliminates Docker wheel cache staleness
+- **BUG-01 Fixed:** `asyncio.Lock` event loop mismatch resolved with `_NoOpLock` — multi-message chat now works reliably
+- **BUG-03 Fixed:** System prompt constrained to prevent tool hallucinations
+- **Verified in Docker:** Built `agent-runtime:local`, tested 3 messages on same thread — all streamed, memory persisted, zero errors in logs
+- **PRs:** #19 (consolidation → development), #23 (promote to main via squash)
+- **Branch rules loosened:** Both `main` and `development` now allow merge, squash, and rebase (was rebase-only, causing promotion conflicts)
+- **Closed:** PR #16 (assistant config propagation — conflicts with new structure, needs reimplementation)
+- **Image live:** `ghcr.io/l4b4r4b4b4/fractal-agents-runtime-python:nightly` (sha-be5895f)
+- **Goal 20 created:** Rename `robyn_server` → `server` (cosmetic, ~241 refs across 40 files)
 
 ### 2026-02-12 — Session 6 (Goal 19: v0.0.0 RELEASED 🟢)
 

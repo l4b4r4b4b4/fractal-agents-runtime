@@ -2,7 +2,7 @@
 # Build context: repo root
 # Usage: docker build -f .devops/docker/python.Dockerfile .
 #
-# All Python packages (robyn_server, react_agent, fractal_agent_infra) are
+# All Python packages (server, graphs, infra) are
 # consolidated under apps/python/src/ — no more separate packages/ copies.
 #
 # Best practices from https://docs.astral.sh/uv/guides/integration/docker/
@@ -41,9 +41,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Copy project metadata + all source packages for the final sync that
 # installs everything into the venv (non-editable).
 COPY apps/python/pyproject.toml apps/python/uv.lock ./
-COPY apps/python/src/robyn_server/ ./src/robyn_server/
-COPY apps/python/src/react_agent/ ./src/react_agent/
-COPY apps/python/src/fractal_agent_infra/ ./src/fractal_agent_infra/
+COPY apps/python/src/server/ ./src/server/
+COPY apps/python/src/graphs/ ./src/graphs/
+COPY apps/python/src/infra/ ./src/infra/
 
 # Single --reinstall-package for the one consolidated package to ensure
 # fresh source is always picked up (version 0.0.0 doesn't change).
@@ -93,4 +93,4 @@ EXPOSE 8081
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:8081/health || exit 1
 
-CMD ["python", "-m", "robyn_server"]
+CMD ["python", "-m", "server"]
