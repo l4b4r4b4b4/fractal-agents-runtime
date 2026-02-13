@@ -1,0 +1,373 @@
+# =============================================================================
+# Fractal Agents Runtime — Unified Helm Chart
+# =============================================================================
+# Default values (Python runtime, production-ready).
+#
+# Runtime toggle: set `runtime: ts` for TypeScript (Bun) backend.
+# Override per-environment with values-dev.yaml, values-staging.yaml, etc.
+# =============================================================================
+
+# Runtime selector: "python" or "ts"
+runtime: python
+
+# -----------------------------------------------------------------------------
+# Image configuration
+# -----------------------------------------------------------------------------
+# When repository is empty, the chart auto-selects based on runtime:
+#   python → ghcr.io/l4b4r4b4b4/fractal-agents-runtime-python
+#   ts     → ghcr.io/l4b4r4b4b4/fractal-agents-runtime-ts
+image:
+  repository: ""
+  tag: ""  # empty = use Chart.appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# -----------------------------------------------------------------------------
+# Deployment
+# -----------------------------------------------------------------------------
+replicaCount: 3
+
+# -----------------------------------------------------------------------------
+# Pod configuration
+# -----------------------------------------------------------------------------
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8081"
+  prometheus.io/path: "/metrics"
+
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  capabilities:
+    drop:
+    - ALL
+
+# -----------------------------------------------------------------------------
+# Service
+# -----------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+# -----------------------------------------------------------------------------
+# Ingress
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations: {}
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    # nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  hosts:
+    - host: agent-api.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: fractal-agents-runtime-tls
+    #   hosts:
+    #     - agent-api.example.com
+
+# -----------------------------------------------------------------------------
+# Resources
+# -----------------------------------------------------------------------------
+resources:
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+# -----------------------------------------------------------------------------
+# Horizontal Pod Autoscaler
+# -----------------------------------------------------------------------------
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 2
+        periodSeconds: 30
+      selectPolicy: Max
+
+# -----------------------------------------------------------------------------
+# Pod Disruption Budget
+# -----------------------------------------------------------------------------
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+  # maxUnavailable:
+
+# -----------------------------------------------------------------------------
+# Health probes
+# -----------------------------------------------------------------------------
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# =============================================================================
+# Application configuration (shared between runtimes)
+# =============================================================================
+config:
+  # Supabase
+  supabase:
+    url: ""  # e.g. "https://your-project.supabase.co"
+
+  # LLM providers
+  llm:
+    openaiApiBase: ""   # e.g. "http://vllm.svc.cluster.local/v1"
+    modelName: ""       # e.g. "mistral", "gpt-4o"
+
+  # Tracing (Langfuse + LangChain/LangSmith)
+  tracing:
+    langfuseBaseUrl: ""           # empty = Langfuse cloud default
+    langchainTracingV2: "false"
+    langchainProject: ""
+
+  # Build metadata (optional, injected by CI)
+  buildDate: ""
+
+# =============================================================================
+# Python-specific configuration (ignored when runtime=ts)
+# =============================================================================
+python:
+  host: "0.0.0.0"
+  port: 8081
+  workers: 4
+  devMode: false
+
+  # Postgres persistence
+  database:
+    url: ""            # Use existingSecret for production! (DATABASE_URL)
+    poolMinSize: 2
+    poolMaxSize: 10
+    poolTimeout: 30
+
+  # Agent sync on startup
+  agentSync:
+    scope: "none"      # "none", "all", or "org:<org_id>"
+
+# =============================================================================
+# TypeScript-specific configuration (ignored when runtime=python)
+# =============================================================================
+typescript:
+  port: 3000
+  nodeEnv: "production"
+
+# =============================================================================
+# Secrets
+# =============================================================================
+
+# Option 1 (RECOMMENDED): Use a pre-existing Kubernetes Secret
+# Create it manually, via External Secrets Operator, or sealed-secrets.
+existingSecret:
+  name: ""  # e.g. "fractal-agents-runtime-secrets"
+  keys:
+    supabaseKey: "supabase-key"
+    supabaseSecret: "supabase-secret"
+    supabaseJwtSecret: "supabase-jwt-secret"
+    openaiApiKey: "openai-api-key"
+    anthropicApiKey: "anthropic-api-key"
+    langchainApiKey: "langchain-api-key"
+    langfuseSecretKey: "langfuse-secret-key"
+    langfusePublicKey: "langfuse-public-key"
+    databaseUrl: "database-url"
+
+# Option 2: Let Helm create a Secret from values (NOT for production)
+secrets:
+  create: false
+  data: {}
+    # supabase-key: "sb-anon-key-here"
+    # supabase-secret: "sb-service-role-key-here"
+    # supabase-jwt-secret: "sb-jwt-secret-here"
+    # openai-api-key: "sk-..."
+    # anthropic-api-key: "sk-ant-..."
+    # langchain-api-key: "ls-..."
+    # langfuse-secret-key: "sk-lf-..."
+    # langfuse-public-key: "pk-lf-..."
+    # database-url: "postgresql://user:pass@host:5432/db"
+
+# Optional ConfigMap for non-sensitive extra configuration
+configMap:
+  create: true
+  data: {}
+
+# -----------------------------------------------------------------------------
+# Volumes
+# -----------------------------------------------------------------------------
+volumeMounts:
+  - name: tmp
+    mountPath: /tmp
+
+volumes:
+  - name: tmp
+    emptyDir: {}
+
+# -----------------------------------------------------------------------------
+# Scheduling
+# -----------------------------------------------------------------------------
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - fractal-agents-runtime
+        topologyKey: kubernetes.io/hostname
+
+# -----------------------------------------------------------------------------
+# Service Account
+# -----------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automount: true
+
+# -----------------------------------------------------------------------------
+# Network Policy
+# -----------------------------------------------------------------------------
+networkPolicy:
+  enabled: false
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: ingress-nginx
+      ports:
+      - protocol: TCP
+        port: 8081
+  # Extra egress rules (DNS, HTTPS, and Postgres are handled automatically)
+  extraEgress: []
+    # - to:
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         name: vllm
+    #   ports:
+    #   - protocol: TCP
+    #     port: 80
+
+# -----------------------------------------------------------------------------
+# Monitoring — ServiceMonitor (requires Prometheus Operator)
+# -----------------------------------------------------------------------------
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  relabelings: []
+  metricRelabelings: []
+
+# -----------------------------------------------------------------------------
+# Monitoring — PrometheusRule (requires Prometheus Operator)
+# -----------------------------------------------------------------------------
+prometheusRule:
+  enabled: false
+  labels: {}
+  groups:
+    - name: fractal-agents-runtime
+      interval: 30s
+      rules:
+        - alert: AgentRuntimeHighErrorRate
+          expr: |
+            rate(http_server_errors_total[5m]) / rate(http_server_requests_total[5m]) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Agent runtime high error rate"
+            description: >-
+              Error rate is {{ $value | humanizePercentage }}
+              for {{ $labels.namespace }}/{{ $labels.pod }}
+
+        - alert: AgentRuntimeHighLatency
+          expr: |
+            histogram_quantile(0.95, rate(http_server_request_duration_seconds_bucket[5m])) > 5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Agent runtime high latency"
+            description: >-
+              P95 latency is {{ $value }}s
+              for {{ $labels.namespace }}/{{ $labels.pod }}
+
+        - alert: AgentRuntimePodRestarting
+          expr: |
+            rate(kube_pod_container_status_restarts_total{pod=~"fractal-agents-runtime-.*"}[1h]) > 0.1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Agent runtime pod restarting frequently"
+            description: "Pod {{ $labels.pod }} is restarting frequently"
+
+# -----------------------------------------------------------------------------
+# Extra environment variables
+# -----------------------------------------------------------------------------
+env: []
+  # - name: CUSTOM_VAR
+  #   value: "custom-value"
+
+envFrom: []
+  # - configMapRef:
+  #     name: my-configmap
+  # - secretRef:
+  #     name: my-secret

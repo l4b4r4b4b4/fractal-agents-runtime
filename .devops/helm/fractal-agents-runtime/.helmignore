@@ -1,0 +1,27 @@
+# Patterns to ignore when building packages.
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+.DS_Store
+.git
+.gitignore
+.bzr
+.bzrignore
+.hg
+.hgignore
+.svn
+# IDE
+.vscode
+.idea
+*.iml
+# CI/CD
+.github
+.gitlab
+# Documentation source (README.md is kept for helm show readme)
+CONTRIBUTING.md
+CHANGELOG.md
+# Testing
+tests/
+*_test.yaml

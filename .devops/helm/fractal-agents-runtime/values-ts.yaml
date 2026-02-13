@@ -1,0 +1,36 @@
+# =============================================================================
+# Fractal Agents Runtime — TypeScript (Bun) Runtime Overrides
+# =============================================================================
+# Usage:
+#   helm install agent-runtime .devops/helm/fractal-agents-runtime \
+#     -f .devops/helm/fractal-agents-runtime/values-ts.yaml \
+#     -n <namespace>
+# =============================================================================
+
+runtime: ts
+
+# TypeScript image (auto-selected when repository is empty, but explicit here)
+image:
+  repository: ghcr.io/l4b4r4b4b4/fractal-agents-runtime-ts
+  tag: ""  # uses Chart.appVersion
+  pullPolicy: IfNotPresent
+
+# Prometheus scrape annotation — TS runtime port is 3000
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "3000"
+  prometheus.io/path: "/metrics"
+
+# TypeScript-specific config
+typescript:
+  port: 3000
+  nodeEnv: "production"
+
+# TS runtime is single-process (Bun), lighter resource footprint
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 512Mi

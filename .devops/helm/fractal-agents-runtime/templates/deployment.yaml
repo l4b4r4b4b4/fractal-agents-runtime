@@ -1,0 +1,299 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fractal-agents-runtime.fullname" . }}
+  labels:
+    {{- include "fractal-agents-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/runtime: {{ include "fractal-agents-runtime.runtimeLabel" . }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "fractal-agents-runtime.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.secrets.create }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "fractal-agents-runtime.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/runtime: {{ include "fractal-agents-runtime.runtimeLabel" . }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "fractal-agents-runtime.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: {{ .Chart.Name }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        image: {{ include "fractal-agents-runtime.imageRef" . | quote }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ include "fractal-agents-runtime.port" . }}
+          protocol: TCP
+        env:
+        # ──────────────────────────────────────────────
+        # Shared env vars (both runtimes)
+        # ──────────────────────────────────────────────
+
+        # Supabase
+        - name: SUPABASE_URL
+          value: {{ .Values.config.supabase.url | quote }}
+        {{- if .Values.existingSecret.name }}
+        - name: SUPABASE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.existingSecret.name }}
+              key: {{ .Values.existingSecret.keys.supabaseKey }}
+        - name: SUPABASE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.existingSecret.name }}
+              key: {{ .Values.existingSecret.keys.supabaseSecret }}
+              optional: true
+        - name: SUPABASE_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.existingSecret.name }}
+              key: {{ .Values.existingSecret.keys.supabaseJwtSecret }}
+              optional: true
+        {{- else if .Values.secrets.create }}
+        - name: SUPABASE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "fractal-agents-runtime.secretName" . }}
+              key: supabase-key
+        - name: SUPABASE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "fractal-agents-runtime.secretName" . }}
+              key: supabase-secret
+              optional: true
+        - name: SUPABASE_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "fractal-agents-runtime.secretName" . }}
+              key: supabase-jwt-secret
+              optional: true
+        {{- end }}
+
+        # LLM providers
+        {{- if .Values.existingSecret.name }}
+        {{- if .Values.existingSecret.keys.openaiApiKey }}
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.existingSecret.name }}
+              key: {{ .Values.existingSecret.keys.openaiApiKey }}
+              optional: true
+        {{- end }}
+        {{- if .Values.existingSecret.keys.anthropicApiKey }}
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.existingSecret.name }}
+              key: {{ .Values.existingSecret.keys.anthropicApiKey }}
+              optional: true
+        {{- end }}
+        {{- else if .Values.secrets.create }}
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "fractal-agents-runtime.secretName" . }}
+              key: openai-api-key
+              optional: true
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "fractal-agents-runtime.secretName" . }}
+              key: anthropic-api-key
+              optional: true
+        {{- end }}
+        {{- if .Values.config.llm.openaiApiBase }}
+        - name: OPENAI_API_BASE
+          value: {{ .Values.config.llm.openaiApiBase | quote }}
+        {{- end }}
+        {{- if .Values.config.llm.modelName }}
+        - name: MODEL_NAME
+          value: {{ .Values.config.llm.modelName | quote }}
+        {{- end }}
+
+        # Tracing — Langfuse
+        {{- if .Values.existingSecret.name }}
+        {{- if .Values.existingSecret.keys.langfuseSecretKey }}
+        - name: LANGFUSE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.existingSecret.name }}
+              key: {{ .Values.existingSecret.keys.langfuseSecretKey }}
+              optional: true
+        {{- end }}
+        {{- if .Values.existingSecret.keys.langfusePublicKey }}
+        - name: LANGFUSE_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.existingSecret.name }}
+              key: {{ .Values.existingSecret.keys.langfusePublicKey }}
+              optional: true
+        {{- end }}
+        {{- else if .Values.secrets.create }}
+        - name: LANGFUSE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "fractal-agents-runtime.secretName" . }}
+              key: langfuse-secret-key
+              optional: true
+        - name: LANGFUSE_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "fractal-agents-runtime.secretName" . }}
+              key: langfuse-public-key
+              optional: true
+        {{- end }}
+        {{- if .Values.config.tracing.langfuseBaseUrl }}
+        - name: LANGFUSE_BASE_URL
+          value: {{ .Values.config.tracing.langfuseBaseUrl | quote }}
+        {{- end }}
+
+        # Tracing — LangChain / LangSmith
+        {{- if .Values.existingSecret.name }}
+        {{- if .Values.existingSecret.keys.langchainApiKey }}
+        - name: LANGCHAIN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.existingSecret.name }}
+              key: {{ .Values.existingSecret.keys.langchainApiKey }}
+              optional: true
+        {{- end }}
+        {{- end }}
+        {{- if .Values.config.tracing.langchainTracingV2 }}
+        - name: LANGCHAIN_TRACING_V2
+          value: {{ .Values.config.tracing.langchainTracingV2 | quote }}
+        {{- end }}
+        {{- if .Values.config.tracing.langchainProject }}
+        - name: LANGCHAIN_PROJECT
+          value: {{ .Values.config.tracing.langchainProject | quote }}
+        {{- end }}
+
+        # Build metadata
+        {{- if .Values.config.buildDate }}
+        - name: BUILD_DATE
+          value: {{ .Values.config.buildDate | quote }}
+        {{- end }}
+
+        # ──────────────────────────────────────────────
+        # Python-specific env vars (runtime == "python")
+        # ──────────────────────────────────────────────
+        {{- if eq .Values.runtime "python" }}
+        - name: ROBYN_HOST
+          value: {{ .Values.python.host | quote }}
+        - name: ROBYN_PORT
+          value: {{ .Values.python.port | quote }}
+        - name: ROBYN_WORKERS
+          value: {{ .Values.python.workers | quote }}
+        - name: ROBYN_DEV
+          value: {{ .Values.python.devMode | quote }}
+
+        # Database (CRITICAL — was missing in old chart)
+        {{- if .Values.existingSecret.name }}
+        {{- if .Values.existingSecret.keys.databaseUrl }}
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.existingSecret.name }}
+              key: {{ .Values.existingSecret.keys.databaseUrl }}
+        {{- end }}
+        {{- else if .Values.secrets.create }}
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "fractal-agents-runtime.secretName" . }}
+              key: database-url
+        {{- else if .Values.python.database.url }}
+        - name: DATABASE_URL
+          value: {{ .Values.python.database.url | quote }}
+        {{- end }}
+        {{- if .Values.python.database.poolMinSize }}
+        - name: DATABASE_POOL_MIN_SIZE
+          value: {{ .Values.python.database.poolMinSize | quote }}
+        {{- end }}
+        {{- if .Values.python.database.poolMaxSize }}
+        - name: DATABASE_POOL_MAX_SIZE
+          value: {{ .Values.python.database.poolMaxSize | quote }}
+        {{- end }}
+        {{- if .Values.python.database.poolTimeout }}
+        - name: DATABASE_POOL_TIMEOUT
+          value: {{ .Values.python.database.poolTimeout | quote }}
+        {{- end }}
+
+        # Agent sync (CRITICAL — was missing in old chart)
+        - name: AGENT_SYNC_SCOPE
+          value: {{ .Values.python.agentSync.scope | quote }}
+        {{- end }}
+
+        # ──────────────────────────────────────────────
+        # TypeScript-specific env vars (runtime == "ts")
+        # ──────────────────────────────────────────────
+        {{- if eq .Values.runtime "ts" }}
+        - name: PORT
+          value: {{ .Values.typescript.port | quote }}
+        - name: NODE_ENV
+          value: {{ .Values.typescript.nodeEnv | quote }}
+        {{- end }}
+
+        # ──────────────────────────────────────────────
+        # User-supplied extra env vars
+        # ──────────────────────────────────────────────
+        {{- with .Values.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.envFrom }}
+        envFrom:
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+        livenessProbe:
+          {{- toYaml .Values.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        {{- with .Values.volumeMounts }}
+        volumeMounts:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- with .Values.volumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

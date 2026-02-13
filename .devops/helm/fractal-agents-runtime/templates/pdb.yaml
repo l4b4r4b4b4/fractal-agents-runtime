@@ -2,9 +2,10 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "robyn-runtime.fullname" . }}
+  name: {{ include "fractal-agents-runtime.fullname" . }}
   labels:
-    {{- include "robyn-runtime.labels" . | nindent 4 }}
+    {{- include "fractal-agents-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/runtime: {{ include "fractal-agents-runtime.runtimeLabel" . }}
 spec:
   {{- if .Values.podDisruptionBudget.minAvailable }}
   minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
@@ -14,5 +15,5 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      {{- include "robyn-runtime.selectorLabels" . | nindent 6 }}
+      {{- include "fractal-agents-runtime.selectorLabels" . | nindent 6 }}
 {{- end }}

@@ -1,14 +1,24 @@
-# Testing environment values for AKS deployment
+# =============================================================================
+# Fractal Agents Runtime — AKS Testing Environment Overrides
+# =============================================================================
 # Namespace: testing
-# Supabase: supabase-test (already deployed)
-# vLLM: ministral-vllm (already deployed)
+# Supabase: supabase-test (internal Kubernetes DNS)
+# vLLM: ministral-vllm (internal Kubernetes DNS)
+#
+# Usage:
+#   helm install agent-runtime .devops/helm/fractal-agents-runtime \
+#     -f .devops/helm/fractal-agents-runtime/values-testing.yaml \
+#     -n testing
+# =============================================================================
 
-replicaCount: 1
+runtime: python
 
 image:
-  repository: ghcr.io/l4b4r4b4b4/oap-langgraph-tools-agent/robyn-runtime
-  tag: "0.0.0"
+  repository: ghcr.io/l4b4r4b4b4/fractal-agents-runtime-python
+  tag: "development"
   pullPolicy: Always
+
+replicaCount: 1
 
 # Use existing Supabase JWT secret from the testing namespace
 existingSecret:
@@ -16,33 +26,46 @@ existingSecret:
   keys:
     supabaseKey: "anonKey"
     supabaseSecret: "secret"
-    # OpenAI key not needed - using local vLLM
+    supabaseJwtSecret: "jwtSecret"
+    # LLM keys not needed — using local vLLM
     openaiApiKey: ""
+    anthropicApiKey: ""
     langchainApiKey: ""
+    langfuseSecretKey: ""
+    langfusePublicKey: ""
+    databaseUrl: "databaseUrl"
 
-# Disable secret creation - we're using existing Supabase secrets
+# Do not create Helm-managed secrets — we use the existing Supabase secret
 secrets:
   create: false
 
-config:
+# Python runtime config
+python:
   host: "0.0.0.0"
   port: 8081
   workers: 2
   devMode: true
+  database:
+    url: ""  # provided via existingSecret
+    poolMinSize: 1
+    poolMaxSize: 5
+    poolTimeout: 30
+  agentSync:
+    scope: "none"
 
+config:
   supabase:
     # Use internal Kubernetes DNS for Supabase Kong API gateway
     url: "http://supabase-test-supabase-kong.testing.svc.cluster.local:8000"
-
   llm:
     # Use local ministral vLLM in testing namespace
     openaiApiBase: "http://ministral-vllm.testing.svc.cluster.local/v1"
     modelName: "ministral"
-
-  observability:
+  tracing:
     langchainTracingV2: "false"
     langchainProject: "testing"
 
+# Minimal resources for testing
 resources:
   limits:
     cpu: 1000m
@@ -51,15 +74,15 @@ resources:
     cpu: 250m
     memory: 512Mi
 
-# Disable autoscaling for testing
+# Disable autoscaling for single-replica testing
 autoscaling:
   enabled: false
 
-# Disable PDB for single replica testing
+# Disable PDB for single replica
 podDisruptionBudget:
   enabled: false
 
-# Ingress disabled for testing - no public exposure yet
+# No ingress — no public exposure for testing
 ingress:
   enabled: false
 
@@ -67,25 +90,24 @@ ingress:
 service:
   type: ClusterIP
   port: 80
-  targetPort: 8081
 
-# Relaxed security for testing
+# Relaxed security for testing (allow filesystem writes for debug)
 podSecurityContext:
   runAsNonRoot: true
-  runAsUser: 1000
-  fsGroup: 1000
+  runAsUser: 65532
+  fsGroup: 65532
 
 securityContext:
   allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: false # Relaxed for testing
+  readOnlyRootFilesystem: false
   runAsNonRoot: true
-  runAsUser: 1000
+  runAsUser: 65532
 
 # Disable network policy for easier testing
 networkPolicy:
   enabled: false
 
-# Disable monitoring for testing (no Prometheus operator)
+# Disable monitoring (no Prometheus Operator in testing)
 serviceMonitor:
   enabled: false
 
@@ -111,22 +133,16 @@ readinessProbe:
   timeoutSeconds: 3
   failureThreshold: 3
 
-# Pod labels for testing
+# Testing-specific labels
 podLabels:
-  app.kubernetes.io/component: runtime
-  app.kubernetes.io/part-of: open-agent-platform
   environment: testing
 
-# Node selector (optional - remove if not needed)
+# No scheduling constraints for testing
 nodeSelector: {}
-
-# Tolerations (optional)
 tolerations: []
-
-# Simple anti-affinity
 affinity: {}
 
-# Additional env vars for testing/debugging
+# Debug logging + unbuffered output
 env:
   - name: LOG_LEVEL
     value: "DEBUG"

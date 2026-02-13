@@ -2,16 +2,17 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "robyn-runtime.fullname" . }}
+  name: {{ include "fractal-agents-runtime.fullname" . }}
   labels:
-    {{- include "robyn-runtime.labels" . | nindent 4 }}
+    {{- include "fractal-agents-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/runtime: {{ include "fractal-agents-runtime.runtimeLabel" . }}
     {{- with .Values.serviceMonitor.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
   selector:
     matchLabels:
-      {{- include "robyn-runtime.selectorLabels" . | nindent 6 }}
+      {{- include "fractal-agents-runtime.selectorLabels" . | nindent 6 }}
   endpoints:
   - port: http
     path: /metrics

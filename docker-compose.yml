@@ -1,0 +1,258 @@
+# docker-compose.yml — Local testing for Fractal Agents Runtime
+#
+# Usage:
+#   1. Build the image first (from repo root):
+#        docker build -f .devops/docker/python.Dockerfile . -t fractal-agents-runtime-python:local
+#
+#   2. Copy .env.example to .env and fill in required values:
+#        cp .env.example .env
+#
+#   3. Start the server:
+#        docker compose up robyn-server
+#
+#   4. Test endpoints:
+#        curl http://localhost:8081/health
+#        curl http://localhost:8081/info
+#        curl http://localhost:8081/openapi.json
+#
+# Requires:
+#   - Supabase running on supabase_network_immoflow-platform
+#   - .env file with at minimum: OPENAI_API_KEY (or ANTHROPIC_API_KEY)
+#
+# The embeddings, rerankings, and ministral services are optional and
+# disabled by default (replicas: 0). Enable them as needed.
+
+volumes:
+  hf_cache:
+
+networks:
+  supabase:
+    external: true
+    name: supabase_network_immoflow-platform
+
+services:
+  robyn-server:
+    build:
+      context: .
+      dockerfile: .devops/docker/python.Dockerfile
+    image: fractal-agents-runtime-python:local
+    ulimits:
+      nproc:
+        soft: 65535
+        hard: 65535
+    ports:
+      - "8081:8081"
+    env_file: .env
+    environment:
+      # Override DATABASE_URL to use Docker-internal hostname
+      - DATABASE_URL=postgresql://postgres:postgres@supabase_db_immoflow-platform:5432/postgres
+      # Override SUPABASE_URL to use Docker-internal Kong gateway
+      - SUPABASE_URL=http://supabase_kong_immoflow-platform:8000
+      # OPENAI_API_KEY and OPENAI_API_BASE are NOT overridden here so the
+      # real key from .env passes through for standard provider models
+      # (openai:gpt-4o-mini etc.). Custom/vLLM endpoint assistants pass
+      # base_url per-assistant via config.configurable.base_url.
+      - ROBYN_HOST=0.0.0.0
+      - ROBYN_PORT=8081
+      - ROBYN_WORKERS=1
+    networks:
+      - default
+      - supabase
+    depends_on:
+      ministral:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-4", "-f", "http://localhost:8081/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  embeddings:
+    deploy:
+      replicas: 0
+    image: ghcr.io/huggingface/text-embeddings-inference:86-1.6
+    volumes:
+      - hf_cache:/.hf_cache
+    ports:
+      - "8011-8014:8080"
+    ipc: host
+    # Replace runtime with devices for CDI
+    devices:
+      - nvidia.com/gpu=all
+    device_cgroup_rules:
+      - "c 195:* rmw"
+      - "c 236:* rmw"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - USE_FLASH_ATTENTION=True
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+      - HF_HOME=/.hf_cache
+      - RUST_LOG=info
+      # Performance tuning for embedding models
+      - OMP_NUM_THREADS=8
+      - MKL_NUM_THREADS=8
+      - TOKENIZERS_PARALLELISM=true
+    restart: no
+    env_file: .env
+    command:
+      [
+        "--model-id",
+        "jinaai/jina-embeddings-v2-base-de",
+        "--hostname",
+        "0.0.0.0",
+        "--port",
+        "8080",
+        "--huggingface-hub-cache",
+        "/.hf_cache",
+        "--tokenization-workers",
+        "16",
+        "--max-concurrent-requests",
+        "1024",
+        "--max-batch-tokens",
+        "65536",
+        "--max-batch-requests",
+        "256",
+        "--max-client-batch-size",
+        "128",
+        "--auto-truncate",
+        "--payload-limit",
+        "10000000",
+      ]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "1"
+
+  rerankings:
+    deploy:
+      replicas: 0
+    image: ghcr.io/huggingface/text-embeddings-inference:86-1.6
+    volumes:
+      - hf_cache:/.hf_cache
+    ports:
+      - 8020:8080
+    container_name: rerankings
+    env_file: .env
+    ipc: host
+    # Replace runtime with devices for CDI
+    devices:
+      - nvidia.com/gpu=all
+    device_cgroup_rules:
+      - "c 195:* rmw"
+      - "c 236:* rmw"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - USE_FLASH_ATTENTION=True
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+      - HF_HOME=/.hf_cache
+      - RUST_LOG=info
+      # Performance tuning for reranking models
+      - OMP_NUM_THREADS=8
+      - MKL_NUM_THREADS=8
+      - TOKENIZERS_PARALLELISM=true
+    restart: no
+    command:
+      [
+        "--model-id",
+        "BAAI/bge-reranker-v2-m3",
+        "--hostname",
+        "0.0.0.0",
+        "--port",
+        "8080",
+        "--huggingface-hub-cache",
+        "/.hf_cache",
+        "--tokenization-workers",
+        "16",
+        "--max-concurrent-requests",
+        "1024",
+        "--max-batch-tokens",
+        "32768",
+        "--max-batch-requests",
+        "256",
+        "--max-client-batch-size",
+        "64",
+        "--auto-truncate",
+        "--payload-limit",
+        "4000000",
+      ]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "1"
+
+  ministral:
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 16384
+    pids_limit: 512
+    device_cgroup_rules:
+      - "c 195:* rmw"
+      - "c 236:* rmw"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HUGGING_FACE_HUB_TOKEN=${HUGGINGFACEHUB_API_TOKEN:-your_hf_api_access_token}
+      - HF_HOME=/.hf_cache
+      - VLLM_ATTENTION_BACKEND=FLASHINFER
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+      - MAX_PARALLEL_LOADING_WORKERS=2
+    shm_size: "2gb"
+    deploy:
+      replicas: 1
+    volumes:
+      - hf_cache:/.hf_cache
+    restart: no
+    image: vllm/vllm-openai:cu130-nightly
+    ports:
+      - 7374:80
+    devices:
+      - nvidia.com/gpu=all
+    command:
+      [
+        "mistralai/Ministral-3-3B-Instruct-2512",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "80",
+        "--served-model-name",
+        "ministral-3b-instruct",
+        "--max-model-len",
+        "8192",
+        "--max-num-batched-tokens",
+        "8192",
+        "--kv-cache-dtype",
+        "fp8",
+        "--enable-auto-tool-choice",
+        "--tool-call-parser",
+        "mistral",
+        "--gpu-memory-utilization",
+        "0.75",
+        "--seed",
+        "4272",
+        "--max-num-seqs",
+        "1",
+        "--trust-remote-code",
+      ]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://ministral:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5

@@ -2,14 +2,15 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "robyn-runtime.fullname" . }}
+  name: {{ include "fractal-agents-runtime.fullname" . }}
   labels:
-    {{- include "robyn-runtime.labels" . | nindent 4 }}
+    {{- include "fractal-agents-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/runtime: {{ include "fractal-agents-runtime.runtimeLabel" . }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "robyn-runtime.fullname" . }}
+    name: {{ include "fractal-agents-runtime.fullname" . }}
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
   metrics:
