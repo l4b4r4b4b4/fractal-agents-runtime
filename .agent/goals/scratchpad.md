@@ -9,12 +9,15 @@
 | ID | Goal Name | Status | Priority | Last Updated |
 |----|-----------|--------|----------|--------------|
 | 01 | Monorepo v0.0.0 Setup — Full DevOps Pipeline | 🟢 Complete | Critical | 2026-02-11 |
-| 02 | Python Runtime v0.0.1 — First Real Release | ⚪ Not Started | High | 2026-02-11 |
+| 02 | Python Runtime v0.0.1 — First Real Release | 🟡 In Progress | High | 2026-02-13 |
 | 03 | TypeScript Runtime v0.0.1 — First Real TS Implementation | ⚪ Not Started | High | 2026-02-11 |
-| 18 | Assistant Config Propagation Fix | ⚪ Not Started | High | 2026-02-11 |
+| 18 | Assistant Config Propagation Fix | 🟢 Complete | High | 2026-02-13 |
 | 19 | Package Structure Refactor — 3-Layer Architecture | 🟢 Complete | Critical | 2026-02-12 |
 | 20 | Rename `robyn_server` Module → `server` + BUG-01 Fix | 🟢 Complete | Medium | 2026-02-13 |
-| 21 | Raise Test Coverage to 73% | ⚪ Not Started | High | 2026-02-13 |
+| 21 | Raise Test Coverage to 73% | 🟢 Complete | High | 2026-02-13 |
+| 22 | Unified Helm Chart | 🟢 Complete | High | 2026-02-13 |
+| 23 | Vertriebsagent Graph (Immobilien-Projektsuche) | ⚪ Not Started | High | 2026-02-13 |
+| 24 | Langfuse Prompt Template Integration | ⚪ Not Started | Medium | 2026-02-13 |
 
 ---
 
