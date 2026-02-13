@@ -3,10 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - "python-graphs-v*"
-      - "python-runtime-v*"
-      - "ts-graphs-v*"
-      - "ts-runtime-v*"
+      - "python-v*"
+      - "ts-v*"
 
 concurrency:
   group: release-${{ github.ref }}
@@ -23,10 +21,8 @@ jobs:
     outputs:
       component: ${{ steps.parse.outputs.component }}
       version: ${{ steps.parse.outputs.version }}
-      python_graphs: ${{ steps.parse.outputs.python_graphs }}
-      python_runtime: ${{ steps.parse.outputs.python_runtime }}
-      ts_graphs: ${{ steps.parse.outputs.ts_graphs }}
-      ts_runtime: ${{ steps.parse.outputs.ts_runtime }}
+      python: ${{ steps.parse.outputs.python }}
+      ts: ${{ steps.parse.outputs.ts }}
     steps:
       - name: Parse tag
         id: parse
@@ -35,27 +31,17 @@ jobs:
           echo "tag=${TAG}"
 
           # Initialize all outputs to false
-          echo "python_graphs=false" >> "$GITHUB_OUTPUT"
-          echo "python_runtime=false" >> "$GITHUB_OUTPUT"
-          echo "ts_graphs=false" >> "$GITHUB_OUTPUT"
-          echo "ts_runtime=false" >> "$GITHUB_OUTPUT"
+          echo "python=false" >> "$GITHUB_OUTPUT"
+          echo "ts=false" >> "$GITHUB_OUTPUT"
 
-          if [[ "$TAG" == python-graphs-v* ]]; then
-            VERSION="${TAG#python-graphs-v}"
-            echo "component=python-graphs" >> "$GITHUB_OUTPUT"
-            echo "python_graphs=true" >> "$GITHUB_OUTPUT"
-          elif [[ "$TAG" == python-runtime-v* ]]; then
-            VERSION="${TAG#python-runtime-v}"
-            echo "component=python-runtime" >> "$GITHUB_OUTPUT"
-            echo "python_runtime=true" >> "$GITHUB_OUTPUT"
-          elif [[ "$TAG" == ts-graphs-v* ]]; then
-            VERSION="${TAG#ts-graphs-v}"
-            echo "component=ts-graphs" >> "$GITHUB_OUTPUT"
-            echo "ts_graphs=true" >> "$GITHUB_OUTPUT"
-          elif [[ "$TAG" == ts-runtime-v* ]]; then
-            VERSION="${TAG#ts-runtime-v}"
-            echo "component=ts-runtime" >> "$GITHUB_OUTPUT"
-            echo "ts_runtime=true" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG" == python-v* ]]; then
+            VERSION="${TAG#python-v}"
+            echo "component=python" >> "$GITHUB_OUTPUT"
+            echo "python=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == ts-v* ]]; then
+            VERSION="${TAG#ts-v}"
+            echo "component=ts" >> "$GITHUB_OUTPUT"
+            echo "ts=true" >> "$GITHUB_OUTPUT"
           else
             echo "❌ Unknown tag format: ${TAG}"
             exit 1
@@ -64,16 +50,16 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Releasing: component=${TAG%%-v*}, version=${VERSION}"
 
-  # ── Python Graphs: Verify, Build, Publish to PyPI ───────────────────
-  publish-python-graphs:
-    name: "Python Graphs / Publish to PyPI"
+  # ── Python: Verify, Build, Publish to PyPI + Release Docker Image ───
+  publish-python:
+    name: "Python / Publish to PyPI"
     runs-on: ubuntu-latest
     needs: meta
-    if: needs.meta.outputs.python_graphs == 'true'
+    if: needs.meta.outputs.python == 'true'
     environment: pypi
     defaults:
       run:
-        working-directory: packages/python/graphs/react_agent
+        working-directory: apps/python
     permissions:
       contents: read
       id-token: write
@@ -116,14 +102,13 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: packages/python/graphs/react_agent/dist/
+          packages-dir: apps/python/dist/
 
-  # ── Python Runtime: Release Image ───────────────────────────────────
   image-python:
-    name: "Python Runtime / Release Image"
+    name: "Python / Release Docker Image"
     runs-on: ubuntu-latest
     needs: meta
-    if: needs.meta.outputs.python_runtime == 'true'
+    if: needs.meta.outputs.python == 'true'
     permissions:
       contents: read
       packages: write
@@ -157,16 +142,20 @@ jobs:
           provenance: true
           cache-from: type=gha,scope=python
           cache-to: type=gha,scope=python,mode=max
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.meta.outputs.version }}
 
-  # ── TypeScript Graphs: Verify, Build, Publish to npm ────────────────
-  publish-ts-graphs:
-    name: "TypeScript Graphs / Publish to npm"
+  # ── TypeScript: Verify, Build, Publish to npm + Release Docker Image ─
+  publish-ts:
+    name: "TypeScript / Publish to npm"
     runs-on: ubuntu-latest
     needs: meta
-    if: needs.meta.outputs.ts_graphs == 'true'
+    if: needs.meta.outputs.ts == 'true'
     defaults:
       run:
-        working-directory: packages/ts/fractal-agent-runtime
+        working-directory: apps/ts
     permissions:
       contents: read
     steps:
@@ -203,12 +192,11 @@ jobs:
         env:
           BUN_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  # ── TypeScript Runtime: Release Image ───────────────────────────────
   image-ts:
-    name: "TypeScript Runtime / Release Image"
+    name: "TypeScript / Release Docker Image"
     runs-on: ubuntu-latest
     needs: meta
-    if: needs.meta.outputs.ts_runtime == 'true'
+    if: needs.meta.outputs.ts == 'true'
     permissions:
       contents: read
       packages: write
@@ -242,13 +230,16 @@ jobs:
           provenance: true
           cache-from: type=gha,scope=ts
           cache-to: type=gha,scope=ts,mode=max
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.meta.outputs.version }}
 
   # ── GitHub Release ──────────────────────────────────────────────────
   github-release:
     name: GitHub Release
     runs-on: ubuntu-latest
-    needs:
-      [meta, publish-python-graphs, image-python, publish-ts-graphs, image-ts]
+    needs: [meta, publish-python, image-python, publish-ts, image-ts]
     if: always() && needs.meta.result == 'success'
     permissions:
       contents: write
@@ -259,12 +250,12 @@ jobs:
       - name: Check job results
         run: |
           # Check which jobs ran and whether any failed
-          PY_GRAPHS="${{ needs.publish-python-graphs.result }}"
-          PY_RUNTIME="${{ needs.image-python.result }}"
-          TS_GRAPHS="${{ needs.publish-ts-graphs.result }}"
-          TS_RUNTIME="${{ needs.image-ts.result }}"
+          PY="${{ needs.publish-python.result }}"
+          PY_IMG="${{ needs.image-python.result }}"
+          TS="${{ needs.publish-ts.result }}"
+          TS_IMG="${{ needs.image-ts.result }}"
 
-          for JOB_RESULT in "$PY_GRAPHS" "$PY_RUNTIME" "$TS_GRAPHS" "$TS_RUNTIME"; do
+          for JOB_RESULT in "$PY" "$PY_IMG" "$TS" "$TS_IMG"; do
             if [[ "$JOB_RESULT" == "failure" ]]; then
               echo "❌ A release job failed — skipping GitHub release"
               exit 1
