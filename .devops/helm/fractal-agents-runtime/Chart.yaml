@@ -1,0 +1,26 @@
+apiVersion: v2
+name: fractal-agents-runtime
+description: >-
+  Unified Helm chart for Fractal Agents Runtime — a polyglot LangGraph-compatible
+  agent runtime supporting both Python (Robyn) and TypeScript (Bun) backends.
+  Use the `runtime` value to switch between runtimes.
+type: application
+version: 0.0.1
+appVersion: "0.0.1"
+keywords:
+  - langgraph
+  - agents
+  - ai
+  - llm
+  - robyn
+  - bun
+  - fractal-agents
+  - open-agent-platform
+home: https://github.com/l4b4r4b4b4/fractal-agents-runtime
+sources:
+  - https://github.com/l4b4r4b4b4/fractal-agents-runtime
+maintainers:
+  - name: l4b4r4b4b4
+    url: https://github.com/l4b4r4b4b4
+icon: ""
+kubeVersion: ">=1.25.0-0"

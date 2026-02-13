@@ -2,9 +2,10 @@
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: {{ include "robyn-runtime.fullname" . }}
+  name: {{ include "fractal-agents-runtime.fullname" . }}
   labels:
-    {{- include "robyn-runtime.labels" . | nindent 4 }}
+    {{- include "fractal-agents-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/runtime: {{ include "fractal-agents-runtime.runtimeLabel" . }}
     {{- with .Values.prometheusRule.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

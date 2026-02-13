@@ -11,6 +11,7 @@ from robyn.openapi import OpenAPI, OpenAPIInfo
 
 # Import tracing module early so LANGCHAIN_TRACING_V2 is set before
 # any LangChain code is loaded.
+from infra.prompts import seed_default_prompts
 from infra.tracing import (
     initialize_langfuse,
     is_langfuse_enabled,
@@ -81,6 +82,15 @@ async def on_startup() -> None:
 
     if initialize_langfuse():
         logger.info("Robyn startup: Langfuse tracing enabled")
+        # Auto-create any missing prompts in Langfuse so users have
+        # something to iterate on in the UI from the very first deploy.
+        # Import graphs to trigger their register_default_prompt() calls.
+        import graphs.react_agent.agent  # noqa: F401 — registration side-effect
+        import graphs.research_agent.prompts  # noqa: F401 — registration side-effect
+
+        seeded = seed_default_prompts()
+        if seeded:
+            logger.info("Robyn startup: seeded %d prompt(s) in Langfuse", seeded)
     else:
         logger.info("Robyn startup: Langfuse tracing disabled (not configured)")
 
@@ -256,7 +266,7 @@ async def info() -> dict:
             "tracing": is_langfuse_enabled(),  # Langfuse tracing
         },
         # Available agent graphs
-        "graphs": ["agent"],
+        "graphs": ["agent", "research_agent"],
         # Configuration status
         "config": {
             "supabase_configured": config.supabase.is_configured,

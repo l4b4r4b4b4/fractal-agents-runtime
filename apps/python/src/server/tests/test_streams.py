@@ -589,9 +589,10 @@ class TestExecuteRunStreamIntegration:
 
         mock_agent.astream_events = mock_stream_events
 
+        mock_factory = AsyncMock(return_value=mock_agent)
         with patch(
-            "server.routes.streams.build_agent_graph",
-            return_value=mock_agent,
+            "server.routes.streams.resolve_graph_factory",
+            return_value=mock_factory,
         ):
             events = []
             async for event in execute_run_stream(
@@ -636,9 +637,10 @@ class TestExecuteRunStreamIntegration:
 
         mock_agent.astream_events = mock_stream_events
 
+        mock_factory = AsyncMock(return_value=mock_agent)
         with patch(
-            "server.routes.streams.build_agent_graph",
-            return_value=mock_agent,
+            "server.routes.streams.resolve_graph_factory",
+            return_value=mock_factory,
         ):
             events = []
             async for event in execute_run_stream(
@@ -699,9 +701,10 @@ class TestExecuteRunStreamIntegration:
 
         mock_agent.astream_events = mock_stream_events
 
+        mock_factory = AsyncMock(return_value=mock_agent)
         with patch(
-            "server.routes.streams.build_agent_graph",
-            return_value=mock_agent,
+            "server.routes.streams.resolve_graph_factory",
+            return_value=mock_factory,
         ):
             events = []
             async for event in execute_run_stream(
@@ -782,9 +785,10 @@ class TestExecuteRunStreamIntegration:
 
         mock_agent.astream_events = mock_stream_events
 
+        mock_factory = AsyncMock(return_value=mock_agent)
         with patch(
-            "server.routes.streams.build_agent_graph",
-            return_value=mock_agent,
+            "server.routes.streams.resolve_graph_factory",
+            return_value=mock_factory,
         ):
             events = []
             async for event in execute_run_stream(
@@ -811,9 +815,10 @@ class TestExecuteRunStreamIntegration:
         """Test that agent initialization errors emit error event."""
         from server.routes.streams import execute_run_stream
 
+        mock_factory = AsyncMock(side_effect=ValueError("Failed to initialize model"))
         with patch(
-            "server.routes.streams.build_agent_graph",
-            side_effect=ValueError("Failed to initialize model"),
+            "server.routes.streams.resolve_graph_factory",
+            return_value=mock_factory,
         ):
             events = []
             async for event in execute_run_stream(
@@ -852,9 +857,10 @@ class TestExecuteRunStreamIntegration:
 
         mock_agent.astream_events = mock_stream_events
 
+        mock_factory = AsyncMock(return_value=mock_agent)
         with patch(
-            "server.routes.streams.build_agent_graph",
-            return_value=mock_agent,
+            "server.routes.streams.resolve_graph_factory",
+            return_value=mock_factory,
         ):
             events = []
             async for event in execute_run_stream(
@@ -901,9 +907,10 @@ class TestExecuteRunStreamIntegration:
 
         mock_agent.astream_events = mock_stream_events
 
+        mock_factory = AsyncMock(return_value=mock_agent)
         with patch(
-            "server.routes.streams.build_agent_graph",
-            return_value=mock_agent,
+            "server.routes.streams.resolve_graph_factory",
+            return_value=mock_factory,
         ):
             # Consume all events
             async for _ in execute_run_stream(

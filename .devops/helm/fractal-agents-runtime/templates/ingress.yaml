@@ -2,9 +2,10 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "robyn-runtime.fullname" . }}
+  name: {{ include "fractal-agents-runtime.fullname" . }}
   labels:
-    {{- include "robyn-runtime.labels" . | nindent 4 }}
+    {{- include "fractal-agents-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/runtime: {{ include "fractal-agents-runtime.runtimeLabel" . }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -33,7 +34,7 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                name: {{ include "robyn-runtime.fullname" $ }}
+                name: {{ include "fractal-agents-runtime.fullname" $ }}
                 port:
                   number: {{ $.Values.service.port }}
           {{- end }}

@@ -1,0 +1,84 @@
+# =============================================================================
+# Fractal Agents Runtime — Staging Environment Overrides
+# =============================================================================
+# Usage:
+#   helm install agent-runtime .devops/helm/fractal-agents-runtime \
+#     -f .devops/helm/fractal-agents-runtime/values-staging.yaml \
+#     -n staging
+# =============================================================================
+
+runtime: python
+
+image:
+  repository: ghcr.io/l4b4r4b4b4/fractal-agents-runtime-python
+  tag: "development"
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+# Python runtime config
+python:
+  host: "0.0.0.0"
+  port: 8081
+  workers: 2
+  devMode: false
+  database:
+    url: ""  # provided via existingSecret
+    poolMinSize: 2
+    poolMaxSize: 10
+    poolTimeout: 30
+  agentSync:
+    scope: "none"
+
+config:
+  supabase:
+    url: "https://staging-project.supabase.co"
+  llm:
+    openaiApiBase: "http://ministral-vllm.staging.svc.cluster.local/v1"
+    modelName: ""
+  tracing:
+    langchainTracingV2: "true"
+    langchainProject: "staging"
+
+# Moderate resources for staging
+resources:
+  limits:
+    cpu: 1500m
+    memory: 1536Mi
+  requests:
+    cpu: 500m
+    memory: 768Mi
+
+# Autoscaling — modest range for staging
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Ingress for staging
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  hosts:
+    - host: agent-api-staging.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: fractal-agents-runtime-staging-tls
+      hosts:
+        - agent-api-staging.example.com
+
+# Staging-specific labels
+podLabels:
+  environment: staging

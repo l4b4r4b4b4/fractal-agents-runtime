@@ -177,7 +177,7 @@ async def execute_agent_run(
         store as create_store,
     )
     from server.storage import get_storage
-    from graphs.react_agent.agent import graph as build_agent_graph
+    from graphs.registry import resolve_graph_factory
 
     storage = get_storage()
 
@@ -245,11 +245,19 @@ async def execute_agent_run(
         thread_id,
     )
 
+    # Resolve the graph factory from the assistant's graph_id.
+    # Default is "agent" (react_agent) for backwards compatibility.
+    graph_id = None
+    if assistant is not None:
+        graph_id = getattr(assistant, "graph_id", None)
+    build_graph = resolve_graph_factory(graph_id)
+
     # Per-request checkpointer/store via LangGraph's from_conn_string().
     # Each creates a fresh AsyncConnection on the current event loop —
     # no shared pool, no cross-loop asyncio.Lock issues.
+
     async with create_checkpointer() as cp, create_store() as st:
-        agent = await build_agent_graph(
+        agent = await build_graph(
             runnable_config,
             checkpointer=cp,
             store=st,

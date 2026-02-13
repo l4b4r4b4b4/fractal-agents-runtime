@@ -30,7 +30,7 @@ from server.routes.sse import (
     sse_headers,
 )
 from server.storage import get_storage
-from graphs.react_agent import graph as build_agent_graph
+from graphs.registry import resolve_graph_factory
 from infra.tracing import inject_tracing
 from server.database import checkpointer as create_checkpointer, store as create_store
 
@@ -256,6 +256,7 @@ def register_stream_routes(app: Robyn) -> None:
                     config=create_data.config,
                     owner_id=user.identity,
                     assistant_config=assistant.config,
+                    graph_id=assistant.graph_id,
                 ):
                     yield event
             except Exception as stream_error:
@@ -498,6 +499,7 @@ def register_stream_routes(app: Robyn) -> None:
                     config=create_data.config,
                     owner_id=user.identity,
                     assistant_config=assistant.config,
+                    graph_id=assistant.graph_id,
                 ):
                     yield event
             except Exception as stream_error:
@@ -532,11 +534,13 @@ async def execute_run_stream(
     config: dict[str, Any] | None,
     owner_id: str,
     assistant_config: dict[str, Any] | None = None,
+    graph_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Execute a run using the agent graph and yield SSE events.
 
-    Invokes `graphs.react_agent.agent.graph` with proper configuration and
-    streams LangGraph events as SSE-formatted responses.
+    Resolves the graph factory from :func:`graphs.registry.resolve_graph_factory`
+    based on the assistant's ``graph_id`` and streams LangGraph events as
+    SSE-formatted responses.
 
     Args:
         run_id: The run ID
@@ -546,6 +550,9 @@ async def execute_run_stream(
         config: Configuration from the run request
         owner_id: Owner ID for storage operations
         assistant_config: Configuration from the assistant (base settings)
+        graph_id: The assistant's graph_id (e.g. ``"agent"``,
+            ``"research_agent"``).  Falls back to ``"agent"`` if not
+            provided.
 
     Yields:
         SSE-formatted event strings
@@ -620,7 +627,8 @@ async def execute_run_stream(
     async with create_checkpointer() as cp, create_store() as st:
         # 4. Build the agent graph
         try:
-            agent = await build_agent_graph(
+            build_graph = resolve_graph_factory(graph_id)
+            agent = await build_graph(
                 runnable_config,
                 checkpointer=cp,
                 store=st,
@@ -664,7 +672,7 @@ async def execute_run_stream(
                     # messages-tuple event — no separate metadata event needed)
                     current_metadata = {
                         "owner": owner_id,
-                        "graph_id": "agent",  # semantic label, not node name
+                        "graph_id": graph_id or "agent",
                         "assistant_id": assistant_id,
                         "run_id": run_id,
                         "thread_id": thread_id,
