@@ -23,9 +23,13 @@ FROM base AS install
 
 # Install production dependencies only (no devDependencies).
 # These go into the final image.
+# NOTE: We cannot use --frozen-lockfile here because the root bun.lock
+# is workspace-scoped (covers all apps/*) but we only copy a single
+# package.json. Bun detects a mismatch and refuses. The lockfile is
+# still copied so Bun can resolve exact versions from it.
 RUN mkdir -p /temp/prod
 COPY apps/ts/package.json bun.lock /temp/prod/
-RUN cd /temp/prod && bun install --frozen-lockfile --production
+RUN cd /temp/prod && bun install --production
 
 # ── Release stage — minimal production image ──────────────────────────
 FROM base AS release
