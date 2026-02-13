@@ -24,7 +24,7 @@
 **/.bun/
 
 # ── Tests (not needed in production images) ───────────────────────────
-apps/python/src/robyn_server/tests/
+apps/python/src/server/tests/
 apps/ts/src/**/*.test.ts
 apps/ts/src/**/*.spec.ts
 
