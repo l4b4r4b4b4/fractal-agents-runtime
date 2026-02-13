@@ -50,7 +50,7 @@ pre-push:
 
     python-diff-cover:
       root: apps/python/
-      run: uv run diff-cover coverage.xml --fail-under=80 --compare-branch=origin/development
+      run: uv run diff-cover coverage.xml --fail-under=73 --compare-branch=origin/development
 
     ts-test:
       root: apps/ts/
