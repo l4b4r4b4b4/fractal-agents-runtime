@@ -18,6 +18,7 @@ from infra.tracing import (
 )
 
 from server.agent_sync import parse_agent_sync_scope, startup_agent_sync
+from server.storage import SYSTEM_OWNER_ID
 from server.auth import auth_middleware
 from server.config import get_config
 from server.database import (
@@ -115,7 +116,7 @@ async def on_startup() -> None:
             get_connection,
             storage,
             scope=scope,
-            owner_id="system",
+            owner_id=SYSTEM_OWNER_ID,
         )
         logger.info(
             "Robyn startup: agent sync complete total=%d created=%d updated=%d skipped=%d failed=%d",

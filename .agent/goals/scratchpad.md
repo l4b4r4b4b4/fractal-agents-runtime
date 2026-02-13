@@ -14,6 +14,7 @@
 | 18 | Assistant Config Propagation Fix | ⚪ Not Started | High | 2026-02-11 |
 | 19 | Package Structure Refactor — 3-Layer Architecture | 🟢 Complete | Critical | 2026-02-12 |
 | 20 | Rename `robyn_server` Module → `server` + BUG-01 Fix | 🟢 Complete | Medium | 2026-02-13 |
+| 21 | Raise Test Coverage to 73% | ⚪ Not Started | High | 2026-02-13 |
 
 ---
 
@@ -44,6 +45,7 @@
 - [18-Assistant-Config-Propagation-Fix](./18-Assistant-Config-Propagation-Fix/scratchpad.md)
 - [19-Package-Structure-Refactor](./19-Package-Structure-Refactor/scratchpad.md)
 - [20-Rename-Robyn-Server-Module](./20-Rename-Robyn-Server-Module/scratchpad.md)
+- [21-Test-Coverage-73-Percent](./21-Test-Coverage-73-Percent/scratchpad.md)
 
 ---
 
@@ -61,16 +63,19 @@
 ```
 Goal 01: Monorepo v0.0.0 Setup ✅
   └── Goal 19: Package Structure Refactor (depends on Goal 01) ✅
-        ├── Goal 20: Rename robyn_server → server (depends on Goal 19)
-        ├── Goal 02: Python Runtime v0.0.1 (depends on Goal 19)
+        ├── Goal 20: Rename robyn_server → server (depends on Goal 19) ✅
+        ├── Goal 21: Test Coverage to 73% (depends on Goal 20) ← NEW
+        ├── Goal 18: Assistant Config Propagation Fix (depends on Goal 19)
+        ├── Goal 02: Python Runtime v0.0.1 (depends on Goal 18, 21)
         │     └── Goal 03: TypeScript Runtime v0.0.1 (depends on Goal 02)
-        └── Goal 18: Assistant Config Propagation Fix (depends on Goal 19)
+        └── (future) GHCR image build + deploy from development
 ```
 
 Goal 19 complete — v0.0.0 released, packages consolidated into apps/python/src/.
 Goal 20 complete — module rename + BUG-01 asyncio.Lock fix + Pydantic v2 compat.
-Goal 18 next priority — touches graph code that has now stabilized in Goal 19.
-Goal 02 depends on Goal 19 because the package structure must be finalized before first release.
+Goal 21 new — coverage at 47%, need 73%. Biggest gaps: postgres_storage (0%), routes, agent_sync.
+Goal 18 next priority — assistant config propagation blocks real production usage.
+Goal 02 blocked by Goal 18 (functional) + Goal 21 (quality gate) — no release below 73%.
 Goal 03 depends on Goal 02 because the pipeline validation from the Python release confirms the workflow is trustworthy.
 
 ---

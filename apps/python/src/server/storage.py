@@ -27,6 +27,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Owner ID used for system-synced assistants (startup agent sync).
+#: Assistants created with this owner are visible to all authenticated users
+#: but can only be mutated (update/delete) by the system itself.
+SYSTEM_OWNER_ID = "system"
+
 # Type variable for generic store - bound to BaseModel for type safety
 T = TypeVar("T", bound="BaseModel")
 
@@ -116,7 +121,7 @@ class BaseStore(Generic[T]):
         Returns:
             Created resource instance
         """
-        resource_id = generate_id()
+        resource_id = data.get(self._id_field, generate_id())
         now = utc_now()
 
         # Ensure metadata exists and stamp owner
@@ -321,6 +326,54 @@ class AssistantStore(BaseStore[Assistant]):
             data = {**data, "version": 1}
 
         return await super().create(data, owner_id)
+
+    async def get(self, resource_id: str, owner_id: str) -> Assistant | None:
+        """Get an assistant by ID, including system-synced assistants.
+
+        System-owned assistants (created by startup agent sync) are visible
+        to all authenticated users.  This override relaxes the strict owner
+        check from ``BaseStore.get()`` for read access only.
+
+        Args:
+            resource_id: Assistant ID to fetch.
+            owner_id: ID of the requesting user.
+
+        Returns:
+            Assistant if found and accessible, None otherwise.
+        """
+        resource_data = self._data.get(resource_id)
+        if resource_data is None:
+            return None
+
+        resource_owner = self._get_owner(resource_data)
+        if resource_owner == owner_id or resource_owner == SYSTEM_OWNER_ID:
+            return self._to_model(resource_data)
+
+        logger.debug("Access denied: %s not owned by %s", resource_id, owner_id)
+        return None
+
+    async def list(self, owner_id: str, **filters: Any) -> list[Assistant]:
+        """List assistants owned by the user plus system-synced assistants.
+
+        System-owned assistants are included so that real users can discover
+        assistants that were synced from Supabase at startup.
+
+        Args:
+            owner_id: ID of the requesting user.
+            **filters: Additional equality filters (e.g., ``graph_id=...``).
+
+        Returns:
+            List of matching assistants (own + system).
+        """
+        results: list[Assistant] = []
+        for resource_data in self._data.values():
+            resource_owner = self._get_owner(resource_data)
+            if resource_owner != owner_id and resource_owner != SYSTEM_OWNER_ID:
+                continue
+            if not self._matches_filters(resource_data, filters):
+                continue
+            results.append(self._to_model(resource_data))
+        return results
 
     async def update(
         self, resource_id: str, data: dict[str, Any], owner_id: str
