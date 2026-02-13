@@ -24,7 +24,7 @@ FROM base AS install
 # Install production dependencies only (no devDependencies).
 # These go into the final image.
 RUN mkdir -p /temp/prod
-COPY apps/ts/package.json apps/ts/bun.lock /temp/prod/
+COPY apps/ts/package.json bun.lock /temp/prod/
 RUN cd /temp/prod && bun install --frozen-lockfile --production
 
 # ── Release stage — minimal production image ──────────────────────────
