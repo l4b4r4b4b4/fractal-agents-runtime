@@ -28,7 +28,8 @@ const specJson = values.compact
 
 const pathCount = Object.keys(OPENAPI_SPEC.paths).length;
 const operationCount = Object.values(OPENAPI_SPEC.paths).reduce(
-  (sum, methods) => sum + Object.keys(methods).length,
+  (sum: number, methods: unknown) =>
+    sum + Object.keys(methods as Record<string, unknown>).length,
   0,
 );
 

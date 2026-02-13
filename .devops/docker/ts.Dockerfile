@@ -2,66 +2,59 @@
 # Build context: repo root (so we can access both apps/ and packages/)
 # Usage: docker build -f .devops/docker/ts.Dockerfile .
 #
-# Bun Docker best practices:
+# Follows official Bun Docker best practices:
 #   https://bun.com/docs/guides/ecosystem/docker
-#   https://bun.com/docs/bundler/bytecode
+#
+# NOTE: We do NOT use `bun build --compile` because @langchain/* packages
+# rely on dynamic imports, WASM modules, and other patterns that are
+# incompatible with single-binary compilation. Bun runs TypeScript
+# natively, so no build step is needed.
 
-# ── Build stage ───────────────────────────────────────────────────────
-FROM oven/bun:1.3.8 AS builder
+# ── Base stage ────────────────────────────────────────────────────────
+# Use the official Bun image as base for all stages.
+# See all versions at https://hub.docker.com/r/oven/bun/tags
+FROM oven/bun:1 AS base
+WORKDIR /usr/src/app
 
-WORKDIR /app
+# ── Install stage — cache dependencies in temp directories ────────────
+# Installing into /temp/ dirs ensures dependency layers are cached
+# independently of source code changes, speeding up rebuilds.
+FROM base AS install
 
-# ── Install runtime dependencies (cached layer) ──────────────────────
-COPY apps/ts/package.json apps/ts/bun.lock* ./
-RUN bun install --frozen-lockfile --production
+# Install production dependencies only (no devDependencies).
+# These go into the final image.
+RUN mkdir -p /temp/prod
+COPY apps/ts/package.json apps/ts/bun.lock /temp/prod/
+RUN cd /temp/prod && bun install --frozen-lockfile --production
 
-# ── Copy runtime application source ──────────────────────────────────
-COPY apps/ts/src/ ./src/
-COPY apps/ts/tsconfig.json ./
-
-# Build with bytecode compilation for faster cold start, minified,
-# with sourcemaps for production debugging.
-# --compile produces a single self-contained executable.
-RUN bun build \
-    --bytecode \
-    --minify \
-    --sourcemap \
-    --target=bun \
-    --compile \
-    ./src/index.ts \
-    --outfile=./dist/server
-
-# ── Runtime stage — minimal image ────────────────────────────────────
-FROM oven/bun:1.3.8-slim AS runtime
+# ── Release stage — minimal production image ──────────────────────────
+FROM base AS release
 
 LABEL org.opencontainers.image.source="https://github.com/l4b4r4b4b4/fractal-agents-runtime"
 LABEL org.opencontainers.image.description="Fractal Agents Runtime — TypeScript/Bun (free, self-hostable LangGraph-compatible agent runtime)"
 LABEL org.opencontainers.image.licenses="MIT"
 
-# Create non-root user for security (no adduser in slim images)
-RUN echo "appuser:x:65532:65532:appuser:/home/appuser:/sbin/nologin" >> /etc/passwd && \
-    echo "appuser:x:65532:" >> /etc/group && \
-    mkdir -p /home/appuser && \
-    chown 65532:65532 /home/appuser
+# Copy production node_modules from the install stage.
+COPY --from=install /temp/prod/node_modules node_modules
 
-WORKDIR /app
+# Copy application source and config.
+COPY apps/ts/package.json .
+COPY apps/ts/tsconfig.json .
+COPY apps/ts/src/ ./src/
 
-# Copy the compiled single binary — no node_modules needed at runtime
-COPY --from=builder --chown=65532:65532 /app/dist/server ./server
-
-# Set environment variables
+# Set environment variables.
 ENV NODE_ENV=production \
     PORT=3000
 
-# Switch to non-root user
-USER appuser
+# Switch to the built-in non-root `bun` user (provided by oven/bun image).
+USER bun
 
-# Expose server port
-EXPOSE 3000
+# Expose server port.
+EXPOSE 3000/tcp
 
-# Health check — uses bun -e since slim still includes bun runtime
+# Health check — lightweight fetch against the /health endpoint.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD bun -e "fetch('http://localhost:3000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
 
-# Run the compiled server binary
-CMD ["./server"]
+# Run the server. Bun executes TypeScript natively — no build step needed.
+ENTRYPOINT [ "bun", "run", "src/index.ts" ]
