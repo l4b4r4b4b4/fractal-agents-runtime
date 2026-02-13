@@ -24,7 +24,6 @@ dependencies = [
     "langgraph>=1.0.8",
     "langchain-core>=1.2.11",
     "langchain>=1.2.10",
-    "langgraph-sdk>=0.1.0",
     # MCP tool integration
     "langchain-mcp-adapters>=0.2.1",
     "mcp>=1.9.1",
@@ -43,8 +42,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["robyn_server*", "react_agent*", "fractal_agent_infra*"]
-exclude = ["robyn_server.tests*", "robyn_server.helm*"]
+include = ["server*", "graphs*", "infra*"]
+exclude = ["server.tests*", "server.helm*"]
 
 [dependency-groups]
 dev = [
@@ -56,7 +55,7 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-testpaths = ["src/robyn_server/tests", "tests"]
+testpaths = ["src/server/tests", "tests"]
 norecursedirs = ["archive", ".agent", ".venv", "__pycache__"]
 
 [tool.ruff]
