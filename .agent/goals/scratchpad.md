@@ -13,7 +13,7 @@
 | 03 | TypeScript Runtime v0.0.1 — First Real TS Implementation | ⚪ Not Started | High | 2026-02-11 |
 | 18 | Assistant Config Propagation Fix | ⚪ Not Started | High | 2026-02-11 |
 | 19 | Package Structure Refactor — 3-Layer Architecture | 🟢 Complete | Critical | 2026-02-12 |
-| 20 | Rename `robyn_server` Module → `server` | ⚪ Not Started | Medium | 2026-02-12 |
+| 20 | Rename `robyn_server` Module → `server` + BUG-01 Fix | 🟢 Complete | Medium | 2026-02-13 |
 
 ---
 
@@ -68,7 +68,7 @@ Goal 01: Monorepo v0.0.0 Setup ✅
 ```
 
 Goal 19 complete — v0.0.0 released, packages consolidated into apps/python/src/.
-Goal 20 is cosmetic — rename `robyn_server` → `server` to decouple naming from framework.
+Goal 20 complete — module rename + BUG-01 asyncio.Lock fix + Pydantic v2 compat.
 Goal 18 next priority — touches graph code that has now stabilized in Goal 19.
 Goal 02 depends on Goal 19 because the package structure must be finalized before first release.
 Goal 03 depends on Goal 02 because the pipeline validation from the Python release confirms the workflow is trustworthy.
@@ -76,6 +76,19 @@ Goal 03 depends on Goal 02 because the pipeline validation from the Python relea
 ---
 
 ## Recent Activity
+
+### 2026-02-13 — Session 8 (Goal 20 Complete + BUG-01 Resolved)
+
+- **Goal 20 🟢 Complete** — PR #25 squash-merged to `development` (`b233593`)
+- **Module rename:** `robyn_server/` → `server/`, `fractal_agent_infra/` → `infra/`, `react_agent/` → `graphs/react_agent/`
+- **BUG-01 RESOLVED ✅:** Eliminated shared `AsyncConnectionPool` entirely — the pool's internal `asyncio.Lock` was the real culprit (not just the checkpointer's lock). Fix: per-request connections via LangGraph's `from_conn_string()`. `PostgresStorage` now takes a `ConnectionFactory` instead of a pool.
+- **Live verified:** 10/10 sequential messages on same thread with full memory, zero asyncio.Lock errors (Supabase + OpenAI)
+- **Pydantic v2 compat:** Fixed deprecated `Field(optional=True)` and `Field(metadata={...})` → `json_schema_extra={}`. All warnings eliminated (tested with `-W error::DeprecationWarning`)
+- **Dep cleanup:** Removed `langgraph-sdk` from explicit deps (zero imports in our code, transitive from `langgraph`)
+- **Test results:** 523 passed, 35 skipped, 0 warnings, lint clean, OpenAPI valid
+- **Rebase fix:** Branch was forked from old `development` SHA (`6107fe9`, amended to `1a7fe23`). Rebased onto `origin/development` — clean, no conflicts.
+- **BUG-02 (messages overwritten in UI):** Likely downstream of BUG-01 — verify after deploy
+- **Remaining:** Build + push GHCR image from `development`, deploy, stop test container on :8081
 
 ### 2026-02-12 — Session 7 (Monorepo Consolidation + BUG-01/BUG-03 Fixes)
 
