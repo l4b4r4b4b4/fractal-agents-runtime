@@ -13,6 +13,7 @@ from graphs.react_agent.utils.mcp_interceptors import (
 )
 from graphs.react_agent.utils.token import fetch_tokens
 from graphs.react_agent.utils.tools import create_rag_tool
+from infra.prompts import get_prompt, register_default_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,10 @@ DEFAULT_SYSTEM_PROMPT = (
     " requires a tool you do not have, tell them honestly that you cannot do it"
     " with your current tools."
 )
+
+# Register with Langfuse prompt registry so seed_default_prompts() can
+# auto-create this prompt in Langfuse on first startup.
+register_default_prompt("react-agent-system-prompt", DEFAULT_SYSTEM_PROMPT)
 
 
 class RagConfig(BaseModel):
@@ -466,10 +471,26 @@ async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
     if store is not None:
         logger.info("graph() using injected store for cross-thread memory")
 
+    # --- Resolve system prompt -------------------------------------------
+    # Priority: assistant config > Langfuse prompt > hardcoded default.
+    # If the user explicitly set a system prompt via the assistant
+    # configurable (i.e. it differs from the default), honour it.
+    # Otherwise, try Langfuse with the hardcoded default as fallback.
+    if cfg.system_prompt and cfg.system_prompt != DEFAULT_SYSTEM_PROMPT:
+        effective_system_prompt = cfg.system_prompt
+        logger.info("System prompt: using assistant-configured override")
+    else:
+        effective_system_prompt = get_prompt(
+            "react-agent-system-prompt",
+            fallback=DEFAULT_SYSTEM_PROMPT,
+            config=config,
+        )
+        logger.info("System prompt: resolved via get_prompt()")
+
     return create_agent(
         model=model,
         tools=tools,
-        system_prompt=cfg.system_prompt + UNEDITABLE_SYSTEM_PROMPT,
+        system_prompt=effective_system_prompt + UNEDITABLE_SYSTEM_PROMPT,
         checkpointer=checkpointer,
         store=store,
     )

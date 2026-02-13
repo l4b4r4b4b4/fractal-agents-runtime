@@ -11,6 +11,7 @@ Usage::
 
 from importlib.metadata import PackageNotFoundError, version
 
+from infra.prompts import get_prompt, register_default_prompt, seed_default_prompts
 from infra.store_namespace import (
     CATEGORY_CONTEXT,
     CATEGORY_MEMORIES,
@@ -40,6 +41,9 @@ __all__ = [
     "NamespaceComponents",
     "build_namespace",
     "extract_namespace_components",
+    "get_prompt",
+    "register_default_prompt",
+    "seed_default_prompts",
     "initialize_langfuse",
     "inject_tracing",
     "is_langfuse_configured",

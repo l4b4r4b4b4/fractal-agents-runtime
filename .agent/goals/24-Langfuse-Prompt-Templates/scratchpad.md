@@ -1,11 +1,11 @@
 # Goal 24: Langfuse Prompt Template Integration
 
-> **Status:** ⚪ Not Started
+> **Status:** 🟡 In Progress
 > **Priority:** Medium
 > **Created:** 2026-02-13
 > **Depends on:** Goal 23 (Vertriebsagent Graph) — benefits from but doesn't block
 > **Blocks:** Nothing (additive feature)
-> **Branch:** TBD (off `development`)
+> **Branch:** `fix/merge-main-into-development`
 
 ---
 
@@ -128,61 +128,77 @@ Prompts are always defined in code as the **fallback default**. If Langfuse is c
 - **Progressive adoption** — teams can start with code prompts and migrate to Langfuse when ready
 - **No breaking change** — existing graphs continue to work unchanged
 
-### New Module: `infra/prompts.py`
+### Implemented Module: `infra/prompts.py`
+
+**Three public functions:**
+
+1. **`get_prompt()`** — Fetch a text or chat prompt from Langfuse with runtime overrides
+2. **`register_default_prompt()`** — Register a prompt default for auto-seeding
+3. **`seed_default_prompts()`** — Create missing prompts in Langfuse on startup
 
 ```python
-"""Langfuse prompt management integration.
-
-Provides a thin wrapper around Langfuse's prompt fetching with:
-- Automatic fallback to hardcoded defaults
-- Caching with configurable TTL
-- No-op behaviour when Langfuse is not configured
-"""
-
-from langfuse import Langfuse
-
-_langfuse_client: Langfuse | None = None
-
-def get_langfuse_client() -> Langfuse | None:
-    """Return the shared Langfuse client, or None if not configured."""
-    ...
-
 def get_prompt(
     name: str,
     *,
-    fallback: str,
+    fallback: str | list[ChatMessage],
+    prompt_type: Literal["text", "chat"] = "text",
+    config: RunnableConfig | None = None,   # runtime overrides
     label: str = "production",
-    cache_ttl_seconds: int = 300,
+    cache_ttl_seconds: int | None = None,
     variables: dict[str, str] | None = None,
-) -> str:
+) -> str | list[ChatMessage]:
     """Fetch a prompt from Langfuse, falling back to the hardcoded default.
 
-    Args:
-        name: Langfuse prompt name (e.g. "vertriebsagent-analyzer-phase1")
-        fallback: Hardcoded default prompt string (used if Langfuse unavailable)
-        label: Langfuse prompt label (default: "production")
-        cache_ttl_seconds: Cache TTL in seconds (default: 300 = 5 min)
-        variables: Optional template variables for compilation
-
-    Returns:
-        The compiled prompt string.
+    Resolution order:
+    1. config.configurable.prompt_overrides[name] → override name/label/version
+    2. Langfuse fetch with resolved name + label + version
+    3. Fallback string/messages (with {{variable}} substitution)
     """
-    ...
 ```
+
+**Runtime override support** — frontend can pass in `configurable`:
+```json
+{
+  "configurable": {
+    "prompt_overrides": {
+      "react-agent-system-prompt": { "label": "experiment-a" },
+      "some-prompt": { "version": 5 },
+      "another-prompt": { "name": "swapped-prompt" }
+    }
+  }
+}
+```
+
+Override keys: `name` (swap entire prompt), `label` (A/B testing), `version` (pin exact version).
+
+**Auto-seeding** — graphs register defaults at import time:
+```python
+from infra.prompts import register_default_prompt
+register_default_prompt("react-agent-system-prompt", DEFAULT_SYSTEM_PROMPT)
+```
+
+Server startup calls `seed_default_prompts()` after `initialize_langfuse()` — any prompts that don't exist in Langfuse are auto-created with the `production` label. Existing prompts are left untouched.
 
 ### Usage in Graphs
 
 ```python
 from infra.prompts import get_prompt
-from graphs.vertriebsagent.prompts.main_prompts import ANALYZER_PHASE1_PROMPT
 
-# In the analyzer node:
-prompt_text = get_prompt(
-    "vertriebsagent-analyzer-phase1",
-    fallback=ANALYZER_PHASE1_PROMPT,
-    variables={"stadt": state["stadt"]},
+# Text prompt (returns str) — in react_agent graph()
+system_prompt = get_prompt(
+    "react-agent-system-prompt",
+    fallback=DEFAULT_SYSTEM_PROMPT,
+    config=config,  # enables runtime overrides from frontend
 )
-messages = [{"role": "system", "content": prompt_text}]
+
+# Chat prompt (returns list[dict]) — for future graph use
+messages = get_prompt(
+    "my-chat-prompt",
+    prompt_type="chat",
+    fallback=[{"role": "system", "content": "You are helpful."}],
+    config=config,
+    variables={"user_name": "Alice"},
+)
 ```
 
 ### Naming Convention for Langfuse Prompts
@@ -208,55 +224,76 @@ Examples:
 No new env vars needed — uses the existing `LANGFUSE_SECRET_KEY` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_BASE_URL` already in our config. If those are empty, Langfuse is not configured and all prompts use hardcoded fallbacks.
 
 Optional new env var:
-- `LANGFUSE_PROMPT_CACHE_TTL` — override default cache TTL (default: 300s)
+- `LANGFUSE_PROMPT_CACHE_TTL` — override default cache TTL (default: 300s). Set to `0` to disable caching (useful in development).
+
+Added to `.env.example`.
 
 ---
 
 ## Task Breakdown
 
-### Task-01: Create `infra/prompts.py`
+### Task-01: Create `infra/prompts.py` 🟢 Complete
 
-- Implement `get_prompt()` with Langfuse fetch + fallback logic
-- Handle Langfuse not configured (return fallback immediately)
-- Handle Langfuse errors (log warning, return fallback)
-- Caching via Langfuse SDK's built-in cache
-- Export from `infra/__init__.py`
-- Unit tests with mocked Langfuse client
+**Implemented (Session 12):**
+- `get_prompt()` with text + chat prompt support, Langfuse fetch + fallback
+- Runtime override support via `config.configurable.prompt_overrides` (name/label/version)
+- `register_default_prompt()` — graph-level prompt registration for auto-seeding
+- `seed_default_prompts()` — creates missing prompts in Langfuse on startup (idempotent)
+- `_substitute_variables_text()` / `_substitute_variables_chat()` — `{{var}}` substitution on fallbacks
+- `_extract_overrides()` — safe extraction from RunnableConfig
+- `_get_default_cache_ttl()` — reads `LANGFUSE_PROMPT_CACHE_TTL` env var
+- Exported from `infra/__init__.py` (`get_prompt`, `register_default_prompt`, `seed_default_prompts`)
+- **65 tests** in `src/server/tests/test_prompts.py` — **98% coverage** on `infra/prompts.py`
+- Tests cover: no-Langfuse fallback, Langfuse fetch, Langfuse failure, runtime overrides (label/version/name/combined), cache TTL resolution, variable substitution, registration, seeding (create/skip/multi/failure-resilience)
 
-### Task-02: Integrate with Vertriebsagent Graph
+### Task-02: Integrate with Vertriebsagent Graph ⚪ Not Started
 
 - Update all 8 prompt usages in the vertriebsagent graph to use `get_prompt()`
 - Keep hardcoded prompts in `prompts/` as fallback defaults
 - Add Langfuse prompt names following the naming convention
+- Register defaults via `register_default_prompt()` at import time
 - Verify graph still works identically when Langfuse is not configured
+- **Blocked by:** Goal 23 (graph doesn't exist yet)
 
-### Task-03: Integrate with React Agent
+### Task-03: Integrate with React Agent 🟢 Complete
 
-- Add optional Langfuse prompt fetch for the default system prompt
-- Maintain existing `configurable.system_prompt` override behaviour
-- Priority: assistant config > Langfuse prompt > hardcoded default
+**Implemented (Session 12):**
+- `graphs/react_agent/agent.py` — system prompt now resolved via `get_prompt()`
+- Priority chain: assistant config override > Langfuse prompt > hardcoded `DEFAULT_SYSTEM_PROMPT`
+- `register_default_prompt("react-agent-system-prompt", DEFAULT_SYSTEM_PROMPT)` at module level
+- `config` passed through to `get_prompt()` enabling runtime overrides from frontend
+- `UNEDITABLE_SYSTEM_PROMPT` still appended after resolution (security constraint preserved)
 
-### Task-04: Documentation + Seed Prompts
+### Task-04: Documentation + Seed Prompts 🟡 Partially Complete
 
+**Done:**
+- `seed_default_prompts()` auto-creates missing prompts in Langfuse (no manual script needed)
+- Server startup in `server/app.py` calls seed after `initialize_langfuse()` — imports graph modules to trigger registration
+- `LANGFUSE_PROMPT_CACHE_TTL` added to `.env.example`
+
+**Remaining:**
 - Document prompt naming convention in graph READMEs
-- Create a script or instructions to seed initial prompts in Langfuse
-- Update Helm chart `values-testing.yaml` with Langfuse prompt cache TTL if needed
-- Add `LANGFUSE_PROMPT_CACHE_TTL` to `.env.example`
+- Update Helm chart `values-testing.yaml` with `LANGFUSE_PROMPT_CACHE_TTL` if needed
+- Update scratchpad when Goal 23 integration is done
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] `infra/prompts.py` exists with `get_prompt()` function
-- [ ] `get_prompt()` returns fallback when Langfuse is not configured
-- [ ] `get_prompt()` returns fallback when Langfuse is unreachable (with warning log)
-- [ ] `get_prompt()` returns Langfuse prompt when available
-- [ ] Variable substitution works (`{{stadt}}` → "München")
-- [ ] Caching works (no Langfuse API call on every graph invocation)
-- [ ] Vertriebsagent graph uses `get_prompt()` for all 8 prompts
-- [ ] React agent uses `get_prompt()` for default system prompt
-- [ ] All existing tests still pass (no behavioural change when Langfuse is absent)
-- [ ] New tests cover `get_prompt()` with mocked Langfuse
+- [x] `infra/prompts.py` exists with `get_prompt()` function
+- [x] `get_prompt()` returns fallback when Langfuse is not configured
+- [x] `get_prompt()` returns fallback when Langfuse is unreachable (with warning log)
+- [x] `get_prompt()` returns Langfuse prompt when available
+- [x] Variable substitution works (`{{stadt}}` → "München")
+- [x] Caching works (no Langfuse API call on every graph invocation)
+- [ ] Vertriebsagent graph uses `get_prompt()` for all 8 prompts (blocked by Goal 23)
+- [x] React agent uses `get_prompt()` for default system prompt
+- [x] All existing tests still pass (932 passed, 35 skipped — no behavioural change)
+- [x] New tests cover `get_prompt()` with mocked Langfuse (65 tests, 98% coverage)
+- [x] **Bonus:** Chat prompt support (not just text) — `prompt_type="chat"` returns `list[dict]`
+- [x] **Bonus:** Runtime override via `config.configurable.prompt_overrides` (name/label/version)
+- [x] **Bonus:** Auto-seeding — `seed_default_prompts()` creates missing prompts in Langfuse on startup
+- [x] **Bonus:** Registration pattern — `register_default_prompt()` for graph-level defaults
 
 ---
 
@@ -279,16 +316,19 @@ Optional new env var:
 
 ---
 
-## Open Questions
+## Open Questions — RESOLVED
 
 1. **Should `get_prompt()` support chat-type prompts (list of messages) or just text?**
-   - **Tentative decision:** Start with text only. Chat-type prompts can be added later if needed.
+   - **Decision: Both from day one.** `prompt_type="chat"` returns `list[dict]`, `"text"` returns `str`. Overloaded signatures provide type safety.
 
 2. **Should we auto-create prompts in Langfuse if they don't exist?**
-   - **Decision:** No. Prompts are created manually in the Langfuse UI or via a seed script. Auto-creation could cause naming conflicts.
+   - **Decision: Yes — via `seed_default_prompts()` at startup.** Each graph registers defaults via `register_default_prompt()`. On startup, the server seeds any that don't exist with the `production` label. Existing prompts are never touched. Idempotent and safe.
 
 3. **What happens if a Langfuse prompt has different variables than expected?**
-   - **Decision:** `compile()` raises on missing variables. Wrap in try/except, fall back to hardcoded prompt, log warning.
+   - **Decision:** `compile()` raises on missing variables. The outer try/except catches it, falls back to hardcoded prompt with `_substitute_variables_text/chat()`, and logs a warning.
 
 4. **Should the cache TTL be per-prompt or global?**
-   - **Decision:** Global default via env var, with per-call override via `cache_ttl_seconds` parameter. Per-prompt config is over-engineering for now.
+   - **Decision:** Global default via `LANGFUSE_PROMPT_CACHE_TTL` env var (default: 300s), with per-call override via `cache_ttl_seconds` parameter.
+
+5. **Should frontend be able to select prompt variant/version at runtime?**
+   - **Decision: Yes — via `config.configurable.prompt_overrides`.** Supports `name` (swap entire prompt), `label` (A/B testing), and `version` (pin exact version). Flows through standard LangGraph RunnableConfig — no protocol changes needed.
