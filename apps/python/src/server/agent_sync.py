@@ -382,17 +382,15 @@ def _build_fetch_agents_sql(scope: AgentSyncScope) -> tuple[str, dict[str, Any]]
 
 
 async def fetch_active_agents(
-    pool: Any,
+    get_connection: Any,
     scope: AgentSyncScope,
 ) -> list[AgentSyncData]:
     """Fetch active agents from Supabase/Postgres for sync.
 
-    The function expects the project's configured async connection pool
-    (created in `server.database.initialize_database()`).
-
     Args:
-        pool: AsyncConnectionPool (psycopg_pool.AsyncConnectionPool).
-            Typed as Any to avoid importing psycopg types at runtime.
+        get_connection: Connection factory — a callable returning an async
+            context manager that yields an ``AsyncConnection``
+            (e.g. ``server.database.get_connection``).
         scope: Parsed scope determining which agents to return.
 
     Returns:
@@ -409,7 +407,7 @@ async def fetch_active_agents(
 
     # psycopg with row_factory=dict_row (configured in database.py)
     # returns rows as dicts.
-    async with pool.connection() as connection:
+    async with get_connection() as connection:
         cursor = await connection.execute(sql, params)
         rows = await cursor.fetchall()
 
@@ -432,13 +430,13 @@ async def fetch_active_agents(
 
 
 async def fetch_active_agent_by_id(
-    pool: Any,
+    get_connection: Any,
     agent_id: UUID,
 ) -> AgentSyncData | None:
     """Fetch a single active agent by id (includes MCP tools).
 
     Args:
-        pool: AsyncConnectionPool.
+        get_connection: Connection factory (see :func:`fetch_active_agents`).
         agent_id: Agent UUID.
 
     Returns:
@@ -473,7 +471,7 @@ async def fetch_active_agent_by_id(
 
     params = {"agent_id": str(agent_id)}
 
-    async with pool.connection() as connection:
+    async with get_connection() as connection:
         cursor = await connection.execute(sql, params)
         rows = await cursor.fetchall()
 
@@ -613,7 +611,7 @@ def _extract_assistant_configurable(assistant: Any) -> dict[str, Any]:
 
 
 async def _write_back_langgraph_assistant_id(
-    pool: Any,
+    get_connection: Any,
     *,
     agent_id: UUID,
     assistant_id: str,
@@ -632,7 +630,7 @@ async def _write_back_langgraph_assistant_id(
 
     params = {"assistant_id": assistant_id, "agent_id": str(agent_id)}
 
-    async with pool.connection() as connection:
+    async with get_connection() as connection:
         cursor = await connection.execute(sql, params)
         try:
             row_count = cursor.rowcount
@@ -643,7 +641,7 @@ async def _write_back_langgraph_assistant_id(
 
 
 async def sync_single_agent(
-    pool: Any,
+    get_connection: Any,
     storage: AssistantStorageProtocol,
     *,
     agent: AgentSyncData,
@@ -653,7 +651,7 @@ async def sync_single_agent(
     """Create or update the LangGraph assistant for a single Supabase agent.
 
     Args:
-        pool: AsyncConnectionPool.
+        get_connection: Connection factory (see :func:`fetch_active_agents`).
         storage: Assistant storage implementation (passed in explicitly).
         agent: AgentSyncData produced by `fetch_active_agents()`/`fetch_active_agent_by_id()`.
         owner_id: Owner id used for assistant storage operations.
@@ -675,7 +673,7 @@ async def sync_single_agent(
         if write_back_assistant_id:
             try:
                 wrote_back = await _write_back_langgraph_assistant_id(
-                    pool, agent_id=agent.agent_id, assistant_id=assistant_id
+                    get_connection, agent_id=agent.agent_id, assistant_id=assistant_id
                 )
             except Exception as write_back_error:
                 logger.warning(
@@ -706,7 +704,7 @@ async def sync_single_agent(
     if write_back_assistant_id:
         try:
             wrote_back = await _write_back_langgraph_assistant_id(
-                pool, agent_id=agent.agent_id, assistant_id=assistant_id
+                get_connection, agent_id=agent.agent_id, assistant_id=assistant_id
             )
         except Exception as write_back_error:
             logger.warning(
@@ -723,7 +721,7 @@ async def sync_single_agent(
 
 
 async def startup_agent_sync(
-    pool: Any,
+    get_connection: Any,
     storage: AssistantStorageProtocol,
     *,
     scope: AgentSyncScope,
@@ -741,7 +739,7 @@ async def startup_agent_sync(
     if scope.type == "none":
         return {"total": 0, "created": 0, "updated": 0, "skipped": 0, "failed": 0}
 
-    agents = await fetch_active_agents(pool, scope)
+    agents = await fetch_active_agents(get_connection, scope)
     summary = {
         "total": len(agents),
         "created": 0,
@@ -753,7 +751,7 @@ async def startup_agent_sync(
     for agent in agents:
         try:
             result = await sync_single_agent(
-                pool,
+                get_connection,
                 storage,
                 agent=agent,
                 owner_id=owner_id,
@@ -780,7 +778,7 @@ async def startup_agent_sync(
 
 
 async def lazy_sync_agent(
-    pool: Any,
+    get_connection: Any,
     storage: AssistantStorageProtocol,
     *,
     agent_id: UUID,
@@ -816,12 +814,12 @@ async def lazy_sync_agent(
                 # Ignore parse errors; we'll resync.
                 pass
 
-    agent = await fetch_active_agent_by_id(pool, agent_id)
+    agent = await fetch_active_agent_by_id(get_connection, agent_id)
     if agent is None:
         return None
 
     await sync_single_agent(
-        pool,
+        get_connection,
         storage,
         agent=agent,
         owner_id=owner_id,

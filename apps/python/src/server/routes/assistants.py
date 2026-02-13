@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from robyn import Request, Response, Robyn
 
 from server.auth import AuthenticationError, require_user
-from server.database import get_pool, is_postgres_enabled
+from server.database import get_connection, is_postgres_enabled
 from server.models import (
     AssistantCountRequest,
     AssistantCreate,
@@ -81,14 +81,13 @@ def register_assistant_routes(app: Robyn) -> None:
                     else None
                 )
                 if isinstance(supabase_agent_id_value, str) and supabase_agent_id_value:
-                    pool = get_pool()
-                    if is_postgres_enabled() and pool is not None:
+                    if is_postgres_enabled():
                         from server.agent_sync import lazy_sync_agent
 
                         try:
                             supabase_agent_id = UUID(supabase_agent_id_value)
                             await lazy_sync_agent(
-                                pool,
+                                get_connection,
                                 storage,
                                 agent_id=supabase_agent_id,
                                 owner_id=user.identity,

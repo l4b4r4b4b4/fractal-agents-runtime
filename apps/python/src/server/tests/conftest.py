@@ -131,12 +131,26 @@ async def postgres_storage(postgres_pool):
     After the test, truncates all ``langgraph_server`` tables to ensure
     test isolation.
 
+    The pool is wrapped in a connection-factory callable so that
+    ``PostgresStorage`` receives the same interface used in production
+    (``server.database.get_connection``).  In tests the factory simply
+    delegates to the pool — the pool lives on the test event loop so
+    there are no cross-loop issues.
+
     Yields:
         ``PostgresStorage`` instance ready for CRUD operations.
     """
+    from contextlib import asynccontextmanager
+
     from server.postgres_storage import PostgresStorage
 
-    storage = PostgresStorage(postgres_pool)
+    @asynccontextmanager
+    async def _test_get_connection():
+        """Wrap the test pool in the connection-factory interface."""
+        async with postgres_pool.connection() as conn:
+            yield conn
+
+    storage = PostgresStorage(_test_get_connection)
     await storage.run_migrations()
 
     try:

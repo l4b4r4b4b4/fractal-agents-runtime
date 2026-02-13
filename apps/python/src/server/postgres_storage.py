@@ -5,12 +5,16 @@ mirroring the async interface of the in-memory stores in ``storage.py``.
 All queries use parameterized placeholders (``%s``) to prevent SQL injection.
 Owner isolation is enforced via ``metadata->>'owner'`` WHERE clauses.
 
+Each store receives a **connection factory** — a callable that returns an
+async context manager yielding an ``AsyncConnection``.  This avoids
+event-loop-bound shared state (see ``database.py`` for rationale).
+
 Usage::
 
     from server.postgres_storage import PostgresStorage
+    from server.database import get_connection
 
-    pool = get_pool()
-    storage = PostgresStorage(pool)
+    storage = PostgresStorage(get_connection)
     await storage.run_migrations()
 
     assistant = await storage.assistants.create({"graph_id": "agent"}, owner_id)
@@ -20,6 +24,8 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -27,9 +33,12 @@ from uuid import uuid4
 from server.models import Assistant, AssistantConfig, Run, Thread, ThreadState
 
 if TYPE_CHECKING:
-    from psycopg_pool import AsyncConnectionPool
+    from psycopg import AsyncConnection
 
     from server.crons.schemas import Cron
+
+#: A callable returning an async context manager that yields an ``AsyncConnection``.
+ConnectionFactory = Callable[[], AbstractAsyncContextManager["AsyncConnection"]]
 
 logger = logging.getLogger(__name__)
 
@@ -150,8 +159,8 @@ CREATE TABLE IF NOT EXISTS langgraph_server.crons (
 class PostgresAssistantStore:
     """Postgres-backed store for Assistant resources."""
 
-    def __init__(self, pool: AsyncConnectionPool) -> None:
-        self._pool = pool
+    def __init__(self, get_connection: ConnectionFactory) -> None:
+        self._get_connection = get_connection
 
     async def create(self, data: dict[str, Any], owner_id: str) -> Assistant:
         """Create a new assistant.
@@ -178,7 +187,7 @@ class PostgresAssistantStore:
         config_data = data.get("config", {})
         version = data.get("version", 1)
 
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             await connection.execute(
                 f"""
                 INSERT INTO {_SCHEMA}.assistants
@@ -214,7 +223,7 @@ class PostgresAssistantStore:
 
     async def get(self, resource_id: str, owner_id: str) -> Assistant | None:
         """Get an assistant by ID if owned by the user."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 SELECT id, graph_id, config, context, metadata, name,
@@ -233,7 +242,7 @@ class PostgresAssistantStore:
 
     async def list(self, owner_id: str, **filters: Any) -> list[Assistant]:
         """List assistants owned by the user."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 SELECT id, graph_id, config, context, metadata, name,
@@ -262,7 +271,7 @@ class PostgresAssistantStore:
         self, resource_id: str, data: dict[str, Any], owner_id: str
     ) -> Assistant | None:
         """Update an assistant, incrementing version."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             # Fetch current to verify ownership and get version
             result = await connection.execute(
                 f"""
@@ -335,7 +344,7 @@ class PostgresAssistantStore:
 
     async def delete(self, resource_id: str, owner_id: str) -> bool:
         """Delete an assistant if owned by the user."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 DELETE FROM {_SCHEMA}.assistants
@@ -351,7 +360,7 @@ class PostgresAssistantStore:
 
     async def clear(self) -> None:
         """Clear all assistants (testing only)."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             await connection.execute(f"DELETE FROM {_SCHEMA}.assistants")
 
     # -- helpers --
@@ -425,8 +434,8 @@ class PostgresAssistantStore:
 class PostgresThreadStore:
     """Postgres-backed store for Thread resources with state history."""
 
-    def __init__(self, pool: AsyncConnectionPool) -> None:
-        self._pool = pool
+    def __init__(self, get_connection: ConnectionFactory) -> None:
+        self._get_connection = get_connection
 
     async def create(self, data: dict[str, Any], owner_id: str) -> Thread:
         """Create a new thread."""
@@ -436,7 +445,7 @@ class PostgresThreadStore:
         metadata = data.get("metadata", {}).copy()
         metadata["owner"] = owner_id
 
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             await connection.execute(
                 f"""
                 INSERT INTO {_SCHEMA}.threads
@@ -468,7 +477,7 @@ class PostgresThreadStore:
 
     async def get(self, resource_id: str, owner_id: str) -> Thread | None:
         """Get a thread by ID if owned by the user."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 SELECT id, metadata, config, status, values, interrupts,
@@ -487,7 +496,7 @@ class PostgresThreadStore:
 
     async def list(self, owner_id: str, **filters: Any) -> list[Thread]:
         """List threads owned by the user."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 SELECT id, metadata, config, status, values, interrupts,
@@ -513,7 +522,7 @@ class PostgresThreadStore:
         self, resource_id: str, data: dict[str, Any], owner_id: str
     ) -> Thread | None:
         """Update a thread if owned by the user."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             # Verify ownership
             result = await connection.execute(
                 f"SELECT metadata FROM {_SCHEMA}.threads WHERE id = %s AND metadata->>'owner' = %s",
@@ -574,7 +583,7 @@ class PostgresThreadStore:
 
     async def delete(self, resource_id: str, owner_id: str) -> bool:
         """Delete a thread and its state history (CASCADE)."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 DELETE FROM {_SCHEMA}.threads
@@ -586,7 +595,7 @@ class PostgresThreadStore:
 
     async def get_state(self, thread_id: str, owner_id: str) -> ThreadState | None:
         """Get the current state of a thread."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             # Verify thread exists and is owned
             result = await connection.execute(
                 f"""
@@ -629,7 +638,7 @@ class PostgresThreadStore:
         self, thread_id: str, state: dict[str, Any], owner_id: str
     ) -> bool:
         """Add a state snapshot to the thread's history."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             # Verify ownership
             result = await connection.execute(
                 f"SELECT id FROM {_SCHEMA}.threads WHERE id = %s AND metadata->>'owner' = %s",
@@ -678,7 +687,7 @@ class PostgresThreadStore:
         self, thread_id: str, owner_id: str, limit: int = 10, before: str | None = None
     ) -> list[ThreadState] | None:
         """Get state history for a thread."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             # Verify ownership
             result = await connection.execute(
                 f"SELECT id FROM {_SCHEMA}.threads WHERE id = %s AND metadata->>'owner' = %s",
@@ -763,7 +772,7 @@ class PostgresThreadStore:
 
     async def clear(self) -> None:
         """Clear all threads and state history (testing only)."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             await connection.execute(f"DELETE FROM {_SCHEMA}.thread_states")
             await connection.execute(f"DELETE FROM {_SCHEMA}.threads")
 
@@ -805,8 +814,8 @@ class PostgresThreadStore:
 class PostgresRunStore:
     """Postgres-backed store for Run resources."""
 
-    def __init__(self, pool: AsyncConnectionPool) -> None:
-        self._pool = pool
+    def __init__(self, get_connection: ConnectionFactory) -> None:
+        self._get_connection = get_connection
 
     async def create(self, data: dict[str, Any], owner_id: str) -> Run:
         """Create a new run.
@@ -827,7 +836,7 @@ class PostgresRunStore:
 
         status = data.get("status", "pending")
 
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             await connection.execute(
                 f"""
                 INSERT INTO {_SCHEMA}.runs
@@ -862,7 +871,7 @@ class PostgresRunStore:
 
     async def get(self, resource_id: str, owner_id: str) -> Run | None:
         """Get a run by ID if owned by the user."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 SELECT id, thread_id, assistant_id, status, metadata, kwargs,
@@ -878,7 +887,7 @@ class PostgresRunStore:
 
     async def list(self, owner_id: str, **filters: Any) -> list[Run]:
         """List runs owned by the user."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 SELECT id, thread_id, assistant_id, status, metadata, kwargs,
@@ -907,7 +916,7 @@ class PostgresRunStore:
         status: str | None = None,
     ) -> list[Run]:
         """List runs for a specific thread with pagination and filtering."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             if status:
                 result = await connection.execute(
                     f"""
@@ -959,7 +968,7 @@ class PostgresRunStore:
 
     async def get_active_run(self, thread_id: str, owner_id: str) -> Run | None:
         """Get the currently active (pending or running) run for a thread."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 SELECT id, thread_id, assistant_id, status, metadata, kwargs,
@@ -986,7 +995,7 @@ class PostgresRunStore:
         self, resource_id: str, data: dict[str, Any], owner_id: str
     ) -> Run | None:
         """Update a run if owned by the user."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"SELECT id FROM {_SCHEMA}.runs WHERE id = %s AND metadata->>'owner' = %s",
                 (resource_id, owner_id),
@@ -1035,7 +1044,7 @@ class PostgresRunStore:
 
     async def delete(self, resource_id: str, owner_id: str) -> bool:
         """Delete a run if owned by the user."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 DELETE FROM {_SCHEMA}.runs
@@ -1047,7 +1056,7 @@ class PostgresRunStore:
 
     async def count_by_thread(self, thread_id: str, owner_id: str) -> int:
         """Count runs for a specific thread."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 SELECT COUNT(*) as count
@@ -1066,7 +1075,7 @@ class PostgresRunStore:
 
     async def clear(self) -> None:
         """Clear all runs (testing only)."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             await connection.execute(f"DELETE FROM {_SCHEMA}.runs")
 
     # -- helpers --
@@ -1137,10 +1146,10 @@ class PostgresStoreItem:
 
 
 class PostgresStoreStorage:
-    """Postgres-backed key-value storage with owner isolation."""
+    """Postgres-backed key-value store for arbitrary items."""
 
-    def __init__(self, pool: AsyncConnectionPool) -> None:
-        self._pool = pool
+    def __init__(self, get_connection: ConnectionFactory) -> None:
+        self._get_connection = get_connection
 
     async def put(
         self,
@@ -1154,7 +1163,7 @@ class PostgresStoreStorage:
         now = _utc_now()
         metadata = metadata or {}
 
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             await connection.execute(
                 f"""
                 INSERT INTO {_SCHEMA}.store_items
@@ -1194,7 +1203,7 @@ class PostgresStoreStorage:
         owner_id: str,
     ) -> PostgresStoreItem | None:
         """Get an item by namespace and key."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 SELECT namespace, key, value, owner_id, metadata, created_at, updated_at
@@ -1232,7 +1241,7 @@ class PostgresStoreStorage:
         owner_id: str,
     ) -> bool:
         """Delete an item."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 DELETE FROM {_SCHEMA}.store_items
@@ -1251,7 +1260,7 @@ class PostgresStoreStorage:
         offset: int = 0,
     ) -> list[PostgresStoreItem]:
         """Search items in a namespace."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             if prefix:
                 result = await connection.execute(
                     f"""
@@ -1302,7 +1311,7 @@ class PostgresStoreStorage:
 
     async def list_namespaces(self, owner_id: str) -> list[str]:
         """List all namespaces for an owner."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 SELECT DISTINCT namespace
@@ -1318,7 +1327,7 @@ class PostgresStoreStorage:
 
     async def clear(self) -> None:
         """Clear all items (testing only)."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             await connection.execute(f"DELETE FROM {_SCHEMA}.store_items")
 
 
@@ -1330,8 +1339,8 @@ class PostgresStoreStorage:
 class PostgresCronStore:
     """Postgres-backed store for Cron resources."""
 
-    def __init__(self, pool: AsyncConnectionPool) -> None:
-        self._pool = pool
+    def __init__(self, get_connection: ConnectionFactory) -> None:
+        self._get_connection = get_connection
 
     async def create(self, data: dict[str, Any], owner_id: str) -> Cron:
         """Create a new cron."""
@@ -1341,7 +1350,7 @@ class PostgresCronStore:
         metadata = data.get("metadata", {}).copy()
         metadata["owner"] = owner_id
 
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             await connection.execute(
                 f"""
                 INSERT INTO {_SCHEMA}.crons
@@ -1374,7 +1383,7 @@ class PostgresCronStore:
 
     async def get(self, resource_id: str, owner_id: str) -> Cron | None:
         """Get a cron by ID if owned by the user."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 SELECT id, assistant_id, thread_id, end_time, schedule,
@@ -1393,7 +1402,7 @@ class PostgresCronStore:
         self, owner_id: str, assistant_id: str | None = None, **filters: Any
     ) -> list[Cron]:
         """List crons owned by the user, optionally filtered."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             if assistant_id:
                 result = await connection.execute(
                     f"""
@@ -1438,7 +1447,7 @@ class PostgresCronStore:
         updates: dict[str, Any],
     ) -> Cron | None:
         """Update a cron job."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             # Verify ownership
             result = await connection.execute(
                 f"SELECT id FROM {_SCHEMA}.crons WHERE id = %s AND metadata->>'owner' = %s",
@@ -1494,7 +1503,7 @@ class PostgresCronStore:
 
     async def delete(self, resource_id: str, owner_id: str) -> bool:
         """Delete a cron if owned by the user."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 DELETE FROM {_SCHEMA}.crons
@@ -1508,7 +1517,7 @@ class PostgresCronStore:
         self, owner_id: str, assistant_id: str | None = None, **filters: Any
     ) -> int:
         """Count crons matching filters."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             if assistant_id:
                 result = await connection.execute(
                     f"""
@@ -1534,7 +1543,7 @@ class PostgresCronStore:
 
     async def clear(self) -> None:
         """Clear all crons (testing only)."""
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             await connection.execute(f"DELETE FROM {_SCHEMA}.crons")
 
     # -- helpers --
@@ -1600,16 +1609,22 @@ class PostgresCronStore:
 class PostgresStorage:
     """Container for all Postgres-backed resource stores.
 
-    Provides the same interface as the in-memory ``Storage`` class.
+    Accepts a *connection factory* — a callable returning an async context
+    manager that yields an ``AsyncConnection``.  This avoids sharing
+    event-loop-bound ``AsyncConnectionPool`` instances across Robyn/Actix
+    worker loops.
+
+    Args:
+        get_connection: Connection factory (e.g. ``database.get_connection``).
     """
 
-    def __init__(self, pool: AsyncConnectionPool) -> None:
-        self._pool = pool
-        self.assistants = PostgresAssistantStore(pool)
-        self.threads = PostgresThreadStore(pool)
-        self.runs = PostgresRunStore(pool)
-        self.store = PostgresStoreStorage(pool)
-        self.crons = PostgresCronStore(pool)
+    def __init__(self, get_connection: ConnectionFactory) -> None:
+        self._get_connection = get_connection
+        self.assistants = PostgresAssistantStore(get_connection)
+        self.threads = PostgresThreadStore(get_connection)
+        self.runs = PostgresRunStore(get_connection)
+        self.store = PostgresStoreStorage(get_connection)
+        self.crons = PostgresCronStore(get_connection)
 
     async def run_migrations(self) -> None:
         """Run DDL migrations to create the ``langgraph_server`` schema and tables.
@@ -1617,7 +1632,7 @@ class PostgresStorage:
         All statements are idempotent (``CREATE … IF NOT EXISTS``), so this
         is safe to call on every startup.
         """
-        async with self._pool.connection() as connection:
+        async with self._get_connection() as connection:
             # Execute each statement separately for compatibility.
             # psycopg doesn't support multi-statement execute in all modes.
             for statement in _DDL.split(";"):

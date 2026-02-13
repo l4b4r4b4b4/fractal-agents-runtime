@@ -11,6 +11,7 @@ import pytest
 
 from server.database import (
     get_checkpointer,
+    get_database_url,
     get_pool,
     get_store,
     is_postgres_enabled,
@@ -28,16 +29,20 @@ class TestDatabaseAccessorsBeforeInit:
         # in teardown to reset state.
         assert is_postgres_enabled() is False
 
+    def test_get_database_url_none_without_init(self):
+        """get_database_url() returns None before initialization."""
+        assert get_database_url() is None
+
     def test_get_pool_none_without_init(self):
-        """get_pool() returns None before initialization."""
+        """get_pool() returns None (deprecated stub)."""
         assert get_pool() is None
 
     def test_get_checkpointer_none_without_init(self):
-        """get_checkpointer() returns None before initialization."""
+        """get_checkpointer() returns None (deprecated stub)."""
         assert get_checkpointer() is None
 
     def test_get_store_none_without_init(self):
-        """get_store() returns None before initialization."""
+        """get_store() returns None (deprecated stub)."""
         assert get_store() is None
 
 
@@ -58,9 +63,10 @@ class TestShutdownSafety:
 
     @pytest.mark.asyncio
     async def test_shutdown_resets_state(self):
-        """shutdown_database() resets all module-level singletons."""
+        """shutdown_database() resets all module-level state."""
         await shutdown_database()
         assert is_postgres_enabled() is False
+        assert get_database_url() is None
         assert get_pool() is None
         assert get_checkpointer() is None
         assert get_store() is None
@@ -93,21 +99,18 @@ class TestInitializeWithoutDatabaseUrl:
         monkeypatch.setattr("server.config._config", mock_config)
 
         # Reset database state
-        db_module._pool = None
-        db_module._checkpointer = None
-        db_module._store = None
+        db_module._database_url = None
         db_module._initialized = False
 
         try:
             result = await db_module.initialize_database()
             assert result is False
             assert is_postgres_enabled() is False
-            assert get_pool() is None
-            assert get_checkpointer() is None
-            assert get_store() is None
+            assert get_database_url() is None
         finally:
             # Clean up
             monkeypatch.setattr("server.config._config", None)
+            db_module._database_url = None
             db_module._initialized = False
 
     @pytest.mark.asyncio
@@ -135,9 +138,7 @@ class TestInitializeWithoutDatabaseUrl:
 
         monkeypatch.setattr("server.config._config", mock_config)
 
-        db_module._pool = None
-        db_module._checkpointer = None
-        db_module._store = None
+        db_module._database_url = None
         db_module._initialized = False
 
         try:
@@ -145,11 +146,10 @@ class TestInitializeWithoutDatabaseUrl:
             assert result is False
             assert is_postgres_enabled() is False
             # Should have cleaned up after failure
-            assert get_pool() is None
-            assert get_checkpointer() is None
-            assert get_store() is None
+            assert get_database_url() is None
         finally:
             monkeypatch.setattr("server.config._config", None)
+            db_module._database_url = None
             db_module._initialized = False
 
 

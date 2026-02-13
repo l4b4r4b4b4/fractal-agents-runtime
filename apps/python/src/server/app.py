@@ -21,7 +21,7 @@ from server.agent_sync import parse_agent_sync_scope, startup_agent_sync
 from server.auth import auth_middleware
 from server.config import get_config
 from server.database import (
-    get_pool,
+    get_connection,
     initialize_database,
     is_postgres_enabled,
     shutdown_database,
@@ -93,11 +93,6 @@ async def on_startup() -> None:
         logger.info("Robyn startup: agent sync skipped (Postgres not enabled)")
         return
 
-    pool = get_pool()
-    if pool is None:
-        logger.info("Robyn startup: agent sync skipped (pool not available)")
-        return
-
     # Read scope from environment via parser to avoid coupling app to config changes.
     import os
 
@@ -117,7 +112,7 @@ async def on_startup() -> None:
     try:
         storage = get_storage()
         summary = await startup_agent_sync(
-            pool,
+            get_connection,
             storage,
             scope=scope,
             owner_id="system",
@@ -137,7 +132,7 @@ async def on_startup() -> None:
 
 @app.shutdown_handler
 async def on_shutdown() -> None:
-    """Close the Postgres connection pool and Langfuse client gracefully."""
+    """Reset database state and close Langfuse client gracefully."""
     shutdown_langfuse()
     await shutdown_database()
     logger.info("Robyn shutdown: database and tracing resources released")

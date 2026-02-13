@@ -1,68 +1,71 @@
 """Database module for Postgres persistence.
 
-Manages the shared async connection pool and provides per-request
-LangGraph checkpointer / store factories.  All components share a single
-``AsyncConnectionPool`` to minimise Postgres connections.
+Provides per-request connection management that avoids event-loop-bound
+shared state.  This is critical for Robyn/Actix, which may dispatch
+Python coroutines on **different** event loops across requests.
 
-**Why per-request factories with no-op Locks?**
+**Why no shared ``AsyncConnectionPool``?**
 
-``AsyncPostgresSaver`` and ``AsyncPostgresStore`` each create an internal
-``asyncio.Lock`` that binds lazily to the first event loop that calls
-``acquire()``.  Robyn (via Actix) may resume an SSE async generator on a
-**different** event loop mid-stream — the checkpoint *read* at stream
-start binds the Lock to Loop-A, then the checkpoint *write* at stream
-end runs on Loop-B → ``RuntimeError: Lock is bound to a different event
-loop``.
+``psycopg_pool.AsyncConnectionPool`` creates an internal ``asyncio.Lock``
+(and scheduler, task queue, etc.) during ``open()``.  These bind to the
+event loop that called ``open()``.  When Robyn's Actix runtime dispatches
+a subsequent request on a *different* event loop, any ``pool.connection()``
+call hits ``async with self._lock`` → ``RuntimeError: Lock is bound to a
+different event loop``.
 
-Creating per-request instances is necessary but not sufficient because
-the Lock still binds on first use within the request.  Since each
-per-request instance is used by exactly one request and the underlying
-``AsyncConnectionPool`` already serialises connection checkout, the
-instance-level Lock is redundant.  We replace it with a no-op async
-context manager.
+The same problem affects ``AsyncPostgresSaver`` and ``AsyncPostgresStore``
+from LangGraph, which each create an internal ``asyncio.Lock`` in
+``__init__``.
+
+**Solution: per-request connections.**
+
+* LangGraph checkpointer/store use their built-in ``from_conn_string()``
+  async context managers — each call creates a fresh ``AsyncConnection``
+  on the *current* event loop and closes it on exit.
+* Our custom ``PostgresStorage`` receives a *connection factory* (an async
+  context manager callable) instead of a pool.  Each DB operation creates
+  a fresh connection, does its work, and closes it.
+* At startup, temporary ``from_conn_string()`` instances run idempotent
+  DDL setup (table creation, RLS).  These are discarded after setup.
 
 Usage at server startup::
 
     from server.database import initialize_database, shutdown_database
 
-    # In Robyn startup handler
-    await initialize_database()
+    await initialize_database()   # probe, create tables
+    # ... server runs ...
+    await shutdown_database()     # reset state
 
-    # In Robyn shutdown handler
-    await shutdown_database()
+Per-request access::
 
-Access components per-request::
+    from server.database import checkpointer, store, get_connection
 
-    from server.database import (
-        get_checkpointer,
-        get_pool,
-        get_store,
-        is_postgres_enabled,
-    )
+    async with checkpointer() as cp, store() as st:
+        agent = build_agent(config, checkpointer=cp, store=st)
+        ...
 
-    if is_postgres_enabled():
-        checkpointer = get_checkpointer()  # fresh AsyncPostgresSaver per call
-        store = get_store()                 # fresh AsyncPostgresStore per call
-        pool = get_pool()                   # shared AsyncConnectionPool
+    async with get_connection() as conn:
+        await conn.execute("SELECT ...")
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, AsyncGenerator
 
 if TYPE_CHECKING:
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
     from langgraph.store.postgres.aio import AsyncPostgresStore
-    from psycopg_pool import AsyncConnectionPool
+    from psycopg import AsyncConnection
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Module-level singletons
+# Module-level state (no asyncio primitives — just strings and booleans)
 # ---------------------------------------------------------------------------
 
-_pool: AsyncConnectionPool | None = None
+_database_url: str | None = None
 _initialized: bool = False
 
 
@@ -72,26 +75,23 @@ _initialized: bool = False
 
 
 async def initialize_database() -> bool:
-    """Initialise the shared Postgres connection pool and LangGraph persistence.
+    """Initialise Postgres persistence: probe connectivity, create tables.
 
-    Reads ``DATABASE_URL`` (and optional pool-tuning variables) from the
-    application config.  When the URL is empty the function returns ``False``
-    and the server continues with in-memory storage.
+    Reads ``DATABASE_URL`` from the application config.  When the URL is
+    empty the function returns ``False`` and the server continues with
+    in-memory storage.
 
-    On success the following are available via their accessors:
+    On success the following are available:
 
-    * ``get_pool()``         → ``AsyncConnectionPool``
-    * ``get_checkpointer()`` → ``AsyncPostgresSaver``
-    * ``get_store()``        → ``AsyncPostgresStore``
+    * ``get_database_url()`` → connection string
+    * ``checkpointer()``     → async CM yielding ``AsyncPostgresSaver``
+    * ``store()``            → async CM yielding ``AsyncPostgresStore``
+    * ``get_connection()``   → async CM yielding ``AsyncConnection``
 
     Returns:
         ``True`` when Postgres is connected and ready, ``False`` otherwise.
-
-    Raises:
-        Nothing — connection errors are caught and logged so the server can
-        fall back to in-memory mode.
     """
-    global _pool, _initialized  # noqa: PLW0603
+    global _database_url, _initialized  # noqa: PLW0603
 
     from server.config import get_config
 
@@ -103,7 +103,7 @@ async def initialize_database() -> bool:
 
     database_url = config.database.url
 
-    # Local Supabase instances don't expose TLS; make sure sslmode is set so
+    # Local Supabase instances don't expose TLS; ensure sslmode is set so
     # psycopg doesn't try to negotiate SSL with a server that doesn't have it.
     if "sslmode" not in database_url and (
         "127.0.0.1" in database_url or "localhost" in database_url
@@ -112,48 +112,38 @@ async def initialize_database() -> bool:
         database_url = f"{database_url}{separator}sslmode=disable"
 
     try:
-        await _create_pool(
-            database_url,
-            min_size=config.database.pool_min_size,
-            max_size=config.database.pool_max_size,
-            timeout=config.database.pool_timeout,
-        )
-        await _create_checkpointer_and_store()
-        await _create_langgraph_server_schema()
+        # Fast-fail connectivity probe
+        await _probe_connection(database_url)
+
+        # Store URL for runtime use — no asyncio objects, safe across loops
+        _database_url = database_url
+
+        # Idempotent DDL setup with temporary per-call connections
+        await _run_setup()
+
         _initialized = True
-        logger.info(
-            "Postgres persistence initialised (pool min=%d max=%d)",
-            config.database.pool_min_size,
-            config.database.pool_max_size,
-        )
+        logger.info("Postgres persistence initialised (per-request connections)")
     except Exception:
         logger.exception(
             "Failed to connect to Postgres — falling back to in-memory storage"
         )
-        # Clean up anything that was partially created.
-        await shutdown_database()
+        _database_url = None
+        _initialized = False
         return False
 
     return True
 
 
 async def shutdown_database() -> None:
-    """Close the connection pool and release all Postgres resources.
+    """Reset database state.
 
     Safe to call even when Postgres was never initialised.
+    No connections or pools to close — everything is per-request.
     """
-    global _pool, _initialized  # noqa: PLW0603
-
-    if _pool is not None:
-        try:
-            await _pool.close()
-            logger.info("Postgres connection pool closed")
-        except Exception:
-            logger.exception("Error closing Postgres connection pool")
-        finally:
-            _pool = None
-
+    global _database_url, _initialized  # noqa: PLW0603
+    _database_url = None
     _initialized = False
+    logger.info("Database state reset")
 
 
 # ---------------------------------------------------------------------------
@@ -161,96 +151,9 @@ async def shutdown_database() -> None:
 # ---------------------------------------------------------------------------
 
 
-def get_pool() -> AsyncConnectionPool | None:
-    """Return the shared ``AsyncConnectionPool``, or ``None`` when Postgres is disabled."""
-    return _pool
-
-
-class _NoOpLock:
-    """Async context manager that replaces ``asyncio.Lock`` for per-request use.
-
-    ``AsyncPostgresSaver`` and ``AsyncPostgresStore`` use an instance-level
-    ``asyncio.Lock`` to serialise cursor access.  In Robyn's Actix-backed
-    runtime, SSE generators may be resumed on a **different** event loop
-    mid-stream, causing ``RuntimeError: Lock is bound to a different event
-    loop``.
-
-    Because each per-request instance is used by exactly one request, and
-    the underlying ``AsyncConnectionPool`` already handles connection-level
-    concurrency, the instance Lock is redundant.  This no-op replacement
-    avoids the cross-loop error entirely.
-    """
-
-    async def __aenter__(self) -> "_NoOpLock":
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
-    ) -> None:
-        return None
-
-    async def acquire(self) -> bool:
-        return True
-
-    def release(self) -> None:
-        pass
-
-    def locked(self) -> bool:
-        return False
-
-
-def get_checkpointer() -> AsyncPostgresSaver | None:
-    """Create a **fresh** ``AsyncPostgresSaver`` with a no-op Lock.
-
-    A new instance is returned on every call.  Its internal
-    ``asyncio.Lock`` is replaced with :class:`_NoOpLock` so that Robyn's
-    multi-loop SSE streaming cannot trigger cross-loop Lock errors.
-
-    The underlying ``AsyncConnectionPool`` is shared and event-loop-safe,
-    so creating lightweight wrappers per-request is cheap.  Table setup
-    (``CREATE TABLE IF NOT EXISTS``) was already executed once at startup
-    via :func:`_create_checkpointer_and_store`, so it is **not** repeated
-    here.
-
-    Returns:
-        A new ``AsyncPostgresSaver`` (Lock-free), or ``None`` when
-        Postgres is disabled.
-    """
-    if _pool is None:
-        return None
-
-    from langgraph.checkpoint.postgres.aio import (
-        AsyncPostgresSaver as _AsyncPostgresSaver,
-    )
-
-    checkpointer = _AsyncPostgresSaver(conn=_pool)
-    checkpointer.lock = _NoOpLock()
-    return checkpointer
-
-
-def get_store() -> AsyncPostgresStore | None:
-    """Create a **fresh** ``AsyncPostgresStore`` with a no-op Lock.
-
-    Same rationale as :func:`get_checkpointer` — the instance Lock is
-    replaced with :class:`_NoOpLock` to avoid cross-loop errors in
-    Robyn's SSE streaming.
-
-    Returns:
-        A new ``AsyncPostgresStore`` (Lock-free), or ``None`` when
-        Postgres is disabled.
-    """
-    if _pool is None:
-        return None
-
-    from langgraph.store.postgres.aio import AsyncPostgresStore as _AsyncPostgresStore
-
-    store = _AsyncPostgresStore(conn=_pool)
-    if hasattr(store, "lock"):
-        store.lock = _NoOpLock()
-    return store
+def get_database_url() -> str | None:
+    """Return the validated database URL, or ``None`` when Postgres is disabled."""
+    return _database_url
 
 
 def is_postgres_enabled() -> bool:
@@ -259,46 +162,163 @@ def is_postgres_enabled() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Per-request connection factory
 # ---------------------------------------------------------------------------
 
 
-async def _create_pool(
-    database_url: str,
-    *,
-    min_size: int = 2,
-    max_size: int = 10,
-    timeout: float = 30.0,
-) -> None:
-    """Create and open the shared ``AsyncConnectionPool``.
+@asynccontextmanager
+async def get_connection() -> AsyncGenerator["AsyncConnection", None]:
+    """Create a fresh ``AsyncConnection`` for the current request.
 
-    A single probe connection is attempted first so that unreachable hosts
-    fail fast (~3 s) instead of triggering the pool's background reconnect
-    loop for the full timeout window.
+    The connection is created on the **current** event loop and closed
+    when the context manager exits.  No shared pool, no cross-loop issues.
 
-    The pool is configured with the same connection kwargs that
-    ``AsyncPostgresSaver.from_conn_string`` and
-    ``AsyncPostgresStore.from_conn_string`` use internally
-    (``autocommit=True``, ``prepare_threshold=0``,
-    ``row_factory=dict_row``).  This lets the checkpointer and store
-    operate correctly when given the pool as their ``conn`` argument.
+    Raises:
+        RuntimeError: If the database has not been initialised.
+
+    Yields:
+        An open ``AsyncConnection`` with ``autocommit=True``,
+        ``prepare_threshold=0``, and ``row_factory=dict_row``.
     """
-    global _pool  # noqa: PLW0603
+    if not _database_url:
+        raise RuntimeError(
+            "Database not initialised — call initialize_database() first"
+        )
 
+    from psycopg import AsyncConnection as _AsyncConnection
+    from psycopg.rows import dict_row
+
+    connection = await _AsyncConnection.connect(
+        _database_url,
+        autocommit=True,
+        prepare_threshold=0,
+        row_factory=dict_row,
+    )
+    try:
+        yield connection
+    finally:
+        await connection.close()
+
+
+# ---------------------------------------------------------------------------
+# Per-request LangGraph checkpointer & store
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def checkpointer() -> AsyncGenerator["AsyncPostgresSaver | None", None]:
+    """Create a per-request ``AsyncPostgresSaver`` via ``from_conn_string``.
+
+    Uses LangGraph's built-in connection management: each call creates a
+    fresh ``AsyncConnection`` on the current event loop.  The connection
+    (and the checkpointer's internal ``asyncio.Lock``) are bound to the
+    caller's loop — no cross-loop issues.
+
+    Yields ``None`` when Postgres is disabled.
+
+    Example::
+
+        async with checkpointer() as cp:
+            agent = await build_agent(config, checkpointer=cp)
+    """
+    if not _database_url:
+        yield None
+        return
+
+    from langgraph.checkpoint.postgres.aio import (
+        AsyncPostgresSaver as _AsyncPostgresSaver,
+    )
+
+    async with _AsyncPostgresSaver.from_conn_string(_database_url) as saver:
+        yield saver
+
+
+@asynccontextmanager
+async def store() -> AsyncGenerator["AsyncPostgresStore | None", None]:
+    """Create a per-request ``AsyncPostgresStore`` via ``from_conn_string``.
+
+    Same rationale as :func:`checkpointer` — per-request connection on the
+    current event loop.
+
+    Yields ``None`` when Postgres is disabled.
+
+    Example::
+
+        async with store() as st:
+            agent = await build_agent(config, store=st)
+    """
+    if not _database_url:
+        yield None
+        return
+
+    from langgraph.store.postgres.aio import AsyncPostgresStore as _AsyncPostgresStore
+
+    async with _AsyncPostgresStore.from_conn_string(_database_url) as postgres_store:
+        yield postgres_store
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible stubs (deprecated — used by tests)
+# ---------------------------------------------------------------------------
+
+
+def get_pool() -> None:
+    """Return ``None``.
+
+    .. deprecated::
+        The shared ``AsyncConnectionPool`` has been removed to eliminate
+        event-loop-bound shared state.  Use :func:`get_connection` instead.
+    """
+    return None
+
+
+def get_checkpointer() -> None:
+    """Return ``None``.
+
+    .. deprecated::
+        Use ``async with database.checkpointer() as cp:`` instead.
+    """
+    return None
+
+
+def get_store() -> None:
+    """Return ``None``.
+
+    .. deprecated::
+        Use ``async with database.store() as st:`` instead.
+    """
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+_LANGGRAPH_TABLES = (
+    "checkpoints",
+    "checkpoint_blobs",
+    "checkpoint_writes",
+    "checkpoint_migrations",
+    "store",
+    "store_migrations",
+)
+"""Tables created by ``AsyncPostgresSaver.setup()`` and ``AsyncPostgresStore.setup()``."""
+
+
+async def _probe_connection(database_url: str) -> None:
+    """Open a single throwaway connection to verify Postgres is reachable.
+
+    Fails fast (~5 s) instead of waiting for pool reconnect loops.
+    """
     import asyncio
 
-    from psycopg import AsyncConnection
+    from psycopg import AsyncConnection as _AsyncConnection
     from psycopg.rows import dict_row
-    from psycopg_pool import AsyncConnectionPool as _AsyncConnectionPool
 
-    # ------------------------------------------------------------------
-    # Fast-fail probe: open a single throwaway connection with a short
-    # timeout so we know immediately whether Postgres is reachable.
-    # ------------------------------------------------------------------
-    probe_timeout = min(timeout, 5.0)
+    probe_timeout = 5.0
     try:
         probe_connection = await asyncio.wait_for(
-            AsyncConnection.connect(
+            _AsyncConnection.connect(
                 database_url,
                 autocommit=True,
                 prepare_threshold=0,
@@ -312,35 +332,6 @@ async def _create_pool(
             f"Postgres unreachable (probe timed out after {probe_timeout}s)"
         ) from probe_error
 
-    # ------------------------------------------------------------------
-    # Probe succeeded — create the real pool.
-    # ------------------------------------------------------------------
-    _pool = _AsyncConnectionPool(
-        conninfo=database_url,
-        min_size=min_size,
-        max_size=max_size,
-        timeout=timeout,
-        open=False,
-        reconnect_timeout=5.0,
-        kwargs={
-            "autocommit": True,
-            "prepare_threshold": 0,
-            "row_factory": dict_row,
-        },
-    )
-    await _pool.open(wait=True, timeout=timeout)
-
-
-_LANGGRAPH_TABLES = (
-    "checkpoints",
-    "checkpoint_blobs",
-    "checkpoint_writes",
-    "checkpoint_migrations",
-    "store",
-    "store_migrations",
-)
-"""Tables created by ``AsyncPostgresSaver.setup()`` and ``AsyncPostgresStore.setup()``."""
-
 
 async def _enable_rls_on_langgraph_tables() -> None:
     """Enable Row-Level Security on LangGraph tables (idempotent).
@@ -353,14 +344,8 @@ async def _enable_rls_on_langgraph_tables() -> None:
 
     * PostgREST (``anon`` / ``authenticated`` roles) → access denied.
     * Our ``psycopg`` connection (``postgres`` superuser) → bypasses RLS.
-
-    ``ALTER TABLE … ENABLE ROW LEVEL SECURITY`` is a no-op on tables that
-    already have RLS enabled, so this is safe to run on every startup.
     """
-    if _pool is None:
-        return
-
-    async with _pool.connection() as connection:
+    async with get_connection() as connection:
         for table_name in _LANGGRAPH_TABLES:
             await connection.execute(
                 f"ALTER TABLE IF EXISTS public.{table_name} "  # noqa: S608
@@ -374,48 +359,38 @@ async def _create_langgraph_server_schema() -> None:
 
     Uses :class:`~server.postgres_storage.PostgresStorage.run_migrations`
     which executes idempotent ``CREATE SCHEMA/TABLE IF NOT EXISTS`` DDL.
-    Safe to run on every startup.
     """
-    if _pool is None:
-        return
-
     from server.postgres_storage import PostgresStorage
 
-    storage = PostgresStorage(_pool)
+    storage = PostgresStorage(get_connection)
     await storage.run_migrations()
 
 
-async def _create_checkpointer_and_store() -> None:
-    """Instantiate the LangGraph checkpointer and store using the shared pool.
+async def _run_setup() -> None:
+    """Run all idempotent DDL setup with temporary connections.
 
-    Both ``AsyncPostgresSaver`` and ``AsyncPostgresStore`` accept an
-    ``AsyncConnectionPool`` as their ``conn`` parameter (the internal
-    ``_ainternal.Conn`` type is
-    ``Union[AsyncConnection, AsyncConnectionPool]``).  Using the shared
-    pool avoids spawning additional connections and simplifies lifecycle
-    management.
-
-    After construction, ``.setup()`` is called on each to ensure the
-    required tables exist (idempotent ``CREATE TABLE IF NOT EXISTS``).
+    Each ``from_conn_string()`` call creates its own connection on the
+    current event loop, runs the DDL, and closes the connection.
     """
-    if _pool is None:
-        raise RuntimeError("Connection pool must be created before checkpointer/store")
-
     from langgraph.checkpoint.postgres.aio import (
         AsyncPostgresSaver as _AsyncPostgresSaver,
     )
     from langgraph.store.postgres.aio import AsyncPostgresStore as _AsyncPostgresStore
 
-    # Create temporary instances solely to run the idempotent DDL setup.
-    # These are discarded after setup — per-request instances are created
-    # by get_checkpointer() / get_store() on the caller's event loop.
-    setup_checkpointer = _AsyncPostgresSaver(conn=_pool)
-    setup_store = _AsyncPostgresStore(conn=_pool)
-
-    await setup_checkpointer.setup()
+    # 1. Create LangGraph checkpoint tables
+    async with _AsyncPostgresSaver.from_conn_string(
+        _database_url
+    ) as setup_checkpointer:
+        await setup_checkpointer.setup()
     logger.info("LangGraph checkpointer tables ready")
 
-    await setup_store.setup()
+    # 2. Create LangGraph store tables
+    async with _AsyncPostgresStore.from_conn_string(_database_url) as setup_store:
+        await setup_store.setup()
     logger.info("LangGraph store tables ready")
 
+    # 3. Enable RLS on LangGraph tables
     await _enable_rls_on_langgraph_tables()
+
+    # 4. Create langgraph_server schema (assistants, threads, runs, etc.)
+    await _create_langgraph_server_schema()

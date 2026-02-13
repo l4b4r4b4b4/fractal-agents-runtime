@@ -1061,20 +1061,13 @@ def get_storage() -> Storage:
     """
     global _storage
     if _storage is None:
-        from server.database import get_pool, is_postgres_enabled
+        from server.database import get_connection, is_postgres_enabled
 
         if is_postgres_enabled():
-            pool = get_pool()
-            if pool is not None:
-                from server.postgres_storage import PostgresStorage
+            from server.postgres_storage import PostgresStorage
 
-                _storage = PostgresStorage(pool)
-                logger.info("Using Postgres-backed storage")
-            else:
-                _storage = Storage()
-                logger.warning(
-                    "Postgres enabled but pool unavailable — falling back to in-memory"
-                )
+            _storage = PostgresStorage(get_connection)
+            logger.info("Using Postgres-backed storage")
         else:
             _storage = Storage()
     return _storage

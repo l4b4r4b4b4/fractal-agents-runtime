@@ -172,7 +172,10 @@ async def execute_agent_run(
         print(text)
     """
     # Import inside function to avoid circular imports at module level.
-    from server.database import get_checkpointer, get_store
+    from server.database import (
+        checkpointer as create_checkpointer,
+        store as create_store,
+    )
     from server.storage import get_storage
     from graphs.react_agent.agent import graph as build_agent_graph
 
@@ -242,18 +245,24 @@ async def execute_agent_run(
         thread_id,
     )
 
-    agent = await build_agent_graph(
-        runnable_config,
-        checkpointer=get_checkpointer(),
-        store=get_store(),
-    )
+    # Per-request checkpointer/store via LangGraph's from_conn_string().
+    # Each creates a fresh AsyncConnection on the current event loop —
+    # no shared pool, no cross-loop asyncio.Lock issues.
+    async with create_checkpointer() as cp, create_store() as st:
+        agent = await build_agent_graph(
+            runnable_config,
+            checkpointer=cp,
+            store=st,
+        )
 
-    # --- Invoke ---
-    input_message = HumanMessage(content=message, id=str(uuid.uuid4()))
-    agent_input = {"messages": [input_message]}
+        # --- Invoke ---
+        input_message = HumanMessage(content=message, id=str(uuid.uuid4()))
+        agent_input = {"messages": [input_message]}
 
-    logger.info("execute_agent_run: invoking agent with %d-char message", len(message))
-    result = await agent.ainvoke(agent_input, runnable_config)
+        logger.info(
+            "execute_agent_run: invoking agent with %d-char message", len(message)
+        )
+        result = await agent.ainvoke(agent_input, runnable_config)
 
     # --- Extract response ---
     response_text = _extract_response_text(result)
