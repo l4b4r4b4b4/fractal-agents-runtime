@@ -5,15 +5,31 @@
 # Follows official Bun Docker best practices:
 #   https://bun.com/docs/guides/ecosystem/docker
 #
+# Image variant strategy:
+#   - Install stage: full image (oven/bun:<version>) — needed for `bun install`
+#   - Release stage: slim image (oven/bun:<version>-slim) — reduced attack surface, no apt/dpkg
+#   - Hardening (read-only fs, cap-drop, etc.) is done at runtime, not build-time
+#
+# Version pinning:
+#   Single source of truth: /.bun-version (repo root)
+#   CI reads it via: oven-sh/setup-bun@v2 { bun-version-file: .bun-version }
+#   Image CI passes: --build-arg BUN_VERSION=$(cat .bun-version)
+#   Local fallback:  ARG default below (keep in sync with .bun-version)
+#
 # NOTE: We do NOT use `bun build --compile` because @langchain/* packages
 # rely on dynamic imports, WASM modules, and other patterns that are
 # incompatible with single-binary compilation. Bun runs TypeScript
 # natively, so no build step is needed.
 
+# ── Version ARG (before any FROM so all stages can reference it) ──────
+# NOTE: Keep this default in sync with /.bun-version (the source of truth).
+# CI always overrides via --build-arg; this default is for local `docker build`.
+ARG BUN_VERSION=1.3.9
+
 # ── Base stage ────────────────────────────────────────────────────────
-# Use the official Bun image as base for all stages.
+# Use the official Bun image for dependency installation.
 # See all versions at https://hub.docker.com/r/oven/bun/tags
-FROM oven/bun:1 AS base
+FROM oven/bun:${BUN_VERSION} AS base
 WORKDIR /usr/src/app
 
 # ── Install stage — cache dependencies in temp directories ────────────
@@ -31,8 +47,14 @@ RUN mkdir -p /temp/prod
 COPY apps/ts/package.json /temp/prod/
 RUN cd /temp/prod && bun install --production
 
-# ── Release stage — minimal production image ──────────────────────────
-FROM base AS release
+# ── Release stage — minimal slim production image ─────────────────────
+# Uses the slim variant: ~66 MB vs ~85 MB (full), no apt/dpkg,
+# but retains bash/shell for debugging and healthcheck compatibility.
+# Same glibc as full Debian — zero compatibility risk with npm packages.
+ARG BUN_VERSION
+FROM oven/bun:${BUN_VERSION}-slim AS release
+
+WORKDIR /usr/src/app
 
 LABEL org.opencontainers.image.source="https://github.com/l4b4r4b4b4/fractal-agents-runtime"
 LABEL org.opencontainers.image.description="Fractal Agents Runtime — TypeScript/Bun (free, self-hostable LangGraph-compatible agent runtime)"
@@ -57,8 +79,9 @@ USER bun
 EXPOSE 3000/tcp
 
 # Health check — lightweight fetch against the /health endpoint.
+# Uses exec form (no shell required) — future-proofs for distroless migration.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD bun -e "fetch('http://localhost:3000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
+    CMD ["bun", "-e", "fetch('http://localhost:3000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
 
 # Run the server. Bun executes TypeScript natively — no build step needed.
 ENTRYPOINT [ "bun", "run", "src/index.ts" ]

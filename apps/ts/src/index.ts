@@ -67,6 +67,9 @@ if (import.meta.main) {
     `🧬 ${SERVICE_NAME} v${VERSION} listening on http://localhost:${server.port}`,
   );
   console.log(
+    `   Bun runtime:       ${Bun.version}`,
+  );
+  console.log(
     `   Routes registered: ${router.routeCount}`,
   );
 
