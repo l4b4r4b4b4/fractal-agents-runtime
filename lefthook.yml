@@ -4,6 +4,9 @@
 pre-commit:
   parallel: true
   commands:
+    bun-version-check:
+      run: bun run check:bun-version
+
     python-lint:
       root: apps/python/
       glob: "*.py"
