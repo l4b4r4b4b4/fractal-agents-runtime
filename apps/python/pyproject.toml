@@ -123,3 +123,8 @@ exclude = [
     ".venv",
     "__pycache__",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# logging.basicConfig() MUST run before any library import so all loggers
+# inherit the configured level. This intentionally violates E402.
+"src/server/app.py" = ["E402"]
