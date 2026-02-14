@@ -27,6 +27,15 @@ export interface AppConfig {
   /** OpenAI API key. Required for agent execution, optional at startup. */
   openaiApiKey: string | undefined;
 
+  /** Anthropic API key. Required for `anthropic:*` models. */
+  anthropicApiKey: string | undefined;
+
+  /** Google API key. Required for `google:*` models. */
+  googleApiKey: string | undefined;
+
+  /** Custom endpoint API key. Used for `custom:` models (e.g., vLLM, Ollama). */
+  customApiKey: string | undefined;
+
   /** Default LLM model name for the ReAct agent. */
   modelName: string;
 
@@ -61,6 +70,9 @@ export function loadConfig(): AppConfig {
   return {
     port: parsePort(process.env.PORT, 3000),
     openaiApiKey: process.env.OPENAI_API_KEY || undefined,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY || undefined,
+    googleApiKey: process.env.GOOGLE_API_KEY || undefined,
+    customApiKey: process.env.CUSTOM_API_KEY || undefined,
     modelName: process.env.MODEL_NAME || "gpt-4o-mini",
     buildCommit: process.env.BUILD_COMMIT || "dev",
     buildDate: process.env.BUILD_DATE || new Date().toISOString(),
@@ -75,7 +87,11 @@ export const config: AppConfig = loadConfig();
  * Used by the `/info` endpoint to report configuration status.
  */
 export function isLlmConfigured(): boolean {
-  return config.openaiApiKey !== undefined && config.openaiApiKey.length > 0;
+  return (
+    (config.openaiApiKey !== undefined && config.openaiApiKey.length > 0) ||
+    (config.anthropicApiKey !== undefined && config.anthropicApiKey.length > 0) ||
+    (config.googleApiKey !== undefined && config.googleApiKey.length > 0)
+  );
 }
 
 /**
