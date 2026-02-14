@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "postinstall": "lefthook install",
+    "check:bun-version": "./scripts/check-bun-version.sh",
     "dev:python": "cd apps/python && uv run python -m robyn_server",
     "dev:ts": "cd apps/ts && bun run dev",
     "test:python": "cd apps/python && uv run pytest",

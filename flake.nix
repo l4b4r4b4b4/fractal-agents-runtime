@@ -82,9 +82,12 @@
             echo "🔍 Ruff:       $(ruff --version 2>&1 | cut -d' ' -f2)"
             echo ""
 
-            # ── Auto-sync @types/bun with Bun runtime version ──
+            # ── Bun version consistency check ──
             BUN_VERSION=$(bun --version)
             export BUN_VERSION
+            bun run check:bun-version 2>/dev/null || true
+
+            # ── Auto-sync @types/bun with Bun runtime version ──
 
             if [ -f "package.json" ] && grep -q "@types/bun" package.json; then
               CURRENT_TYPES=$(bun pm ls @types/bun 2>/dev/null | grep -oP '@types/bun@\K[^"]+' | head -1 || echo "")

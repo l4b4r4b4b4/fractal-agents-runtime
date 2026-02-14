@@ -32,6 +32,7 @@ jobs:
             ts:
               - 'apps/ts/**'
               - 'packages/ts/**'
+              - '.bun-version'
               - '.devops/docker/ts.Dockerfile'
               - '.github/workflows/image-ts.yml'
 
@@ -79,6 +80,10 @@ jobs:
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "Generated tags: ${TAGS}"
 
+      - name: Read Bun version
+        id: bun-version
+        run: echo "version=$(cat .bun-version)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -86,6 +91,8 @@ jobs:
           file: .devops/docker/ts.Dockerfile
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            BUN_VERSION=${{ steps.bun-version.outputs.version }}
           sbom: true
           provenance: true
           cache-from: type=gha,scope=ts

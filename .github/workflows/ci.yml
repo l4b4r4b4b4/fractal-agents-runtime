@@ -32,6 +32,7 @@ jobs:
               - 'apps/python/**'
             ts:
               - 'apps/ts/**'
+              - '.bun-version'
             root:
               - 'package.json'
               - 'lefthook.yml'
@@ -209,6 +210,12 @@ jobs:
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Verify Bun version matches .bun-version
+        working-directory: .
+        run: bun run check:bun-version
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -231,6 +238,8 @@ jobs:
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -253,6 +262,8 @@ jobs:
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
