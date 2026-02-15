@@ -17,7 +17,12 @@
  *   - Search returns 200 with a JSON array of Assistant objects.
  *   - Errors use `{"detail": "..."}` shape (ErrorResponse).
  *
- * No authentication in v0.0.1 — `owner_id` deferred to Goal 25.
+ * Owner isolation (v0.0.2):
+ *   - All operations pass `ownerId` from the authenticated user context.
+ *   - When auth is disabled, `ownerId` is `undefined` — no filtering.
+ *   - On create, `metadata.owner` is set to the user's identity.
+ *   - On read, system-owned assistants are also visible.
+ *   - On update/delete, only the actual owner can mutate.
  *
  * Reference: apps/python/src/server/routes/assistants.py
  */
@@ -37,6 +42,10 @@ import {
   requireBody,
 } from "./helpers";
 import { getStorage } from "../storage/index";
+import { getUserIdentity } from "../middleware/context";
+import { isDatabaseEnabled, getConnection } from "../storage/database";
+import { lazySyncAgent, isValidUuid } from "../agent-sync";
+import { SYSTEM_OWNER_ID } from "../storage/types";
 
 // ---------------------------------------------------------------------------
 // Route registration
@@ -84,11 +93,48 @@ async function handleCreateAssistant(request: Request): Promise<Response> {
   }
 
   const storage = getStorage();
+  const ownerId = getUserIdentity();
+
+  // ---------------------------------------------------------------------------
+  // Lazy sync from Supabase (matching Python's dev-gated lazy sync)
+  //
+  // If the client provides a `supabase_agent_id` in metadata, attempt to
+  // sync that agent into assistant storage before the normal create flow.
+  // This is best-effort: failures do not block the assistant create endpoint.
+  // ---------------------------------------------------------------------------
+  try {
+    const metadata = body.metadata;
+    const supabaseAgentIdValue =
+      metadata && typeof metadata === "object"
+        ? (metadata as Record<string, unknown>).supabase_agent_id
+        : undefined;
+
+    if (
+      typeof supabaseAgentIdValue === "string" &&
+      supabaseAgentIdValue.length > 0 &&
+      isValidUuid(supabaseAgentIdValue) &&
+      isDatabaseEnabled()
+    ) {
+      const sqlConnection = getConnection();
+      if (sqlConnection) {
+        await lazySyncAgent(
+          sqlConnection,
+          storage,
+          supabaseAgentIdValue,
+          ownerId ?? SYSTEM_OWNER_ID,
+        );
+      }
+    }
+  } catch (syncError: unknown) {
+    const syncMessage =
+      syncError instanceof Error ? syncError.message : String(syncError);
+    console.warn(`[assistants] Lazy sync skipped due to error: ${syncMessage}`);
+  }
 
   // Pre-check for duplicates if assistant_id is explicitly provided
   // (matching Python route-level logic)
   if (body.assistant_id) {
-    const existing = await storage.assistants.get(body.assistant_id);
+    const existing = await storage.assistants.get(body.assistant_id, ownerId);
     if (existing) {
       const strategy = body.if_exists ?? "raise";
       if (strategy === "do_nothing") {
@@ -102,7 +148,7 @@ async function handleCreateAssistant(request: Request): Promise<Response> {
   }
 
   try {
-    const assistant = await storage.assistants.create(body);
+    const assistant = await storage.assistants.create(body, ownerId);
     return jsonResponse(assistant);
   } catch (error: unknown) {
     const message =
@@ -130,7 +176,8 @@ async function handleGetAssistant(
   }
 
   const storage = getStorage();
-  const assistant = await storage.assistants.get(assistantId);
+  const ownerId = getUserIdentity();
+  const assistant = await storage.assistants.get(assistantId, ownerId);
 
   if (assistant === null) {
     return errorResponse(`Assistant ${assistantId} not found`, 404);
@@ -164,14 +211,15 @@ async function handlePatchAssistant(
   if (errorResp) return errorResp;
 
   const storage = getStorage();
+  const ownerId = getUserIdentity();
 
   // Check existence first (matching Python which returns 404 before attempting update)
-  const existing = await storage.assistants.get(assistantId);
+  const existing = await storage.assistants.get(assistantId, ownerId);
   if (existing === null) {
     return errorResponse(`Assistant ${assistantId} not found`, 404);
   }
 
-  const updated = await storage.assistants.update(assistantId, body);
+  const updated = await storage.assistants.update(assistantId, body, ownerId);
 
   if (updated === null) {
     return errorResponse(`Assistant ${assistantId} not found`, 404);
@@ -202,7 +250,8 @@ async function handleDeleteAssistant(
   }
 
   const storage = getStorage();
-  const deleted = await storage.assistants.delete(assistantId);
+  const ownerId = getUserIdentity();
+  const deleted = await storage.assistants.delete(assistantId, ownerId);
 
   if (!deleted) {
     return errorResponse(`Assistant ${assistantId} not found`, 404);
@@ -231,7 +280,8 @@ async function handleSearchAssistants(request: Request): Promise<Response> {
   const searchRequest: AssistantSearchRequest = body ?? {};
 
   const storage = getStorage();
-  const assistants = await storage.assistants.search(searchRequest);
+  const ownerId = getUserIdentity();
+  const assistants = await storage.assistants.search(searchRequest, ownerId);
 
   return jsonResponse(assistants);
 }
@@ -254,7 +304,8 @@ async function handleCountAssistants(request: Request): Promise<Response> {
   const countRequest: AssistantCountRequest = body ?? {};
 
   const storage = getStorage();
-  const count = await storage.assistants.count(countRequest);
+  const ownerId = getUserIdentity();
+  const count = await storage.assistants.count(countRequest, ownerId);
 
   // Bare integer response (matches Python / LangGraph API)
   return jsonResponse(count);

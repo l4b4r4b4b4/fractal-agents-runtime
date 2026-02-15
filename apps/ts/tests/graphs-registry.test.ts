@@ -253,8 +253,8 @@ describe("Graph Registry — resolveGraphFactory", () => {
 // ---------------------------------------------------------------------------
 
 describe("Graph Registry — getAvailableGraphIds", () => {
-  test('returns ["agent"] with default registration', () => {
-    expect(getAvailableGraphIds()).toEqual(["agent"]);
+  test('returns ["agent", "research_agent"] with default registration', () => {
+    expect(getAvailableGraphIds()).toEqual(["agent", "research_agent"]);
   });
 
   test("includes custom registered graphs", () => {
@@ -273,7 +273,7 @@ describe("Graph Registry — getAvailableGraphIds", () => {
     registerGraph("middle", createMockFactory("m"));
 
     const ids = getAvailableGraphIds();
-    expect(ids).toEqual(["agent", "alpha", "middle", "zebra"]);
+    expect(ids).toEqual(["agent", "alpha", "middle", "research_agent", "zebra"]);
   });
 
   test("returns new array each time (not a reference)", () => {
@@ -319,7 +319,7 @@ describe("Graph Registry — resetRegistry", () => {
     expect(isGraphRegistered("custom1")).toBe(false);
     expect(isGraphRegistered("custom2")).toBe(false);
     expect(isGraphRegistered("agent")).toBe(true);
-    expect(getAvailableGraphIds()).toEqual(["agent"]);
+    expect(getAvailableGraphIds()).toEqual(["agent", "research_agent"]);
   });
 
   test("overwritten agent is restored after reset", async () => {
@@ -341,7 +341,7 @@ describe("Graph Registry — resetRegistry", () => {
     resetRegistry();
     resetRegistry();
     resetRegistry();
-    expect(getAvailableGraphIds()).toEqual(["agent"]);
+    expect(getAvailableGraphIds()).toEqual(["agent", "research_agent"]);
   });
 });
 

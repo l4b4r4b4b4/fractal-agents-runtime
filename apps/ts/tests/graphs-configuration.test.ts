@@ -164,7 +164,11 @@ describe("Graph Configuration — parseGraphConfig edge cases", () => {
       "base_url",
       "custom_model_name",
       "custom_api_key",
+      "mcp_config",
+      "rag",
     ]);
+    // mcp_config with empty servers array parses to null
+    expect(config.mcp_config).toBeNull();
   });
 
   test("string temperature is coerced to number", () => {
@@ -329,10 +333,10 @@ describe("Graph Configuration — getEffectiveSystemPrompt", () => {
 // ---------------------------------------------------------------------------
 
 describe("Graph Configuration — return type", () => {
-  test("parseGraphConfig returns exactly 7 fields", () => {
+  test("parseGraphConfig returns exactly 9 fields", () => {
     const config = parseGraphConfig({});
     const keys = Object.keys(config);
-    expect(keys.length).toBe(7);
+    expect(keys.length).toBe(9);
     expect(keys).toContain("model_name");
     expect(keys).toContain("temperature");
     expect(keys).toContain("max_tokens");
@@ -340,6 +344,8 @@ describe("Graph Configuration — return type", () => {
     expect(keys).toContain("base_url");
     expect(keys).toContain("custom_model_name");
     expect(keys).toContain("custom_api_key");
+    expect(keys).toContain("mcp_config");
+    expect(keys).toContain("rag");
   });
 
   test("all fields have correct types", () => {
@@ -355,6 +361,7 @@ describe("Graph Configuration — return type", () => {
     expect(config.base_url).toBeNull();
     expect(config.custom_model_name).toBeNull();
     expect(config.custom_api_key).toBeNull();
+    expect(config.mcp_config).toBeNull();
   });
 
   test("no undefined fields in returned config", () => {
@@ -367,5 +374,6 @@ describe("Graph Configuration — return type", () => {
     expect(config.base_url).toBeDefined();
     expect(config.custom_model_name).toBeDefined();
     expect(config.custom_api_key).toBeDefined();
+    expect(config.mcp_config).toBeDefined();
   });
 });

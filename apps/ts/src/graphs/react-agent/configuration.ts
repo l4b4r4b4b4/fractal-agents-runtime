@@ -10,8 +10,14 @@
  *   - `base_url`, `custom_model_name`, `custom_api_key` for custom endpoints
  *   - `OAP_UI_CONFIG` metadata constant for OAP frontend rendering
  *
+ * v0.0.3 additions:
+ *   - `rag` config for Supabase RAG tool integration
+ *
  * Reference: apps/python/src/graphs/react_agent/agent.py → GraphConfigPydantic
  */
+
+import type { RagConfig } from "./utils/rag-tools";
+import { parseRagConfig } from "./utils/rag-tools";
 
 // ---------------------------------------------------------------------------
 // Constants — match Python runtime exactly
@@ -123,6 +129,9 @@ export const OAP_UI_CONFIG = {
       "\n---",
     default: DEFAULT_SYSTEM_PROMPT,
   },
+  mcp_config: {
+    type: "mcp" as const,
+  },
   base_url: {
     type: "text" as const,
     placeholder: "http://localhost:7374/v1",
@@ -142,6 +151,41 @@ export const OAP_UI_CONFIG = {
     visible_when: { model_name: "custom:" },
   },
 } as const;
+
+// ---------------------------------------------------------------------------
+// MCP config types — match Python's MCPServerConfig / MCPConfig exactly
+// ---------------------------------------------------------------------------
+
+/**
+ * Configuration for a single MCP server.
+ *
+ * Mirrors Python's `MCPServerConfig(BaseModel)` from
+ * `graphs/react_agent/agent.py`.
+ */
+export interface MCPServerConfig {
+  /** Stable identifier for this server entry. Used as the key when
+   * creating the MultiServerMCPClient config dict. */
+  name: string;
+
+  /** Base URL for the MCP server (may or may not end with /mcp). */
+  url: string;
+
+  /** Optional list of tool names to expose from this server.
+   * If omitted/null, all tools from the server are exposed. */
+  tools: string[] | null;
+
+  /** Whether this server requires auth token exchange. */
+  auth_required: boolean;
+}
+
+/**
+ * Multi-server MCP configuration.
+ *
+ * Mirrors Python's `MCPConfig(BaseModel)`.
+ */
+export interface MCPConfig {
+  servers: MCPServerConfig[];
+}
 
 // ---------------------------------------------------------------------------
 // Config type
@@ -188,6 +232,22 @@ export interface GraphConfigValues {
    * var, then to `"EMPTY"` (for local endpoints without auth).
    */
   custom_api_key: string | null;
+
+  /**
+   * MCP server configuration — one or more remote tool servers.
+   * When set, the agent dynamically loads tools from these servers at
+   * construction time. `null` means no MCP tools.
+   */
+  mcp_config: MCPConfig | null;
+
+  /**
+   * RAG (Retrieval-Augmented Generation) configuration.
+   * When set, the agent creates tools that query Supabase vector collections
+   * for semantically similar documents. `null` means no RAG tools.
+   *
+   * Mirrors Python's `RagConfig` from `graphs/react_agent/agent.py`.
+   */
+  rag: RagConfig | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +294,8 @@ export function parseGraphConfig(
     base_url: parseNullableString(raw.base_url),
     custom_model_name: parseNullableString(raw.custom_model_name),
     custom_api_key: parseNullableString(raw.custom_api_key),
+    mcp_config: parseMcpConfig(raw.mcp_config),
+    rag: parseRagConfig(raw.rag),
   };
 }
 
@@ -300,6 +362,63 @@ function parseNumber(value: unknown, defaultValue: number): number {
     }
   }
   return defaultValue;
+}
+
+/**
+ * Parse an MCP config from the configurable dictionary.
+ *
+ * Accepts either a full `MCPConfig` object `{ servers: [...] }` or
+ * a raw array of server objects. Returns `null` if the value is not
+ * a valid MCP configuration or has no servers.
+ */
+export function parseMcpConfig(value: unknown): MCPConfig | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value !== "object") {
+    return null;
+  }
+
+  // Accept { servers: [...] } shape
+  const candidate = value as Record<string, unknown>;
+  const rawServers = Array.isArray(candidate.servers)
+    ? candidate.servers
+    : Array.isArray(value)
+      ? (value as unknown[])
+      : null;
+
+  if (!rawServers || rawServers.length === 0) {
+    return null;
+  }
+
+  const servers: MCPServerConfig[] = [];
+  for (const raw of rawServers) {
+    if (typeof raw !== "object" || raw === null) {
+      continue;
+    }
+    const serverObj = raw as Record<string, unknown>;
+    const url = typeof serverObj.url === "string" ? serverObj.url : "";
+    if (!url) {
+      continue; // Skip servers without a URL
+    }
+    servers.push({
+      name: typeof serverObj.name === "string" && serverObj.name.length > 0
+        ? serverObj.name
+        : "default",
+      url,
+      tools: Array.isArray(serverObj.tools)
+        ? (serverObj.tools as unknown[]).filter((t): t is string => typeof t === "string")
+        : null,
+      auth_required: serverObj.auth_required === true,
+    });
+  }
+
+  if (servers.length === 0) {
+    return null;
+  }
+
+  return { servers };
 }
 
 /**

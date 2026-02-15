@@ -71,6 +71,12 @@ def _build_mcp_runnable_config(
     configurable["owner"] = owner_id
     configurable["user_id"] = owner_id
 
+    # Layer 2b: Checkpoint namespace isolation.
+    # Each assistant gets its own checkpoint namespace within a thread so that
+    # multiple agents in the same chat don't overwrite each other's state.
+    # See docs/MULTI_AGENT_CHECKPOINT_ARCHITECTURE.md for full rationale.
+    configurable["checkpoint_ns"] = f"assistant:{assistant_id}"
+
     # Include assistant config reference for
     # _merge_assistant_configurable_into_run_config in graphs.react_agent.agent
     if assistant_config and isinstance(assistant_config, dict):
@@ -272,6 +278,69 @@ async def execute_agent_run(
         )
         result = await agent.ainvoke(agent_input, runnable_config)
 
+        # --- Read full accumulated state from checkpointer ---
+        #
+        # The checkpointer (via the `add_messages` reducer) accumulates
+        # the complete message history across all runs on this thread.
+        # We read it back here so that `final_values` contains the FULL
+        # conversation — not just the current run's input + output.
+        #
+        # This MUST happen inside the `async with create_checkpointer()`
+        # block while the connection is still open.
+        final_values: dict[str, Any] | None = None
+        try:
+            checkpoint_state = await agent.aget_state(runnable_config)
+            if checkpoint_state and checkpoint_state.values:
+                accumulated_messages = checkpoint_state.values.get("messages", [])
+                if accumulated_messages:
+                    final_messages: list[dict[str, Any]] = []
+                    for msg in accumulated_messages:
+                        if isinstance(msg, BaseMessage):
+                            if hasattr(msg, "model_dump"):
+                                final_messages.append(msg.model_dump())
+                            else:
+                                final_messages.append(
+                                    {
+                                        "content": getattr(msg, "content", ""),
+                                        "type": getattr(msg, "type", "unknown"),
+                                        "id": getattr(msg, "id", None),
+                                    }
+                                )
+                        elif isinstance(msg, dict):
+                            final_messages.append(msg)
+                    final_values = {"messages": final_messages}
+                    logger.info(
+                        "Read %d accumulated messages from checkpointer for thread %s",
+                        len(accumulated_messages),
+                        thread_id,
+                    )
+        except Exception as state_read_error:
+            logger.warning(
+                "Failed to read accumulated state from checkpointer for "
+                "thread %s: %s — falling back to current run messages",
+                thread_id,
+                state_read_error,
+            )
+
+        # Fallback: use current run's messages if checkpointer read failed
+        if final_values is None:
+            fallback_messages: list[dict[str, Any]] = []
+            for msg in result.get("messages", []):
+                if isinstance(msg, BaseMessage):
+                    if hasattr(msg, "model_dump"):
+                        fallback_messages.append(msg.model_dump())
+                    else:
+                        fallback_messages.append(
+                            {
+                                "content": getattr(msg, "content", ""),
+                                "type": getattr(msg, "type", "unknown"),
+                                "id": getattr(msg, "id", None),
+                            }
+                        )
+                elif isinstance(msg, dict):
+                    fallback_messages.append(msg)
+            final_values = {"messages": fallback_messages}
+
     # --- Extract response ---
     response_text = _extract_response_text(result)
     logger.info(
@@ -280,24 +349,9 @@ async def execute_agent_run(
 
     # --- Persist final state ---
     try:
-        final_messages: list[dict[str, Any]] = []
-        for msg in result.get("messages", []):
-            if isinstance(msg, BaseMessage):
-                if hasattr(msg, "model_dump"):
-                    final_messages.append(msg.model_dump())
-                else:
-                    final_messages.append(
-                        {
-                            "content": getattr(msg, "content", ""),
-                            "type": getattr(msg, "type", "unknown"),
-                            "id": getattr(msg, "id", None),
-                        }
-                    )
-            elif isinstance(msg, dict):
-                final_messages.append(msg)
-
-        final_values = {"messages": final_messages}
-        await storage.threads.add_state_snapshot(thread_id, final_values, owner_id)
+        await storage.threads.add_state_snapshot(
+            thread_id, {"values": final_values}, owner_id
+        )
         await storage.threads.update(thread_id, {"values": final_values}, owner_id)
     except Exception as persist_error:
         # Persistence failure should not prevent returning the response

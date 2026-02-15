@@ -4,8 +4,15 @@
  * Each store uses a `Map<string, T>` for O(1) lookups by ID. Search, count,
  * and list operations iterate the map values and apply filters in memory.
  *
- * Design decisions (v0.0.1):
- *   - No `owner_id` — authentication deferred to Goal 25.
+ * Design decisions:
+ *   - v0.0.2: All CRUD operations accept optional `ownerId` for per-user
+ *     isolation. When `ownerId` is `undefined` (auth disabled), no owner
+ *     filtering is applied — matching v0.0.1 behavior.
+ *   - On `create()`: if `ownerId` is provided, `metadata.owner` is set.
+ *   - On `get()`/`search()`: resources owned by `SYSTEM_OWNER_ID` are
+ *     visible to all authenticated users.
+ *   - On `update()`/`delete()`: only the actual owner can mutate (no
+ *     system override).
  *   - IDs via `crypto.randomUUID()` (standard UUID with dashes, matches OpenAPI `format: uuid`).
  *   - ISO 8601 timestamps with "Z" suffix (UTC).
  *   - Assistant `version` starts at 1, incremented on every PATCH (Critical Finding #7).
@@ -34,12 +41,77 @@ import type {
   ThreadStatus,
 } from "../models/thread";
 import type { Run, RunStatus } from "../models/run";
-import type {
-  AssistantStore,
-  ThreadStore,
-  RunStore,
-  Storage,
+import {
+  SYSTEM_OWNER_ID,
+  type AssistantStore,
+  type ThreadStore,
+  type RunStore,
+  type StoreStorage,
+  type CronStore,
+  type Storage,
 } from "./types";
+import type { StoreItem } from "../models/store";
+import type { Cron } from "../models/cron";
+
+// ---------------------------------------------------------------------------
+// Owner-scoping helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Get the `owner` value from a record's metadata.
+ *
+ * @returns The owner string, or `undefined` if not set.
+ */
+function getRecordOwner(record: Record<string, unknown>): string | undefined {
+  const metadata = record.metadata as Record<string, unknown> | undefined;
+  if (!metadata) return undefined;
+  return metadata.owner as string | undefined;
+}
+
+/**
+ * Check if a record is accessible to a given owner for **read** operations.
+ *
+ * Rules:
+ *   - `ownerId` is `undefined` → no filtering (auth disabled) → accessible
+ *   - Record has no `metadata.owner` → accessible (pre-owner-scoping data)
+ *   - Record's `metadata.owner` matches `ownerId` → accessible
+ *   - Record's `metadata.owner` is `SYSTEM_OWNER_ID` → accessible (system resources are globally visible)
+ *   - Otherwise → not accessible
+ */
+function isReadAccessible(record: Record<string, unknown>, ownerId?: string): boolean {
+  if (ownerId === undefined) return true;
+  const recordOwner = getRecordOwner(record);
+  if (recordOwner === undefined) return true;
+  return recordOwner === ownerId || recordOwner === SYSTEM_OWNER_ID;
+}
+
+/**
+ * Check if a record is accessible to a given owner for **write** (update/delete) operations.
+ *
+ * Stricter than read: system-owned resources are NOT writable by regular users.
+ *
+ * Rules:
+ *   - `ownerId` is `undefined` → no filtering (auth disabled) → writable
+ *   - Record has no `metadata.owner` → writable (pre-owner-scoping data)
+ *   - Record's `metadata.owner` matches `ownerId` → writable
+ *   - Otherwise → not writable (including SYSTEM_OWNER_ID records)
+ */
+function isWriteAccessible(record: Record<string, unknown>, ownerId?: string): boolean {
+  if (ownerId === undefined) return true;
+  const recordOwner = getRecordOwner(record);
+  if (recordOwner === undefined) return true;
+  return recordOwner === ownerId;
+}
+
+/**
+ * Inject `owner` into metadata if `ownerId` is provided.
+ *
+ * Returns a new metadata object with `owner` set. Does not mutate the input.
+ */
+function injectOwner(metadata: Record<string, unknown>, ownerId?: string): Record<string, unknown> {
+  if (ownerId === undefined) return metadata;
+  return { ...metadata, owner: ownerId };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -113,7 +185,7 @@ function sortComparator(
 export class InMemoryAssistantStore implements AssistantStore {
   private readonly data = new Map<string, Record<string, unknown>>();
 
-  async create(data: AssistantCreate): Promise<Assistant> {
+  async create(data: AssistantCreate, ownerId?: string): Promise<Assistant> {
     if (!data.graph_id) {
       throw new Error("graph_id is required");
     }
@@ -135,7 +207,7 @@ export class InMemoryAssistantStore implements AssistantStore {
       graph_id: data.graph_id,
       config: data.config ?? {},
       context: data.context ?? {},
-      metadata: data.metadata ?? {},
+      metadata: injectOwner(data.metadata ?? {}, ownerId),
       name: data.name ?? undefined,
       description: data.description ?? undefined,
       version: 1,
@@ -147,13 +219,14 @@ export class InMemoryAssistantStore implements AssistantStore {
     return this.toModel(record);
   }
 
-  async get(assistantId: string): Promise<Assistant | null> {
+  async get(assistantId: string, ownerId?: string): Promise<Assistant | null> {
     const record = this.data.get(assistantId);
     if (!record) return null;
+    if (!isReadAccessible(record, ownerId)) return null;
     return this.toModel(record);
   }
 
-  async search(request: AssistantSearchRequest): Promise<Assistant[]> {
+  async search(request: AssistantSearchRequest, ownerId?: string): Promise<Assistant[]> {
     const limit = request.limit ?? 10;
     const offset = request.offset ?? 0;
     const sortBy = request.sort_by ?? "created_at";
@@ -162,6 +235,8 @@ export class InMemoryAssistantStore implements AssistantStore {
     let results: Record<string, unknown>[] = [];
 
     for (const record of this.data.values()) {
+      // Owner filter
+      if (!isReadAccessible(record, ownerId)) continue;
       // Filter by metadata
       if (request.metadata && !metadataMatches(record.metadata as Record<string, unknown>, request.metadata)) {
         continue;
@@ -189,9 +264,10 @@ export class InMemoryAssistantStore implements AssistantStore {
     return results.map((record) => this.toModel(record));
   }
 
-  async update(assistantId: string, data: AssistantPatch): Promise<Assistant | null> {
+  async update(assistantId: string, data: AssistantPatch, ownerId?: string): Promise<Assistant | null> {
     const record = this.data.get(assistantId);
     if (!record) return null;
+    if (!isWriteAccessible(record, ownerId)) return null;
 
     const now = utcNow();
 
@@ -203,9 +279,15 @@ export class InMemoryAssistantStore implements AssistantStore {
     if (data.description !== undefined) record.description = data.description;
 
     // Metadata: shallow merge (matching Python behaviour)
+    // Preserve the owner field during merge
     if (data.metadata !== undefined) {
       const currentMetadata = (record.metadata ?? {}) as Record<string, unknown>;
+      const currentOwner = currentMetadata.owner;
       record.metadata = { ...currentMetadata, ...data.metadata };
+      // Ensure owner is preserved (users cannot change ownership via metadata merge)
+      if (currentOwner !== undefined) {
+        (record.metadata as Record<string, unknown>).owner = currentOwner;
+      }
     }
 
     // Increment version (Critical Finding #7)
@@ -218,22 +300,27 @@ export class InMemoryAssistantStore implements AssistantStore {
     return this.toModel(record);
   }
 
-  async delete(assistantId: string): Promise<boolean> {
+  async delete(assistantId: string, ownerId?: string): Promise<boolean> {
+    const record = this.data.get(assistantId);
+    if (!record) return false;
+    if (!isWriteAccessible(record, ownerId)) return false;
     return this.data.delete(assistantId);
   }
 
-  async count(request?: AssistantCountRequest): Promise<number> {
-    if (!request) return this.data.size;
+  async count(request?: AssistantCountRequest, ownerId?: string): Promise<number> {
+    if (!request && ownerId === undefined) return this.data.size;
 
     let count = 0;
     for (const record of this.data.values()) {
-      if (request.metadata && !metadataMatches(record.metadata as Record<string, unknown>, request.metadata)) {
+      // Owner filter
+      if (!isReadAccessible(record, ownerId)) continue;
+      if (request?.metadata && !metadataMatches(record.metadata as Record<string, unknown>, request.metadata)) {
         continue;
       }
-      if (request.graph_id !== undefined && record.graph_id !== request.graph_id) {
+      if (request?.graph_id !== undefined && record.graph_id !== request.graph_id) {
         continue;
       }
-      if (request.name !== undefined) {
+      if (request?.name !== undefined) {
         const recordName = record.name as string | undefined;
         if (!recordName || !recordName.toLowerCase().includes(request.name.toLowerCase())) {
           continue;
@@ -295,7 +382,7 @@ export class InMemoryThreadStore implements ThreadStore {
   private readonly data = new Map<string, Record<string, unknown>>();
   private readonly history = new Map<string, StateSnapshot[]>();
 
-  async create(data: ThreadCreate): Promise<Thread> {
+  async create(data: ThreadCreate, ownerId?: string): Promise<Thread> {
     const threadId = data.thread_id ?? generateId();
 
     // Handle if_exists
@@ -310,7 +397,7 @@ export class InMemoryThreadStore implements ThreadStore {
     const now = utcNow();
     const record: Record<string, unknown> = {
       thread_id: threadId,
-      metadata: data.metadata ?? {},
+      metadata: injectOwner(data.metadata ?? {}, ownerId),
       config: {},
       status: "idle" as ThreadStatus,
       values: {},
@@ -325,13 +412,14 @@ export class InMemoryThreadStore implements ThreadStore {
     return this.toModel(record);
   }
 
-  async get(threadId: string): Promise<Thread | null> {
+  async get(threadId: string, ownerId?: string): Promise<Thread | null> {
     const record = this.data.get(threadId);
     if (!record) return null;
+    if (!isReadAccessible(record, ownerId)) return null;
     return this.toModel(record);
   }
 
-  async search(request: ThreadSearchRequest): Promise<Thread[]> {
+  async search(request: ThreadSearchRequest, ownerId?: string): Promise<Thread[]> {
     const limit = request.limit ?? 10;
     const offset = request.offset ?? 0;
     const sortBy = request.sort_by ?? "created_at";
@@ -340,6 +428,8 @@ export class InMemoryThreadStore implements ThreadStore {
     let results: Record<string, unknown>[] = [];
 
     for (const record of this.data.values()) {
+      // Owner filter
+      if (!isReadAccessible(record, ownerId)) continue;
       // Filter by IDs
       if (request.ids && request.ids.length > 0) {
         if (!request.ids.includes(record.thread_id as string)) {
@@ -370,14 +460,20 @@ export class InMemoryThreadStore implements ThreadStore {
     return results.map((record) => this.toModel(record));
   }
 
-  async update(threadId: string, data: ThreadPatch): Promise<Thread | null> {
+  async update(threadId: string, data: ThreadPatch, ownerId?: string): Promise<Thread | null> {
     const record = this.data.get(threadId);
     if (!record) return null;
+    if (!isWriteAccessible(record, ownerId)) return null;
 
     // Metadata: shallow merge
     if (data.metadata !== undefined) {
       const currentMetadata = (record.metadata ?? {}) as Record<string, unknown>;
+      const currentOwner = currentMetadata.owner;
       record.metadata = { ...currentMetadata, ...data.metadata };
+      // Preserve owner (users cannot change ownership via metadata merge)
+      if (currentOwner !== undefined) {
+        (record.metadata as Record<string, unknown>).owner = currentOwner;
+      }
     }
 
     // Status: replace (used internally by runs system)
@@ -396,7 +492,10 @@ export class InMemoryThreadStore implements ThreadStore {
     return this.toModel(record);
   }
 
-  async delete(threadId: string): Promise<boolean> {
+  async delete(threadId: string, ownerId?: string): Promise<boolean> {
+    const record = this.data.get(threadId);
+    if (!record) return false;
+    if (!isWriteAccessible(record, ownerId)) return false;
     const deleted = this.data.delete(threadId);
     if (deleted) {
       this.history.delete(threadId);
@@ -404,18 +503,20 @@ export class InMemoryThreadStore implements ThreadStore {
     return deleted;
   }
 
-  async count(request?: ThreadCountRequest): Promise<number> {
-    if (!request) return this.data.size;
+  async count(request?: ThreadCountRequest, ownerId?: string): Promise<number> {
+    if (!request && ownerId === undefined) return this.data.size;
 
     let count = 0;
     for (const record of this.data.values()) {
-      if (request.metadata && !metadataMatches(record.metadata as Record<string, unknown>, request.metadata)) {
+      // Owner filter
+      if (!isReadAccessible(record, ownerId)) continue;
+      if (request?.metadata && !metadataMatches(record.metadata as Record<string, unknown>, request.metadata)) {
         continue;
       }
-      if (request.values && !metadataMatches(record.values as Record<string, unknown>, request.values)) {
+      if (request?.values && !metadataMatches(record.values as Record<string, unknown>, request.values)) {
         continue;
       }
-      if (request.status !== undefined && record.status !== request.status) {
+      if (request?.status !== undefined && record.status !== request.status) {
         continue;
       }
       count++;
@@ -423,9 +524,10 @@ export class InMemoryThreadStore implements ThreadStore {
     return count;
   }
 
-  async getState(threadId: string): Promise<ThreadState | null> {
+  async getState(threadId: string, ownerId?: string): Promise<ThreadState | null> {
     const record = this.data.get(threadId);
     if (!record) return null;
+    if (!isReadAccessible(record, ownerId)) return null;
 
     const now = utcNow();
     return {
@@ -444,14 +546,34 @@ export class InMemoryThreadStore implements ThreadStore {
     };
   }
 
-  async addStateSnapshot(threadId: string, state: Record<string, unknown>): Promise<boolean> {
+  async addStateSnapshot(threadId: string, state: Record<string, unknown>, ownerId?: string): Promise<boolean> {
     const record = this.data.get(threadId);
     if (!record) return false;
+    if (!isWriteAccessible(record, ownerId)) return false;
 
     const snapshots = this.history.get(threadId) ?? [];
 
+    // Resolve snapshot values defensively.
+    // Expected shape: { values: { messages: [...] }, ... }
+    // Fallback: if `state.values` is missing, treat `state` itself as the
+    // values dict (caller passed raw values without wrapping). This mirrors
+    // the Python fix in `postgres_storage.py`.
+    let snapshotValues: Record<string, unknown>;
+    if (state.values !== undefined && typeof state.values === "object" && state.values !== null) {
+      snapshotValues = state.values as Record<string, unknown>;
+    } else if (state.messages !== undefined) {
+      // Caller passed { messages: [...] } directly — use it as values
+      console.warn(
+        `[storage] addStateSnapshot called without "values" key for thread ${threadId}. ` +
+          `Using state directly as values. Callers should pass { values: {...} }.`,
+      );
+      snapshotValues = state;
+    } else {
+      snapshotValues = {};
+    }
+
     const snapshot: StateSnapshot = {
-      values: (state.values as Record<string, unknown>) ?? {},
+      values: snapshotValues,
       next: (state.next as string[]) ?? [],
       tasks: (state.tasks as Array<Record<string, unknown>>) ?? [],
       metadata: (state.metadata as Record<string, unknown>) ?? {},
@@ -476,9 +598,11 @@ export class InMemoryThreadStore implements ThreadStore {
     threadId: string,
     limit = 10,
     before?: string,
+    ownerId?: string,
   ): Promise<ThreadState[] | null> {
     const record = this.data.get(threadId);
     if (!record) return null;
+    if (!isReadAccessible(record, ownerId)) return null;
 
     let snapshots = this.history.get(threadId) ?? [];
 
@@ -673,6 +797,328 @@ export class InMemoryRunStore implements RunStore {
 }
 
 // ---------------------------------------------------------------------------
+// In-Memory Store Storage (cross-thread key-value memory)
+// ---------------------------------------------------------------------------
+
+/**
+ * Internal record for an in-memory store item.
+ *
+ * Holds the mutable fields that `put()` can update. Converted to a
+ * `StoreItem` model object via `toModel()` before returning to callers.
+ */
+interface StoreRecord {
+  namespace: string;
+  key: string;
+  value: Record<string, unknown>;
+  ownerId: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * In-memory implementation of `StoreStorage`.
+ *
+ * Items are stored in a nested `Map` structure:
+ *   `ownerId → namespace → key → StoreRecord`
+ *
+ * This mirrors Python's `StoreStorage._items` dict structure:
+ *   `{owner_id: {namespace: {key: StoreItem}}}`
+ *
+ * All operations are O(1) for put/get/delete. Search and
+ * listNamespaces iterate the owner's namespace map.
+ *
+ * Reference: apps/python/src/server/storage.py → StoreStorage
+ */
+export class InMemoryStoreStorage implements StoreStorage {
+  /** Structure: ownerId → namespace → key → StoreRecord */
+  private readonly data: Map<string, Map<string, Map<string, StoreRecord>>> =
+    new Map();
+
+  async put(
+    namespace: string,
+    key: string,
+    value: Record<string, unknown>,
+    ownerId: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<StoreItem> {
+    // Ensure owner map exists
+    if (!this.data.has(ownerId)) {
+      this.data.set(ownerId, new Map());
+    }
+    const ownerStore = this.data.get(ownerId)!;
+
+    // Ensure namespace map exists
+    if (!ownerStore.has(namespace)) {
+      ownerStore.set(namespace, new Map());
+    }
+    const namespaceStore = ownerStore.get(namespace)!;
+
+    const existing = namespaceStore.get(key);
+    if (existing) {
+      // Update existing item
+      existing.value = value;
+      existing.updated_at = utcNow();
+      if (metadata !== undefined) {
+        existing.metadata = metadata;
+      }
+      return this.toModel(existing);
+    }
+
+    // Create new item
+    const now = utcNow();
+    const record: StoreRecord = {
+      namespace,
+      key,
+      value,
+      ownerId,
+      metadata: metadata ?? {},
+      created_at: now,
+      updated_at: now,
+    };
+    namespaceStore.set(key, record);
+    return this.toModel(record);
+  }
+
+  async get(
+    namespace: string,
+    key: string,
+    ownerId: string,
+  ): Promise<StoreItem | null> {
+    const ownerStore = this.data.get(ownerId);
+    if (!ownerStore) return null;
+
+    const namespaceStore = ownerStore.get(namespace);
+    if (!namespaceStore) return null;
+
+    const record = namespaceStore.get(key);
+    return record ? this.toModel(record) : null;
+  }
+
+  async delete(
+    namespace: string,
+    key: string,
+    ownerId: string,
+  ): Promise<boolean> {
+    const ownerStore = this.data.get(ownerId);
+    if (!ownerStore) return false;
+
+    const namespaceStore = ownerStore.get(namespace);
+    if (!namespaceStore) return false;
+
+    return namespaceStore.delete(key);
+  }
+
+  async search(
+    namespace: string,
+    ownerId: string,
+    prefix?: string,
+    limit: number = 10,
+    offset: number = 0,
+  ): Promise<StoreItem[]> {
+    const ownerStore = this.data.get(ownerId);
+    if (!ownerStore) return [];
+
+    const namespaceStore = ownerStore.get(namespace);
+    if (!namespaceStore) return [];
+
+    let items = Array.from(namespaceStore.values());
+
+    // Apply prefix filter
+    if (prefix) {
+      items = items.filter((record) => record.key.startsWith(prefix));
+    }
+
+    // Sort by key for consistent ordering (matches Python)
+    items.sort((recordA, recordB) => recordA.key.localeCompare(recordB.key));
+
+    // Apply pagination
+    const paginated = items.slice(offset, offset + limit);
+    return paginated.map((record) => this.toModel(record));
+  }
+
+  async listNamespaces(ownerId: string): Promise<string[]> {
+    const ownerStore = this.data.get(ownerId);
+    if (!ownerStore) return [];
+
+    return Array.from(ownerStore.keys());
+  }
+
+  async clear(): Promise<void> {
+    this.data.clear();
+  }
+
+  // -------------------------------------------------------------------------
+  // Internal
+  // -------------------------------------------------------------------------
+
+  private toModel(record: StoreRecord): StoreItem {
+    return {
+      namespace: record.namespace,
+      key: record.key,
+      value: record.value,
+      metadata: record.metadata,
+      created_at: record.created_at,
+      updated_at: record.updated_at,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// In-Memory Cron Store
+// ---------------------------------------------------------------------------
+
+/**
+ * In-memory implementation of `CronStore`.
+ *
+ * Stores cron jobs in a `Map<string, Record<string, unknown>>` keyed by
+ * `cron_id`. All operations enforce owner isolation via `metadata.owner`.
+ *
+ * Mirrors Python's `CronStore` in `server/storage.py`.
+ */
+export class InMemoryCronStore implements CronStore {
+  private readonly data: Map<string, Record<string, unknown>> = new Map();
+
+  async create(data: Record<string, unknown>, ownerId: string): Promise<Cron> {
+    const cronId = generateId();
+    const now = utcNow();
+
+    // Ensure metadata exists and stamp owner
+    const metadata: Record<string, unknown> = {
+      ...(typeof data.metadata === "object" && data.metadata !== null
+        ? (data.metadata as Record<string, unknown>)
+        : {}),
+      owner: ownerId,
+    };
+
+    const record: Record<string, unknown> = {
+      ...data,
+      cron_id: cronId,
+      metadata,
+      created_at: now,
+      updated_at: now,
+    };
+
+    this.data.set(cronId, record);
+    return this.toModel(record);
+  }
+
+  async get(cronId: string, ownerId: string): Promise<Cron | null> {
+    const record = this.data.get(cronId);
+    if (!record) return null;
+
+    // Check owner
+    if (getRecordOwner(record) !== ownerId) return null;
+
+    return this.toModel(record);
+  }
+
+  async list(ownerId: string, filters?: Record<string, string>): Promise<Cron[]> {
+    const results: Cron[] = [];
+
+    for (const record of this.data.values()) {
+      // Check owner
+      if (getRecordOwner(record) !== ownerId) continue;
+
+      // Check additional filters
+      if (filters) {
+        let matched = true;
+        for (const [key, value] of Object.entries(filters)) {
+          if (record[key] !== value) {
+            matched = false;
+            break;
+          }
+        }
+        if (!matched) continue;
+      }
+
+      results.push(this.toModel(record));
+    }
+
+    return results;
+  }
+
+  async update(
+    cronId: string,
+    ownerId: string,
+    updates: Record<string, unknown>,
+  ): Promise<Cron | null> {
+    const record = this.data.get(cronId);
+    if (!record) return null;
+
+    // Check owner
+    if (getRecordOwner(record) !== ownerId) return null;
+
+    // Apply updates
+    for (const [key, value] of Object.entries(updates)) {
+      record[key] = value;
+    }
+    record.updated_at = utcNow();
+
+    this.data.set(cronId, record);
+    return this.toModel(record);
+  }
+
+  async delete(cronId: string, ownerId: string): Promise<boolean> {
+    const record = this.data.get(cronId);
+    if (!record) return false;
+
+    // Check owner
+    if (getRecordOwner(record) !== ownerId) return false;
+
+    return this.data.delete(cronId);
+  }
+
+  async count(ownerId: string, filters?: Record<string, string>): Promise<number> {
+    let count = 0;
+
+    for (const record of this.data.values()) {
+      // Check owner
+      if (getRecordOwner(record) !== ownerId) continue;
+
+      // Check additional filters
+      if (filters) {
+        let matched = true;
+        for (const [key, value] of Object.entries(filters)) {
+          if (record[key] !== value) {
+            matched = false;
+            break;
+          }
+        }
+        if (!matched) continue;
+      }
+
+      count += 1;
+    }
+
+    return count;
+  }
+
+  async clear(): Promise<void> {
+    this.data.clear();
+  }
+
+  /**
+   * Convert a raw record to a `Cron` model.
+   */
+  private toModel(record: Record<string, unknown>): Cron {
+    return {
+      cron_id: record.cron_id as string,
+      assistant_id: (record.assistant_id as string) ?? null,
+      thread_id: record.thread_id as string,
+      end_time: (record.end_time as string) ?? null,
+      schedule: record.schedule as string,
+      created_at: record.created_at as string,
+      updated_at: record.updated_at as string,
+      user_id: (record.user_id as string) ?? null,
+      payload: (record.payload as Record<string, unknown>) ?? {},
+      next_run_date: (record.next_run_date as string) ?? null,
+      metadata: (record.metadata as Record<string, unknown>) ?? {},
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // In-Memory Storage Container
 // ---------------------------------------------------------------------------
 
@@ -685,16 +1131,22 @@ export class InMemoryStorage implements Storage {
   readonly assistants: InMemoryAssistantStore;
   readonly threads: InMemoryThreadStore;
   readonly runs: InMemoryRunStore;
+  readonly store: InMemoryStoreStorage;
+  readonly crons: InMemoryCronStore;
 
   constructor() {
     this.assistants = new InMemoryAssistantStore();
     this.threads = new InMemoryThreadStore();
     this.runs = new InMemoryRunStore();
+    this.store = new InMemoryStoreStorage();
+    this.crons = new InMemoryCronStore();
   }
 
   async clearAll(): Promise<void> {
     await this.assistants.clear();
     await this.threads.clear();
     await this.runs.clear();
+    await this.store.clear();
+    await this.crons.clear();
   }
 }

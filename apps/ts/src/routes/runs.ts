@@ -27,8 +27,9 @@
 
 import type { Router, RouteHandler } from "../router";
 import type { RunCreateStateful } from "../models/run";
-import { getStorage } from "../storage/index";
+import { getStorage, getCheckpointer } from "../storage/index";
 import { resolveGraphFactory } from "../graphs/index";
+import { injectTracing } from "../infra/tracing";
 import {
   jsonResponse,
   errorResponse,
@@ -37,6 +38,7 @@ import {
   validationError,
   requireBody,
 } from "./helpers";
+import { getUserIdentity, getCurrentToken } from "../middleware/context";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -206,12 +208,80 @@ function buildRunnableConfig(
   configurable.thread_id = threadId;
   configurable.assistant_id = assistantId;
 
+  // Layer 3b: Checkpoint namespace isolation.
+  // Each assistant gets its own checkpoint namespace within a thread so that
+  // multiple agents in the same chat don't overwrite each other's state.
+  // See docs/MULTI_AGENT_CHECKPOINT_ARCHITECTURE.md for full rationale.
+  configurable.checkpoint_ns = `assistant:${assistantId}`;
+
   // Include assistant config reference for graph factory
   if (assistantConfig && typeof assistantConfig === "object") {
     configurable.assistant = assistantConfig;
   }
 
+  // Layer 4: Inject Supabase access token for MCP token exchange.
+  // The auth middleware stores the raw Bearer token in request-scoped
+  // context. Downstream code (e.g., MCP tool integration) needs it
+  // for OAuth2 token exchange with auth-required MCP servers.
+  // Mirrors Python's `x-supabase-access-token` in configurable.
+  const supabaseAccessToken = getCurrentToken();
+  if (supabaseAccessToken) {
+    configurable["x-supabase-access-token"] = supabaseAccessToken;
+  }
+
   return configurable;
+}
+
+/**
+ * Serialize result messages from an agent invocation into plain dicts.
+ *
+ * This is a fallback used when the checkpointer state read fails.
+ * It handles LangChain message objects (with `toJSON` or `_getType`)
+ * and plain dicts.
+ */
+function serializeResultMessages(
+  result: Record<string, unknown>,
+): Array<Record<string, unknown>> {
+  const resultMessages = (result.messages ?? []) as Array<Record<string, unknown>>;
+  const serialized: Array<Record<string, unknown>> = [];
+
+  for (const message of resultMessages) {
+    const msgAny = message as Record<string, unknown>;
+
+    if (typeof (msgAny as { toJSON?: unknown }).toJSON === "function") {
+      serialized.push(
+        (msgAny as { toJSON: () => Record<string, unknown> }).toJSON(),
+      );
+    } else if (typeof (msgAny as { model_dump?: unknown }).model_dump === "function") {
+      serialized.push(
+        (msgAny as { model_dump: () => Record<string, unknown> }).model_dump(),
+      );
+    } else {
+      const plain: Record<string, unknown> = {};
+      const content = msgAny.content;
+      const getTypeFn = msgAny._getType;
+      const messageType =
+        (msgAny.type as string | undefined) ??
+        (typeof getTypeFn === "function"
+          ? (getTypeFn as () => string)()
+          : undefined) ??
+        "unknown";
+      const messageId = msgAny.id;
+      plain.content = content ?? "";
+      plain.type = messageType;
+      plain.id = messageId ?? null;
+      plain.additional_kwargs = msgAny.additional_kwargs ?? {};
+      plain.response_metadata = msgAny.response_metadata ?? {};
+      if (messageType === "ai") {
+        plain.tool_calls = msgAny.tool_calls ?? [];
+        plain.invalid_tool_calls = msgAny.invalid_tool_calls ?? [];
+        plain.usage_metadata = msgAny.usage_metadata ?? null;
+      }
+      serialized.push(plain);
+    }
+  }
+
+  return serialized;
 }
 
 /**
@@ -219,16 +289,18 @@ function buildRunnableConfig(
  *
  * This is the core pipeline used by the `wait` endpoint:
  *   1. Resolve the graph factory from the assistant's graph_id.
- *   2. Build the agent graph.
+ *   2. Build the agent graph (with shared checkpointer for history).
  *   3. Invoke with the input messages.
- *   4. Store the result in the thread state.
- *   5. Update run status to success (or error).
+ *   4. Read accumulated state from checkpointer.
+ *   5. Store the result in the thread state.
+ *   6. Update run status to success (or error).
  */
 async function executeRunSync(
   runId: string,
   threadId: string,
   assistant: Record<string, unknown>,
   body: RunCreateStateful,
+  ownerId?: string,
 ): Promise<{ state: Record<string, unknown> | null; error: string | null }> {
   const storage = getStorage();
 
@@ -252,11 +324,18 @@ async function executeRunSync(
     );
 
     // The graph factory expects the flat configurable as its config param.
-    const agent = (await buildGraph(configurable)) as {
+    // Pass the shared checkpointer so the agent accumulates message history
+    // across runs on the same thread via the `add_messages` reducer.
+    const agent = (await buildGraph(configurable, {
+      checkpointer: getCheckpointer(),
+    })) as {
       invoke: (
         input: Record<string, unknown>,
         config?: Record<string, unknown>,
       ) => Promise<Record<string, unknown>>;
+      getState: (
+        config: Record<string, unknown>,
+      ) => Promise<{ values: Record<string, unknown> }>;
     };
 
     // 3. Build input
@@ -295,55 +374,90 @@ async function executeRunSync(
       },
     };
 
-    // 4. Invoke
-    const result = await agent.invoke(agentInput, runnableConfig);
+    // 4. Inject Langfuse tracing (no-op if not configured)
+    const tracedConfig = injectTracing(runnableConfig, {
+      userId: ownerId,
+      sessionId: threadId,
+      traceName: "agent-run",
+      tags: ["bun", "sync"],
+    });
 
-    // 5. Extract messages from result and store
-    const resultMessages = (result.messages ?? []) as Array<Record<string, unknown>>;
+    // 5. Invoke — the checkpointer provides previous history to the LLM
+    // internally via the `add_messages` reducer. We only pass NEW input.
+    const result = await agent.invoke(agentInput, tracedConfig);
 
-    // Serialize messages (handle LangChain message objects)
-    const serializedMessages: Array<Record<string, unknown>> = [];
-    for (const message of resultMessages) {
-      const msgAny = message as Record<string, unknown>;
+    // 5. Read full accumulated state from checkpointer.
+    //
+    // The checkpointer is the source of truth for message history.
+    // It accumulates messages across runs via the `add_messages` reducer.
+    // We read the full state and write it to the runtime storage so that
+    // `GET /threads/{id}/state` returns the complete conversation history.
+    let finalValues: Record<string, unknown>;
+    try {
+      const checkpointState = await agent.getState(runnableConfig);
+      if (checkpointState?.values) {
+        const accumulatedMessages = (checkpointState.values.messages ?? []) as Array<unknown>;
+        const serializedAccumulated: Array<Record<string, unknown>> = [];
 
-      if (typeof msgAny.toJSON === "function") {
-        serializedMessages.push(
-          (msgAny.toJSON as () => Record<string, unknown>)(),
-        );
-      } else if (typeof msgAny.model_dump === "function") {
-        serializedMessages.push(
-          (msgAny.model_dump as () => Record<string, unknown>)(),
-        );
-      } else {
-        // Already a plain dict or close enough
-        const plain: Record<string, unknown> = {};
-        const content = msgAny.content;
-        const getTypeFn = msgAny._getType;
-        const messageType =
-          (msgAny.type as string | undefined) ??
-          (typeof getTypeFn === "function"
-            ? (getTypeFn as () => string)()
-            : undefined) ??
-          "unknown";
-        const messageId = msgAny.id;
-        plain.content = content ?? "";
-        plain.type = messageType;
-        plain.id = messageId ?? null;
-        plain.additional_kwargs = msgAny.additional_kwargs ?? {};
-        plain.response_metadata = msgAny.response_metadata ?? {};
-        if (messageType === "ai") {
-          plain.tool_calls = msgAny.tool_calls ?? [];
-          plain.invalid_tool_calls = msgAny.invalid_tool_calls ?? [];
-          plain.usage_metadata = msgAny.usage_metadata ?? null;
+        for (const message of accumulatedMessages) {
+          if (typeof message === "object" && message !== null) {
+            const msgAny = message as Record<string, unknown>;
+
+            if (typeof (msgAny as { toJSON?: unknown }).toJSON === "function") {
+              serializedAccumulated.push(
+                (msgAny as { toJSON: () => Record<string, unknown> }).toJSON(),
+              );
+            } else if (typeof (msgAny as { model_dump?: unknown }).model_dump === "function") {
+              serializedAccumulated.push(
+                (msgAny as { model_dump: () => Record<string, unknown> }).model_dump(),
+              );
+            } else {
+              const plain: Record<string, unknown> = {};
+              const content = msgAny.content;
+              const getTypeFn = msgAny._getType;
+              const messageType =
+                (msgAny.type as string | undefined) ??
+                (typeof getTypeFn === "function"
+                  ? (getTypeFn as () => string)()
+                  : undefined) ??
+                "unknown";
+              const messageId = msgAny.id;
+              plain.content = content ?? "";
+              plain.type = messageType;
+              plain.id = messageId ?? null;
+              plain.additional_kwargs = msgAny.additional_kwargs ?? {};
+              plain.response_metadata = msgAny.response_metadata ?? {};
+              if (messageType === "ai") {
+                plain.tool_calls = msgAny.tool_calls ?? [];
+                plain.invalid_tool_calls = msgAny.invalid_tool_calls ?? [];
+                plain.usage_metadata = msgAny.usage_metadata ?? null;
+              }
+              serializedAccumulated.push(plain);
+            }
+          }
         }
-        serializedMessages.push(plain);
+
+        console.log(
+          `[runs] Read ${serializedAccumulated.length} accumulated messages from checkpointer for thread ${threadId}`,
+        );
+        finalValues = { messages: serializedAccumulated };
+      } else {
+        console.warn(
+          `[runs] Checkpointer returned empty state for thread ${threadId}, falling back to current run messages`,
+        );
+        // Fallback: serialize current result messages only
+        finalValues = { messages: serializeResultMessages(result) };
       }
+    } catch (stateReadError: unknown) {
+      console.warn(
+        "[runs] Failed to read accumulated state from checkpointer, falling back to current run messages:",
+        stateReadError instanceof Error ? stateReadError.message : stateReadError,
+      );
+      finalValues = { messages: serializeResultMessages(result) };
     }
 
-    const finalValues = { messages: serializedMessages };
-
-    // Store state
-    await storage.threads.addStateSnapshot(threadId, finalValues);
+    // Store state (with correct key shape for addStateSnapshot)
+    await storage.threads.addStateSnapshot(threadId, { values: finalValues });
     await storage.threads.update(threadId, { values: finalValues });
 
     // Mark run as success
@@ -353,7 +467,7 @@ async function executeRunSync(
     await storage.threads.update(threadId, { status: "idle" });
 
     // Return thread state
-    const state = await storage.threads.getState(threadId);
+    const state = await storage.threads.getState(threadId, ownerId);
     return { state: state as Record<string, unknown> | null, error: null };
   } catch (executionError: unknown) {
     const errorMessage =
@@ -395,12 +509,13 @@ const createRun: RouteHandler = async (request, params) => {
   }
 
   const storage = getStorage();
+  const ownerId = getUserIdentity();
 
   // Check if thread exists
-  const thread = await storage.threads.get(threadId);
+  const thread = await storage.threads.get(threadId, ownerId);
   if (thread === null) {
     if (body.if_not_exists === "create") {
-      await storage.threads.create({});
+      await storage.threads.create({}, ownerId);
       // Note: we use the original threadId since the caller specified it
     } else {
       return notFound(`Thread ${threadId} not found`);
@@ -449,9 +564,10 @@ const listRuns: RouteHandler = async (_request, params, query) => {
   }
 
   const storage = getStorage();
+  const ownerId = getUserIdentity();
 
   // Check if thread exists
-  const thread = await storage.threads.get(threadId);
+  const thread = await storage.threads.get(threadId, ownerId);
   if (thread === null) {
     return notFound(`Thread ${threadId} not found`);
   }
@@ -491,9 +607,10 @@ const getRun: RouteHandler = async (_request, params) => {
   if (!runId) return validationError("run_id is required");
 
   const storage = getStorage();
+  const ownerId = getUserIdentity();
 
   // Check thread exists
-  const thread = await storage.threads.get(threadId);
+  const thread = await storage.threads.get(threadId, ownerId);
   if (thread === null) {
     return notFound(`Thread ${threadId} not found`);
   }
@@ -519,9 +636,10 @@ const deleteRun: RouteHandler = async (_request, params) => {
   if (!runId) return validationError("run_id is required");
 
   const storage = getStorage();
+  const ownerId = getUserIdentity();
 
   // Check thread exists
-  const thread = await storage.threads.get(threadId);
+  const thread = await storage.threads.get(threadId, ownerId);
   if (thread === null) {
     return notFound(`Thread ${threadId} not found`);
   }
@@ -548,9 +666,10 @@ const cancelRun: RouteHandler = async (_request, params) => {
   if (!runId) return validationError("run_id is required");
 
   const storage = getStorage();
+  const ownerId = getUserIdentity();
 
   // Check thread exists
-  const thread = await storage.threads.get(threadId);
+  const thread = await storage.threads.get(threadId, ownerId);
   if (thread === null) {
     return notFound(`Thread ${threadId} not found`);
   }
@@ -568,7 +687,7 @@ const cancelRun: RouteHandler = async (_request, params) => {
   }
 
   await storage.runs.updateStatus(runId, "interrupted");
-  await storage.threads.update(threadId, { status: "idle" });
+  await storage.threads.update(threadId, { status: "idle" }, ownerId);
 
   return jsonResponse({});
 };
@@ -590,9 +709,10 @@ const joinRun: RouteHandler = async (_request, params) => {
   if (!runId) return validationError("run_id is required");
 
   const storage = getStorage();
+  const ownerId = getUserIdentity();
 
   // Check thread exists
-  const thread = await storage.threads.get(threadId);
+  const thread = await storage.threads.get(threadId, ownerId);
   if (thread === null) {
     return notFound(`Thread ${threadId} not found`);
   }
@@ -605,7 +725,7 @@ const joinRun: RouteHandler = async (_request, params) => {
   // If run is terminal, return immediately
   const terminalStatuses = ["success", "error", "timeout", "interrupted"];
   if (terminalStatuses.includes(run.status)) {
-    const state = await storage.threads.getState(threadId);
+    const state = await storage.threads.getState(threadId, ownerId);
     return jsonResponse(state ?? { values: {}, next: [], tasks: [] });
   }
 
@@ -621,13 +741,13 @@ const joinRun: RouteHandler = async (_request, params) => {
       currentRun === null ||
       terminalStatuses.includes(currentRun.status)
     ) {
-      const state = await storage.threads.getState(threadId);
+      const state = await storage.threads.getState(threadId, ownerId);
       return jsonResponse(state ?? { values: {}, next: [], tasks: [] });
     }
   }
 
   // Timeout — return current state anyway
-  const state = await storage.threads.getState(threadId);
+  const state = await storage.threads.getState(threadId, ownerId);
   return jsonResponse(state ?? { values: {}, next: [], tasks: [] });
 };
 
@@ -651,13 +771,14 @@ const createRunWait: RouteHandler = async (request, params) => {
   }
 
   const storage = getStorage();
+  const ownerId = getUserIdentity();
 
   // Check if thread exists
   let effectiveThreadId = threadId;
-  const thread = await storage.threads.get(threadId);
+  const thread = await storage.threads.get(threadId, ownerId);
   if (thread === null) {
     if (body.if_not_exists === "create") {
-      const newThread = await storage.threads.create({});
+      const newThread = await storage.threads.create({}, ownerId);
       effectiveThreadId = newThread.thread_id;
     } else {
       return notFound(`Thread ${threadId} not found`);
@@ -697,6 +818,7 @@ const createRunWait: RouteHandler = async (request, params) => {
     effectiveThreadId,
     assistant,
     body,
+    ownerId,
   );
 
   if (error !== null) {

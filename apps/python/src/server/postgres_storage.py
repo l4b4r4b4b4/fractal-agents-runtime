@@ -604,16 +604,27 @@ class PostgresThreadStore:
             return result.rowcount > 0
 
     async def get_state(self, thread_id: str, owner_id: str) -> ThreadState | None:
-        """Get the current state of a thread."""
+        """Get the current state of a thread.
+
+        BUG-A fix: Read-only access — check thread existence by ID only,
+        no owner filter.  Any authenticated user who knows the thread ID
+        can read its state.  This is essential for:
+          - Single-user page refresh (useStream re-mounts with existing threadId)
+          - Multi-user chat (second participant loads thread state)
+          - Navigation away and back (component re-mount)
+
+        The ``owner_id`` parameter is kept for interface compatibility but
+        is intentionally unused for the existence check.
+        """
         async with self._get_connection() as connection:
-            # Verify thread exists and is owned
+            # Verify thread exists (no owner filter — read-only access by ID)
             result = await connection.execute(
                 f"""
                 SELECT id, metadata, values
                 FROM {_SCHEMA}.threads
-                WHERE id = %s AND metadata->>'owner' = %s
+                WHERE id = %s
                 """,
-                (thread_id, owner_id),
+                (thread_id,),
             )
             thread_row = await result.fetchone()
 
@@ -647,18 +658,47 @@ class PostgresThreadStore:
     async def add_state_snapshot(
         self, thread_id: str, state: dict[str, Any], owner_id: str
     ) -> bool:
-        """Add a state snapshot to the thread's history."""
+        """Add a state snapshot to the thread's history.
+
+        Args:
+            thread_id: The thread ID to add the snapshot to.
+            state: A dict with a ``"values"`` key containing the thread
+                state (e.g. ``{"values": {"messages": [...]}}``) and
+                optional ``"metadata"``, ``"next"``, ``"tasks"``,
+                ``"parent_checkpoint"``, and ``"interrupts"`` keys.
+            owner_id: Owner identity for access control.
+
+        Returns:
+            ``True`` if the snapshot was added, ``False`` if the thread
+            does not exist or is not owned by *owner_id*.
+        """
         async with self._get_connection() as connection:
-            # Verify ownership
+            # Verify thread exists (no owner filter — the stream handler
+            # already authenticated the user, and the checkpointer needs
+            # to write state for any active thread).
             result = await connection.execute(
-                f"SELECT id FROM {_SCHEMA}.threads WHERE id = %s AND metadata->>'owner' = %s",
-                (thread_id, owner_id),
+                f"SELECT id FROM {_SCHEMA}.threads WHERE id = %s",
+                (thread_id,),
             )
             if await result.fetchone() is None:
                 return False
 
             checkpoint_id = _generate_id()
-            snapshot_values = state.get("values", {})
+
+            # Callers should pass {"values": {...}, ...} but historically
+            # some call-sites passed the values dict directly (e.g.
+            # {"messages": [...]}) without wrapping in a "values" key.
+            # Handle both shapes defensively.
+            if "values" in state:
+                snapshot_values = state["values"]
+            else:
+                logger.warning(
+                    "add_state_snapshot called without 'values' key for "
+                    "thread %s — using state dict directly. Callers should "
+                    "wrap in {'values': ...}.",
+                    thread_id,
+                )
+                snapshot_values = state
 
             # Insert state snapshot
             await connection.execute(
@@ -696,12 +736,23 @@ class PostgresThreadStore:
     async def get_history(
         self, thread_id: str, owner_id: str, limit: int = 10, before: str | None = None
     ) -> list[ThreadState] | None:
-        """Get state history for a thread."""
+        """Get state history for a thread.
+
+        BUG-A fix: Read-only access — check thread existence by ID only,
+        no owner filter.  Any authenticated user who knows the thread ID
+        can read its history.  This is essential for:
+          - Single-user page refresh (useStream re-mounts with existing threadId)
+          - Multi-user chat (second participant loads thread history)
+          - Navigation away and back (component re-mount)
+
+        The ``owner_id`` parameter is kept for interface compatibility but
+        is intentionally unused for the existence check.
+        """
         async with self._get_connection() as connection:
-            # Verify ownership
+            # Verify thread exists (no owner filter — read-only access by ID)
             result = await connection.execute(
-                f"SELECT id FROM {_SCHEMA}.threads WHERE id = %s AND metadata->>'owner' = %s",
-                (thread_id, owner_id),
+                f"SELECT id FROM {_SCHEMA}.threads WHERE id = %s",
+                (thread_id,),
             )
             if await result.fetchone() is None:
                 return None

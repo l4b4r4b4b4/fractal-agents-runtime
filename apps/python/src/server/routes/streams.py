@@ -125,6 +125,12 @@ def _build_runnable_config(
     configurable["owner"] = owner_id
     configurable["user_id"] = owner_id
 
+    # Layer 3b: Checkpoint namespace isolation.
+    # Each assistant gets its own checkpoint namespace within a thread so that
+    # multiple agents in the same chat don't overwrite each other's state.
+    # See docs/MULTI_AGENT_CHECKPOINT_ARCHITECTURE.md for full rationale.
+    configurable["checkpoint_ns"] = f"assistant:{assistant_id}"
+
     # Include assistant config reference for _merge_assistant_configurable_into_run_config
     # Convert Pydantic model to dict if needed
     if assistant_config:
@@ -595,9 +601,10 @@ async def execute_run_stream(
     elif isinstance(input_data, str):
         input_messages.append(HumanMessage(content=input_data, id=str(uuid.uuid4())))
 
-    # Emit initial values with input messages
-    initial_values = {"messages": [_message_to_dict(m) for m in input_messages]}
-    yield format_values_event(initial_values)
+    # NOTE: Initial values event is deferred until after the checkpointer
+    # is available so we can read the full accumulated thread state
+    # (all previous messages) — not just the current run's input.
+    input_message_dicts = [_message_to_dict(m) for m in input_messages]
 
     # 3. Build RunnableConfig
     runnable_config = _build_runnable_config(
@@ -641,6 +648,50 @@ async def execute_run_stream(
             )
             return
 
+        # 4b. Read pre-existing checkpoint state so the initial `values`
+        # event contains the FULL accumulated thread state (all previous
+        # messages from earlier turns) plus the new input messages.
+        #
+        # On first turn there is no checkpoint yet, so we fall back to
+        # emitting only the input messages (which is correct).
+        try:
+            pre_stream_state = await agent.aget_state(runnable_config)
+            if pre_stream_state and pre_stream_state.values:
+                existing_messages = pre_stream_state.values.get("messages", [])
+                if existing_messages:
+                    existing_message_dicts = [
+                        _message_to_dict(m) if isinstance(m, BaseMessage) else m
+                        for m in existing_messages
+                    ]
+                    # Combine: existing messages + new input messages
+                    # This mirrors what the `add_messages` reducer will
+                    # produce once the run starts.
+                    initial_values = {
+                        "messages": existing_message_dicts + input_message_dicts
+                    }
+                    logger.info(
+                        "Initial values: %d existing + %d new = %d total messages "
+                        "for thread %s",
+                        len(existing_message_dicts),
+                        len(input_message_dicts),
+                        len(initial_values["messages"]),
+                        thread_id,
+                    )
+                else:
+                    initial_values = {"messages": input_message_dicts}
+            else:
+                initial_values = {"messages": input_message_dicts}
+        except Exception as state_read_error:
+            logger.warning(
+                "Failed to read pre-stream checkpoint state for thread %s: "
+                "%s — emitting only input messages in initial values",
+                thread_id,
+                state_read_error,
+            )
+            initial_values = {"messages": input_message_dicts}
+
+        yield format_values_event(initial_values)
+
         # Track state for SSE event generation
         current_ai_message_id: str | None = None
         current_metadata: dict[str, Any] = {}
@@ -680,7 +731,8 @@ async def execute_run_stream(
                         "langgraph_node": event_metadata.get("langgraph_node", "model"),
                         "langgraph_step": event_metadata.get("langgraph_step", 1),
                         "langgraph_checkpoint_ns": event_metadata.get(
-                            "langgraph_checkpoint_ns", ""
+                            "langgraph_checkpoint_ns",
+                            f"assistant:{assistant_id}",
                         ),
                         # Forward LangSmith-style ls_* keys from LangChain metadata
                         **{
@@ -789,23 +841,99 @@ async def execute_run_stream(
             yield format_error_event(str(stream_error), code="STREAM_ERROR")
             # Don't return - still emit final values with what we have
 
-        # 6. Emit final values event
-        if final_ai_message_dict:
-            all_messages.append(final_ai_message_dict)
-        elif accumulated_content and current_ai_message_id:
-            # Fallback: create AI message from accumulated content
-            final_ai_message_dict = create_ai_message(
-                accumulated_content,
-                current_ai_message_id,
-                finish_reason="stop",
-                model_provider="openai",
+        # 6. Read full accumulated state from checkpointer.
+        #
+        # The checkpointer (via the `add_messages` reducer) accumulates
+        # the complete message history across all runs on this thread.
+        # We read it back here so that `final_values` contains the FULL
+        # conversation — not just the current run's input + output.
+        #
+        # This MUST happen inside the `async with create_checkpointer()`
+        # block while the connection is still open.
+        try:
+            checkpoint_state = await agent.aget_state(runnable_config)
+            if checkpoint_state and checkpoint_state.values:
+                accumulated_messages = checkpoint_state.values.get("messages", [])
+                if accumulated_messages:
+                    final_values = {
+                        "messages": [
+                            _message_to_dict(m) if isinstance(m, BaseMessage) else m
+                            for m in accumulated_messages
+                        ]
+                    }
+                    logger.info(
+                        "Read %d accumulated messages from checkpointer for thread %s",
+                        len(accumulated_messages),
+                        thread_id,
+                    )
+                else:
+                    logger.warning(
+                        "Checkpointer returned empty messages for thread %s; "
+                        "falling back to current run messages",
+                        thread_id,
+                    )
+                    if final_ai_message_dict:
+                        all_messages.append(final_ai_message_dict)
+                    elif accumulated_content and current_ai_message_id:
+                        all_messages.append(
+                            create_ai_message(
+                                accumulated_content,
+                                current_ai_message_id,
+                                finish_reason="stop",
+                                model_provider="openai",
+                            )
+                        )
+                    final_values = {"messages": all_messages}
+            else:
+                logger.warning(
+                    "Checkpointer returned no state for thread %s; "
+                    "falling back to current run messages",
+                    thread_id,
+                )
+                if final_ai_message_dict:
+                    all_messages.append(final_ai_message_dict)
+                elif accumulated_content and current_ai_message_id:
+                    all_messages.append(
+                        create_ai_message(
+                            accumulated_content,
+                            current_ai_message_id,
+                            finish_reason="stop",
+                            model_provider="openai",
+                        )
+                    )
+                final_values = {"messages": all_messages}
+        except Exception as state_read_error:
+            logger.warning(
+                "Failed to read accumulated state from checkpointer for "
+                "thread %s: %s — falling back to current run messages",
+                thread_id,
+                state_read_error,
             )
-            all_messages.append(final_ai_message_dict)
+            if final_ai_message_dict:
+                all_messages.append(final_ai_message_dict)
+            elif accumulated_content and current_ai_message_id:
+                all_messages.append(
+                    create_ai_message(
+                        accumulated_content,
+                        current_ai_message_id,
+                        finish_reason="stop",
+                        model_provider="openai",
+                    )
+                )
+            final_values = {"messages": all_messages}
 
-        final_values = {"messages": all_messages}
         yield format_values_event(final_values)
 
     # Store the final state in the thread (outside the checkpointer/store
     # context — uses PostgresStorage which has its own connections).
-    await storage.threads.add_state_snapshot(thread_id, final_values, owner_id)
-    await storage.threads.update(thread_id, {"values": final_values}, owner_id)
+    try:
+        await storage.threads.add_state_snapshot(
+            thread_id, {"values": final_values}, owner_id
+        )
+        await storage.threads.update(thread_id, {"values": final_values}, owner_id)
+    except Exception as persist_error:
+        logger.warning(
+            "Failed to persist thread state for thread %s: %s",
+            thread_id,
+            persist_error,
+        )

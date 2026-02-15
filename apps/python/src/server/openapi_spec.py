@@ -5,12 +5,17 @@ the quality of the original FastAPI LangGraph runtime's documentation.
 
 Robyn's built-in OpenAPI generator doesn't auto-infer schemas from Pydantic
 models like FastAPI does, so we define the spec explicitly here.
+
+Version is read from ``pyproject.toml`` via the server package's
+``__version__`` — that file is the **single source of truth**.
 """
 
 from typing import Any
 
-# API version and metadata
-API_VERSION = "0.1.0"
+from server import __version__
+
+# API version and metadata — derived from pyproject.toml, never hardcoded
+API_VERSION = __version__
 API_TITLE = "OAP LangGraph Runtime"
 API_DESCRIPTION = """
 Robyn-based LangGraph-compatible runtime for Open Agent Platform.

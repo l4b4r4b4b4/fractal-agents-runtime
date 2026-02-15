@@ -1,5 +1,5 @@
 /**
- * Tests for the system endpoints — Fractal Agents Runtime TypeScript/Bun (v0.0.1).
+ * Tests for the system endpoints — Fractal Agents Runtime TypeScript/Bun (v0.0.2).
  *
  * Validates that every system route returns the exact response shape
  * defined in the Python runtime's OpenAPI spec:
@@ -68,10 +68,10 @@ describe("GET /", () => {
     expect(body.runtime).toBe("bun");
   });
 
-  test("version is 0.0.1", async () => {
+  test("version is 0.0.2", async () => {
     const response = await router.handle(makeRequest("/"));
     const body = await jsonBody(response);
-    expect(body.version).toBe("0.0.1");
+    expect(body.version).toBe("0.0.2");
   });
 
   test("trailing slash is normalized", async () => {
@@ -174,7 +174,7 @@ describe("GET /info", () => {
 
     expect(body.service).toBe("fractal-agents-runtime-ts");
     expect(body.runtime).toBe("bun");
-    expect(body.version).toBe("0.0.1");
+    expect(body.version).toBe("0.0.2");
   });
 
   // --- build ---
@@ -216,17 +216,17 @@ describe("GET /info", () => {
     expect(typeof capabilities.metrics).toBe("boolean");
   });
 
-  test("v0.0.1 capabilities: streaming=true, all others false", async () => {
+  test("v0.0.3 capabilities: streaming=true, store=true, crons=true, metrics=true, a2a=true, mcp=false", async () => {
     const response = await router.handle(makeRequest("/info"));
     const body = await jsonBody(response);
     const capabilities = body.capabilities as Record<string, boolean>;
 
     expect(capabilities.streaming).toBeTrue();
-    expect(capabilities.store).toBeFalse();
-    expect(capabilities.crons).toBeFalse();
-    expect(capabilities.a2a).toBeFalse();
+    expect(capabilities.store).toBeTrue();
+    expect(capabilities.crons).toBeTrue();
+    expect(capabilities.metrics).toBeTrue();
+    expect(capabilities.a2a).toBeTrue();
     expect(capabilities.mcp).toBeFalse();
-    expect(capabilities.metrics).toBeFalse();
   });
 
   // --- graphs ---
@@ -242,7 +242,7 @@ describe("GET /info", () => {
     }
   });
 
-  test("graphs contains agent in v0.0.1", async () => {
+  test("graphs contains agent", async () => {
     const response = await router.handle(makeRequest("/info"));
     const body = await jsonBody(response);
     const graphs = body.graphs as string[];
@@ -252,21 +252,30 @@ describe("GET /info", () => {
 
   // --- config ---
 
-  test("config object has supabase_configured and llm_configured booleans", async () => {
+  test("config object has supabase_configured, database_configured, and llm_configured booleans", async () => {
     const response = await router.handle(makeRequest("/info"));
     const body = await jsonBody(response);
     const configStatus = body.config as Record<string, boolean>;
 
     expect(typeof configStatus.supabase_configured).toBe("boolean");
+    expect(typeof configStatus.database_configured).toBe("boolean");
     expect(typeof configStatus.llm_configured).toBe("boolean");
   });
 
-  test("supabase_configured is false in v0.0.1 (no auth)", async () => {
+  test("supabase_configured is false when SUPABASE_URL not set", async () => {
     const response = await router.handle(makeRequest("/info"));
     const body = await jsonBody(response);
     const configStatus = body.config as Record<string, boolean>;
 
     expect(configStatus.supabase_configured).toBeFalse();
+  });
+
+  test("database_configured is false when DATABASE_URL not set", async () => {
+    const response = await router.handle(makeRequest("/info"));
+    const body = await jsonBody(response);
+    const configStatus = body.config as Record<string, boolean>;
+
+    expect(configStatus.database_configured).toBeFalse();
   });
 
   // --- tiers ---
@@ -281,13 +290,13 @@ describe("GET /info", () => {
     expect(typeof tiers.tier3).toBe("string");
   });
 
-  test("v0.0.1 tiers: tier1=true (core API), tier2=false, tier3=not_started", async () => {
+  test("v0.0.2 tiers: tier1=true, tier2=true (auth+persistence+store), tier3=not_started", async () => {
     const response = await router.handle(makeRequest("/info"));
     const body = await jsonBody(response);
     const tiers = body.tiers as { tier1: boolean; tier2: boolean; tier3: string };
 
     expect(tiers.tier1).toBeTrue();
-    expect(tiers.tier2).toBeFalse();
+    expect(tiers.tier2).toBeTrue();
     expect(tiers.tier3).toBe("not_started");
   });
 });
@@ -320,7 +329,7 @@ describe("GET /openapi.json", () => {
     const info = body.info as Record<string, string>;
 
     expect(info.title).toContain("Fractal Agents Runtime");
-    expect(info.version).toBe("0.0.1");
+    expect(info.version).toBe("0.0.2");
   });
 
   test("spec contains system endpoint paths", async () => {

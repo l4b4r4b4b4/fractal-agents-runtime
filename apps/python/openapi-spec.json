@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OAP LangGraph Runtime",
-    "version": "0.1.0",
+    "version": "0.0.2",
     "description": "\nRobyn-based LangGraph-compatible runtime for Open Agent Platform.\n\nThis API provides endpoints for managing assistants, threads, runs, and the store.\nIt implements the LangGraph API specification for compatibility with LangGraph clients.\n"
   },
   "tags": [
