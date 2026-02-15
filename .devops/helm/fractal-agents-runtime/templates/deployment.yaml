@@ -202,19 +202,8 @@ spec:
         {{- end }}
 
         # ──────────────────────────────────────────────
-        # Python-specific env vars (runtime == "python")
+        # Database (shared — both runtimes support Postgres)
         # ──────────────────────────────────────────────
-        {{- if eq .Values.runtime "python" }}
-        - name: ROBYN_HOST
-          value: {{ .Values.python.host | quote }}
-        - name: ROBYN_PORT
-          value: {{ .Values.python.port | quote }}
-        - name: ROBYN_WORKERS
-          value: {{ .Values.python.workers | quote }}
-        - name: ROBYN_DEV
-          value: {{ .Values.python.devMode | quote }}
-
-        # Database (CRITICAL — was missing in old chart)
         {{- if .Values.existingSecret.name }}
         {{- if .Values.existingSecret.keys.databaseUrl }}
         - name: DATABASE_URL
@@ -229,26 +218,45 @@ spec:
             secretKeyRef:
               name: {{ include "fractal-agents-runtime.secretName" . }}
               key: database-url
-        {{- else if .Values.python.database.url }}
+        {{- else if .Values.config.database.url }}
         - name: DATABASE_URL
-          value: {{ .Values.python.database.url | quote }}
+          value: {{ .Values.config.database.url | quote }}
         {{- end }}
-        {{- if .Values.python.database.poolMinSize }}
+        {{- if .Values.config.database.poolMinSize }}
         - name: DATABASE_POOL_MIN_SIZE
-          value: {{ .Values.python.database.poolMinSize | quote }}
+          value: {{ .Values.config.database.poolMinSize | quote }}
         {{- end }}
-        {{- if .Values.python.database.poolMaxSize }}
+        {{- if .Values.config.database.poolMaxSize }}
         - name: DATABASE_POOL_MAX_SIZE
-          value: {{ .Values.python.database.poolMaxSize | quote }}
+          value: {{ .Values.config.database.poolMaxSize | quote }}
         {{- end }}
-        {{- if .Values.python.database.poolTimeout }}
+        {{- if .Values.config.database.poolTimeout }}
         - name: DATABASE_POOL_TIMEOUT
-          value: {{ .Values.python.database.poolTimeout | quote }}
+          value: {{ .Values.config.database.poolTimeout | quote }}
         {{- end }}
 
-        # Agent sync (CRITICAL — was missing in old chart)
+        # Agent sync (shared — both runtimes support startup sync)
         - name: AGENT_SYNC_SCOPE
-          value: {{ .Values.python.agentSync.scope | quote }}
+          value: {{ .Values.config.agentSync.scope | quote }}
+
+        # Langfuse prompt cache TTL (shared)
+        {{- if .Values.config.tracing.langfusePromptCacheTtlSeconds }}
+        - name: LANGFUSE_PROMPT_CACHE_TTL_SECONDS
+          value: {{ .Values.config.tracing.langfusePromptCacheTtlSeconds | quote }}
+        {{- end }}
+
+        # ──────────────────────────────────────────────
+        # Python-specific env vars (runtime == "python")
+        # ──────────────────────────────────────────────
+        {{- if eq .Values.runtime "python" }}
+        - name: ROBYN_HOST
+          value: {{ .Values.python.host | quote }}
+        - name: ROBYN_PORT
+          value: {{ .Values.python.port | quote }}
+        - name: ROBYN_WORKERS
+          value: {{ .Values.python.workers | quote }}
+        - name: ROBYN_DEV
+          value: {{ .Values.python.devMode | quote }}
         {{- end }}
 
         # ──────────────────────────────────────────────

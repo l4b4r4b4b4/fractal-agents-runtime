@@ -37,8 +37,8 @@ The runtime value controls:
 
 - **Image selection** — auto-selected when `image.repository` is empty
 - **Container port** — derived from `python.port` or `typescript.port`
-- **Environment variables** — Python-specific (`ROBYN_*`, `DATABASE_URL`, `AGENT_SYNC_SCOPE`) and TS-specific (`PORT`, `NODE_ENV`) are conditionally rendered
-- **Network policy** — Postgres egress (port 5432) is enabled only for Python
+- **Environment variables** — Shared vars (`DATABASE_URL`, `AGENT_SYNC_SCOPE`, tracing) rendered for both runtimes; Python-specific (`ROBYN_*`) and TS-specific (`PORT`, `NODE_ENV`) are conditionally rendered
+- **Network policy** — Postgres egress (port 5432) is enabled for both runtimes when database is configured
 
 ## Values Files
 
@@ -124,6 +124,12 @@ secrets:
 | `LANGCHAIN_API_KEY` | `existingSecret` | LangSmith API key |
 | `LANGCHAIN_TRACING_V2` | `config.tracing.langchainTracingV2` | Enable LangSmith tracing |
 | `LANGCHAIN_PROJECT` | `config.tracing.langchainProject` | LangSmith project name |
+| `DATABASE_URL` | `existingSecret` / `config.database.url` | Postgres connection string |
+| `DATABASE_POOL_MIN_SIZE` | `config.database.poolMinSize` | Connection pool minimum |
+| `DATABASE_POOL_MAX_SIZE` | `config.database.poolMaxSize` | Connection pool maximum |
+| `DATABASE_POOL_TIMEOUT` | `config.database.poolTimeout` | Pool acquire timeout (seconds) |
+| `AGENT_SYNC_SCOPE` | `config.agentSync.scope` | Startup agent sync scope |
+| `LANGFUSE_PROMPT_CACHE_TTL_SECONDS` | `config.tracing.langfusePromptCacheTtlSeconds` | Prompt template cache TTL |
 
 ### Python Only (`runtime: python`)
 
@@ -133,11 +139,6 @@ secrets:
 | `ROBYN_PORT` | `python.port` | Listen port |
 | `ROBYN_WORKERS` | `python.workers` | Worker process count |
 | `ROBYN_DEV` | `python.devMode` | Dev mode (hot reload) |
-| `DATABASE_URL` | `existingSecret` | Postgres connection string |
-| `DATABASE_POOL_MIN_SIZE` | `python.database.poolMinSize` | Connection pool minimum |
-| `DATABASE_POOL_MAX_SIZE` | `python.database.poolMaxSize` | Connection pool maximum |
-| `DATABASE_POOL_TIMEOUT` | `python.database.poolTimeout` | Pool acquire timeout (seconds) |
-| `AGENT_SYNC_SCOPE` | `python.agentSync.scope` | Startup agent sync scope |
 
 ### TypeScript Only (`runtime: ts`)
 
@@ -181,9 +182,10 @@ Both runtimes serve:
 - `GET /info` — Service information
 - `GET /openapi.json` — OpenAPI 3.1 spec
 
-Python additionally serves:
+Both runtimes additionally serve:
 
 - `GET /metrics` — Prometheus exposition format
+- `GET /metrics/json` — JSON metrics format
 
 ## Image Build
 
@@ -199,7 +201,7 @@ docker build -f .devops/docker/ts.Dockerfile . \
   -t ghcr.io/l4b4r4b4b4/fractal-agents-runtime-ts:latest
 ```
 
-Image tags produced by CI: `sha-<short>`, `development`, `nightly`, `v0.0.1`.
+Image tags produced by CI: `sha-<short>`, `development`, `nightly`, `v<version>` (e.g. `v0.0.3`).
 
 ## Migrating from Old Chart
 
@@ -217,11 +219,13 @@ The old chart at `apps/python/src/server/helm/robyn-runtime/` has been removed. 
 
 New environment variables added (were missing in old chart):
 
-- `DATABASE_URL` — Postgres persistence
+- `DATABASE_URL` — Postgres persistence (shared, both runtimes)
+- `DATABASE_POOL_MIN_SIZE` / `MAX_SIZE` / `TIMEOUT` — Pool tuning (shared)
 - `SUPABASE_JWT_SECRET` — JWT verification
-- `AGENT_SYNC_SCOPE` — Agent sync on startup
+- `AGENT_SYNC_SCOPE` — Agent sync on startup (shared, both runtimes)
 - `LANGFUSE_SECRET_KEY` — Langfuse tracing
 - `LANGFUSE_PUBLIC_KEY` — Langfuse tracing
+- `LANGFUSE_PROMPT_CACHE_TTL_SECONDS` — Prompt template cache TTL
 - `ANTHROPIC_API_KEY` — Anthropic LLM provider
 
 New secret keys in `existingSecret.keys`:
