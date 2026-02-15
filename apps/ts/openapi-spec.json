@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Fractal Agents Runtime — TypeScript",
-    "version": "0.0.2",
-    "description": "Free, self-hostable LangGraph-compatible agent runtime. TypeScript/Bun implementation — v0.0.2 with auth, persistence, store API, multi-provider LLM, and SSE streaming.",
+    "version": "0.0.3",
+    "description": "Free, self-hostable LangGraph-compatible agent runtime. TypeScript/Bun implementation — v0.0.3 with auth, persistence, store API, multi-provider LLM, and SSE streaming.",
     "license": {
       "name": "MIT",
       "url": "https://opensource.org/licenses/MIT"

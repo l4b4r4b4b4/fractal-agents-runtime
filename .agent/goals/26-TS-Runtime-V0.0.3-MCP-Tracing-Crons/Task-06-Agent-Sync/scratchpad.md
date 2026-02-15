@@ -443,9 +443,90 @@ Do NOT commit yet — finish remaining features first.
 ### Test Suite Status (Session 33)
 - **1923 tests, 0 failures, 3648 assertions, 28 files** (up from 1785/3392/27)
 
-### What Remains
+### What Remains (after Session 33)
 - [ ] Mock LLM server (~50-line Bun app, configurable delay + streaming)
 - [ ] k6 benchmark scripts (full agent flow: create assistant → thread → run → stream)
 - [ ] Tier 1: Mock LLM benchmark (Python vs TS runtime overhead)
 - [ ] Docker build + live test
 - [ ] Version bump to 0.0.3, CHANGELOG, push
+
+## What Was Done (Session 34)
+
+### Mock LLM Server — COMPLETE
+- [x] Created `benchmarks/mock-llm/server.ts` (~350 lines):
+  - Fake OpenAI `/v1/chat/completions` endpoint (streaming + non-streaming)
+  - Configurable via env vars: `MOCK_LLM_PORT` (11434), `MOCK_LLM_DELAY_MS` (10), `MOCK_LLM_STREAM_DELAY_MS` (5)
+  - Word-level token splitting for realistic SSE streaming
+  - `/v1/models` endpoint (needed by LangChain provider init)
+  - `/stats` endpoint (request count, token totals, uptime, config)
+  - `/health` endpoint
+  - Verified working: both streaming and non-streaming responses correct
+
+### k6 Benchmark Scripts — COMPLETE
+- [x] Created `benchmarks/k6/agent-flow.js` (~450 lines):
+  - Full agent lifecycle: create assistant → thread → run/wait → run/stream → get state → cleanup
+  - Smoke test mode (`-e SMOKE=1`) for quick verification
+  - Ramp-up scenario: 1→5→10 VUs over 90s with per-operation thresholds
+  - Custom metrics: `agent_flow_duration`, `agent_flow_success_rate`, per-operation counters
+  - Configurable via env vars: `RUNTIME_URL`, `RUNTIME_NAME`, `AUTH_TOKEN`, `GRAPH_ID`, `MODEL_NAME`
+  - Model name must use provider prefix: `openai:mock-gpt-4o` (not bare `mock-gpt-4o`)
+- [x] Created `benchmarks/README.md` (~220 lines):
+  - Architecture overview, prerequisites, quick start
+  - Mock LLM configuration table, zero-delay mode
+  - k6 scenario details, thresholds, environment variables
+  - Result interpretation guide (what Tier 1 measures vs does not measure)
+
+### k6 Smoke Test — PASSED ✅
+- Ran against TS runtime (port 13003) + mock LLM (port 11434)
+- **100% pass rate**: 10/10 checks passed, 0 HTTP failures
+- **Agent flow duration**: 144ms (full create→run→stream→cleanup cycle)
+- **HTTP req duration**: avg 16ms, p95 76ms
+- Model name discovery: `mock-gpt-4o` fails (LangChain can't infer provider); must use `openai:mock-gpt-4o`
+- Non-critical log noise: `"Subgraph with namespace 'assistant' not found"` — in-memory checkpointer doesn't track namespaces, but execution works fine
+
+### Full Load Test — DEFERRED
+- Started ramp-up scenario (1→5→10 VUs over 90s)
+- ~20 iterations completed successfully at 3 VUs before user stopped (needs resources freed from another stack)
+- All iterations that ran were 100% successful — no failures observed
+- Will run full Tier 1 comparison (TS vs Python) when dev stack resources are available
+
+### Docker Build — COMPLETE ✅
+- [x] TS Dockerfile (`.devops/docker/ts.Dockerfile`) builds successfully → `fractal-agents-runtime-ts:v0.0.3-test`
+- [x] Python Dockerfile (`.devops/docker/python.Dockerfile`) builds successfully → `fractal-agents-runtime-python:v0.0.3-test`
+- [x] TS container live test: health check ✅, info endpoint ✅, version 0.0.3 ✅, both graphs registered (`agent`, `research_agent`)
+- [x] Python container builds but needs dev stack resources for live test (Robyn startup OK in logs)
+- Dockerfiles already existed from v0.0.1; no changes needed — multi-stage, non-root user, health checks all in place
+
+### Version Bump to 0.0.3 — COMPLETE ✅
+- [x] Bumped `apps/ts/package.json` version from `0.0.2` to `0.0.3`
+- [x] Updated `apps/ts/openapi-spec.json` version and description from `0.0.2` to `0.0.3`
+- [x] Written comprehensive CHANGELOG entry for v0.0.3 (117 lines covering all features)
+
+### Version Single Source of Truth Fix — COMPLETE ✅
+- [x] `apps/ts/tests/index.test.ts` — Replaced 3 hardcoded `"0.0.2"` assertions with `VERSION` import from `config.ts`
+  - `test("version is ${VERSION}", ...)` — dynamic test name
+  - `/info` version check uses `VERSION`
+  - `/openapi.json` spec version check uses `VERSION`
+- [x] `apps/ts/src/mcp/handlers.ts` — Replaced hardcoded `"0.0.3"` in `SERVER_INFO.version` with `VERSION` import
+- [x] Version chain is now: `package.json` → `config.ts:VERSION` → all consumers (routes, tests, OpenAPI, MCP)
+- [x] No more hardcoded version strings anywhere in `apps/ts/src/` or `apps/ts/tests/`
+
+### Test Suite Status (Session 34)
+- **1923 tests, 0 failures, 3648 assertions, 28 files** (unchanged count, 3 version tests fixed)
+
+### What Remains
+- [ ] Full Tier 1 load test (TS vs Python comparison) — blocked on dev stack resources
+- [ ] Commit all changes and push to branch
+- [ ] Tag `ts-v0.0.3` release
+
+### Files Created
+- `benchmarks/mock-llm/server.ts` — Mock OpenAI API server
+- `benchmarks/k6/agent-flow.js` — k6 full agent flow benchmark
+- `benchmarks/README.md` — Benchmark documentation
+
+### Files Modified
+- `apps/ts/package.json` — version `0.0.2` → `0.0.3`
+- `apps/ts/CHANGELOG.md` — added v0.0.3 entry (117 lines)
+- `apps/ts/openapi-spec.json` — version + description `0.0.2` → `0.0.3`
+- `apps/ts/tests/index.test.ts` — version assertions use `VERSION` import (SSoT)
+- `apps/ts/src/mcp/handlers.ts` — `SERVER_INFO.version` uses `VERSION` import (SSoT)

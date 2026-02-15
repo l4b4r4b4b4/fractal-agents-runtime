@@ -6,6 +6,123 @@ documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.3] — 2026-02-15
+
+Third release. Adds agent sync from Supabase, Prometheus metrics, Langfuse
+prompt templates, RAG tool integration, A2A protocol endpoint, research agent
+graph, multi-agent checkpoint namespace isolation, and benchmark infrastructure.
+Full feature parity with the Python runtime for v0.0.3 scope.
+
+### Added
+
+#### Agent Sync from Supabase (109 tests)
+- `src/agent-sync/types.ts` — `AgentSyncMcpTool`, `AgentSyncData`, `AgentSyncScope`,
+  `AgentSyncResult` types and factory functions.
+- `src/agent-sync/scope.ts` — `parseAgentSyncScope()` with UUID validation for
+  `none`, `all`, `org:<uuid>`, and multi-org scopes.
+- `src/agent-sync/queries.ts` — SQL builders, `coerceUuid`, `toBoolOrNull`,
+  `agentFromRow`, `groupAgentRows`, `fetchActiveAgents`, `fetchActiveAgentById`.
+- `src/agent-sync/config-mapping.ts` — `buildAssistantConfigurable`,
+  `assistantPayloadForAgent`, `extractAssistantConfigurable`, `safeMaskUrl`.
+- `src/agent-sync/sync.ts` — `syncSingleAgent`, `startupAgentSync`,
+  `lazySyncAgent`, `writeBackLanggraphAssistantId`.
+- Startup sync runs after storage init when `AGENT_SYNC_SCOPE` is set.
+- Lazy sync on assistant GET when `supabase_agent_id` is in metadata.
+
+#### Prometheus Metrics (56 tests)
+- `src/infra/metrics.ts` — Full metrics collector: counters (requests, errors),
+  gauges (active streams, agent invocations/errors), duration summary
+  (p50/p90/p99), storage counts callback, Prometheus exposition format, JSON format.
+- `src/routes/metrics.ts` — `GET /metrics` (Prometheus), `GET /metrics/json` (JSON).
+- Automatic request counting and duration recording in `Router.handle()`.
+
+#### Langfuse Prompt Templates (77 tests)
+- `src/infra/prompts.ts` — `getPrompt` (sync), `getPromptAsync`,
+  `registerDefaultPrompt`, `seedDefaultPrompts`, `substituteVariablesText`,
+  `substituteVariablesChat`, `extractOverrides`, variable pattern matching,
+  cache TTL from `LANGFUSE_PROMPT_CACHE_TTL_SECONDS` env var.
+- Supports text and chat prompt types with variable substitution.
+- Graceful fallback to defaults when Langfuse is unavailable.
+
+#### RAG Tool Integration (52 tests)
+- `src/graphs/react-agent/utils/rag-tools.ts` — `sanitizeToolName`,
+  `buildToolDescription`, `formatDocuments`, `parseRagConfig`, `createRagTool`,
+  `createRagTools`.
+- `RagConfig` type and `rag` field added to `GraphConfigValues`.
+- RAG tools created before MCP tools in agent factory; integrated with
+  Supabase auth token for authenticated collection access.
+- XML-like `<all-documents>` formatting matching Python runtime.
+
+#### A2A Protocol Endpoint (111 tests)
+- `src/a2a/schemas.ts` — JSON-RPC 2.0 types, A2A message/task/artifact types,
+  error codes, parse/validation helpers.
+- `src/a2a/handlers.ts` — `A2AMethodHandler` class with `message/send`,
+  `tasks/get`, `tasks/cancel` method routing.
+- `src/routes/a2a.ts` — `POST /a2a/:assistantId` with JSON-RPC validation,
+  SSE stub for `message/stream`.
+- Injectable `A2AStorage` interface for testability.
+
+#### Research Agent Graph (138 tests)
+- `src/graphs/research-agent/configuration.ts` — `ResearchAgentConfig` with
+  all fields matching Python's Pydantic model, snake_case/camelCase parsing.
+- `src/graphs/research-agent/prompts.ts` — All 6 Langfuse prompt names
+  identical to Python: `research-agent-analyzer-phase1/phase2`,
+  `research-agent-worker-phase1/phase2`, `research-agent-aggregator-phase1/phase2`.
+- `src/graphs/research-agent/worker.ts` — `extractWorkerOutput()` with lenient
+  JSON extraction from ReAct agent output (code blocks, bare JSON, plain-text fallback).
+- `src/graphs/research-agent/agent.ts` — Two-phase `StateGraph` with parallel
+  fan-out via `Send`, HIL via `interrupt()` and `Command`, auto-approve flags,
+  prompt resolution with Langfuse lookup + variable substitution + fallback.
+- Registered as `graph_id = "research_agent"` in graph registry.
+- Exact prompt and config parity with Python runtime.
+
+#### Multi-Agent Checkpoint Namespace Isolation
+- `checkpoint_ns = "assistant:<assistant_id>"` in both TS and Python runtimes.
+- Prevents state collisions when multiple agents run in the same chat thread.
+- Applied in `buildRunnableConfig()` (runs), `buildMcpRunnableConfig()` (MCP),
+  and SSE metadata (`langgraph_checkpoint_ns`).
+- Architecture document: `docs/MULTI_AGENT_CHECKPOINT_ARCHITECTURE.md`.
+
+#### Benchmark Infrastructure
+- `benchmarks/mock-llm/server.ts` — Mock OpenAI `/v1/chat/completions` server
+  with configurable delay and streaming (Bun, ~350 lines).
+- `benchmarks/k6/agent-flow.js` — Full agent lifecycle benchmark: create
+  assistant → thread → run/wait → run/stream → get state → cleanup.
+- Ramp-up scenario (1→5→10 VUs over 90s) with per-operation thresholds.
+- Smoke test mode (`-e SMOKE=1`) for quick verification.
+- `benchmarks/README.md` — Setup instructions and result interpretation guide.
+
+### Changed
+
+- `src/router.ts` — Request metrics (count, duration, errors) recorded
+  automatically on every request.
+- `src/config.ts` — Added `agentSyncScope` config field, updated capabilities
+  to `metrics: true`, `a2a: true`.
+- `src/index.ts` — Wired agent sync, metrics routes, A2A routes, storage
+  counts callback, cron scheduler startup.
+- `src/graphs/react-agent/configuration.ts` — Added `rag` field to
+  `GraphConfigValues` (field count 8→9).
+- `src/graphs/react-agent/agent.ts` — Supabase token extracted once and shared
+  between RAG and MCP tool creation.
+- `src/graphs/registry.ts` — Added `research_agent` graph registration.
+
+### Technical Details
+- **Runtime:** Bun 1.3.9
+- **New Dependencies:** `@langfuse/core`, `@langfuse/langchain`, `cron-parser`, `zod`
+- **Tests:** 1923 passing, 0 failures, 3648 assertions, 28 files
+- **Routes:** 47 registered
+- **Graphs:** 2 (`agent`, `research_agent`)
+
+### Environment Variables Added
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `AGENT_SYNC_SCOPE` | No | Agent sync scope (`none`, `all`, `org:<uuid>`) |
+| `LANGFUSE_SECRET_KEY` | No | Langfuse secret key (enables tracing) |
+| `LANGFUSE_PUBLIC_KEY` | No | Langfuse public key (enables tracing) |
+| `LANGFUSE_BASE_URL` | No | Langfuse server URL (default: cloud) |
+| `LANGFUSE_PROMPT_CACHE_TTL_SECONDS` | No | Prompt cache TTL (default: 300) |
+
 ## [0.0.2] — 2026-02-14
 
 Second release. Adds Supabase JWT authentication, Postgres persistence,
@@ -204,5 +321,6 @@ for assistants, threads, stateful/stateless runs, and SSE streaming.
 - **Tests:** 716 passing, 0 failures, 0 TypeScript errors
 - **Routes:** 31 registered (25 unique paths, 31 operations)
 
+[0.0.3]: https://github.com/l4b4r4b4b4/fractal-agents-runtime/releases/tag/ts-v0.0.3
 [0.0.2]: https://github.com/l4b4r4b4b4/fractal-agents-runtime/releases/tag/ts-v0.0.2
 [0.0.1]: https://github.com/l4b4r4b4b4/fractal-agents-runtime/releases/tag/ts-v0.0.1

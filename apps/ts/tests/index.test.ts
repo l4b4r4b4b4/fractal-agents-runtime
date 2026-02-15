@@ -1,5 +1,5 @@
 /**
- * Tests for the system endpoints — Fractal Agents Runtime TypeScript/Bun (v0.0.2).
+ * Tests for the system endpoints — Fractal Agents Runtime TypeScript/Bun.
  *
  * Validates that every system route returns the exact response shape
  * defined in the Python runtime's OpenAPI spec:
@@ -17,6 +17,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { router } from "../src/index";
+import { VERSION } from "../src/config";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -68,10 +69,10 @@ describe("GET /", () => {
     expect(body.runtime).toBe("bun");
   });
 
-  test("version is 0.0.2", async () => {
+  test(`version is ${VERSION}`, async () => {
     const response = await router.handle(makeRequest("/"));
     const body = await jsonBody(response);
-    expect(body.version).toBe("0.0.2");
+    expect(body.version).toBe(VERSION);
   });
 
   test("trailing slash is normalized", async () => {
@@ -174,7 +175,7 @@ describe("GET /info", () => {
 
     expect(body.service).toBe("fractal-agents-runtime-ts");
     expect(body.runtime).toBe("bun");
-    expect(body.version).toBe("0.0.2");
+    expect(body.version).toBe(VERSION);
   });
 
   // --- build ---
@@ -329,7 +330,7 @@ describe("GET /openapi.json", () => {
     const info = body.info as Record<string, string>;
 
     expect(info.title).toContain("Fractal Agents Runtime");
-    expect(info.version).toBe("0.0.2");
+    expect(info.version).toBe(VERSION);
   });
 
   test("spec contains system endpoint paths", async () => {

@@ -18,6 +18,9 @@
  *   - `ping` — Health check (returns empty object)
  *
  * MCP Specification: https://modelcontextprotocol.io/
+ *
+ * NOTE: SERVER_INFO.version is derived from package.json via config.ts
+ * (single source of truth — never hardcode version strings).
  */
 
 import type {
@@ -39,6 +42,7 @@ import {
 } from "./schemas";
 import { executeAgentRun, getAgentToolInfo } from "./agent";
 import type { AgentToolInfo } from "./agent";
+import { VERSION } from "../config";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -56,7 +60,7 @@ const PROTOCOL_VERSION = "2025-03-26";
  */
 const SERVER_INFO: McpServerInfo = {
   name: "fractal-agents-runtime",
-  version: "0.0.3",
+  version: VERSION,
 };
 
 /**
