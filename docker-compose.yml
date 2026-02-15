@@ -14,14 +14,14 @@
 #        docker compose up python-runtime ts-runtime  # Both
 #
 #   4. Test endpoints:
-#        # Python runtime (port 8081)
-#        curl http://localhost:8081/health
-#        curl http://localhost:8081/info
-#        curl http://localhost:8081/openapi.json
+#        # Python runtime (port 9091)
+#        curl http://localhost:9091/health
+#        curl http://localhost:9091/info
+#        curl http://localhost:9091/openapi.json
 #
-#        # TypeScript runtime (port 8082)
-#        curl http://localhost:8082/health
-#        curl http://localhost:8082/info
+#        # TypeScript runtime (port 9092)
+#        curl http://localhost:9092/health
+#        curl http://localhost:9092/info
 #
 # Requires:
 #   - Supabase running on supabase_network_immoflow-platform
@@ -40,7 +40,7 @@ networks:
 
 services:
   # ===========================================================================
-  # Fractal Agents Runtime — Python/Robyn (port 8081)
+  # Fractal Agents Runtime — Python/Robyn (internal 8081, external 9091)
   # ===========================================================================
   python-runtime:
     build:
@@ -52,7 +52,7 @@ services:
         soft: 65535
         hard: 65535
     ports:
-      - "8081:8081"
+      - "9091:8081"
     env_file: apps/python/.env
     environment:
       - ROBYN_HOST=0.0.0.0
@@ -70,7 +70,7 @@ services:
       start_period: 10s
 
   # ===========================================================================
-  # Fractal Agents Runtime — TypeScript/Bun (port 3000)
+  # Fractal Agents Runtime — TypeScript/Bun (internal 3000, external 9092)
   # ===========================================================================
   ts-runtime:
     build:
@@ -78,10 +78,10 @@ services:
       dockerfile: .devops/docker/ts.Dockerfile
     image: fractal-agents-runtime-ts:local-dev
     ports:
-      - "8082:8082"
+      - "9092:3000"
     env_file: .env
     environment:
-      - PORT=8082
+      - PORT=3000
     networks:
       - default
       - supabase
@@ -92,7 +92,7 @@ services:
           "CMD",
           "bun",
           "-e",
-          "fetch('http://localhost:8082/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))",
+          "fetch('http://localhost:3000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))",
         ]
       interval: 15s
       timeout: 5s
