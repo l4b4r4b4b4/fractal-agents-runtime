@@ -25,6 +25,8 @@
 #
 # Requires:
 #   - Supabase running on supabase_network_immoflow-platform
+#   - Langfuse stack running (docker compose -f docker-compose.langfuse.yml up -d)
+#     OR create the network manually: docker network create langfuse_network
 #   - .env file with at minimum: OPENAI_API_KEY (or ANTHROPIC_API_KEY)
 #
 # The embeddings, rerankings, and ministral services are optional and
@@ -37,6 +39,9 @@ networks:
   supabase:
     external: true
     name: supabase_network_immoflow-platform
+  langfuse:
+    external: true
+    name: langfuse_network
 
 services:
   # ===========================================================================
@@ -53,7 +58,7 @@ services:
         hard: 65535
     ports:
       - "9091:8081"
-    env_file: apps/python/.env
+    env_file: .env
     environment:
       - ROBYN_HOST=0.0.0.0
       - ROBYN_PORT=8081
@@ -61,6 +66,7 @@ services:
     networks:
       - default
       - supabase
+      - langfuse
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-4", "-f", "http://localhost:8081/health"]
@@ -85,6 +91,7 @@ services:
     networks:
       - default
       - supabase
+      - langfuse
     restart: unless-stopped
     healthcheck:
       test:
@@ -98,6 +105,17 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # ===========================================================================
+  # Langfuse v3 — see docker-compose.langfuse.yml (separate stack)
+  # ===========================================================================
+  #
+  # Start Langfuse independently, then runtimes reach it via langfuse_network:
+  #   docker compose -f docker-compose.langfuse.yml up -d
+  #   UI: http://localhost:3003  |  Login: admin@fractal.local / FractalAdmin123!
+  #
+  # Runtimes resolve langfuse-web:3000 over the shared langfuse_network.
+  # Set LANGFUSE_BASE_URL=http://langfuse-web:3000 in runtime env files.
 
   # ===========================================================================
   # Optional infrastructure services (disabled by default)
@@ -278,11 +296,11 @@ services:
         "--tool-call-parser",
         "mistral",
         "--gpu-memory-utilization",
-        "0.75",
+        "0.875",
         "--seed",
         "4272",
         "--max-num-seqs",
-        "1",
+        "9",
         "--trust-remote-code",
       ]
     healthcheck:

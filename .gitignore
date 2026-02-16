@@ -42,3 +42,4 @@ htmlcov/
 
 # === Archive (local only) ===
 archive/
+.agent/antonputra-tutorials/

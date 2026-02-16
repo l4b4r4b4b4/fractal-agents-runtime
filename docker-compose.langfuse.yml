@@ -1,0 +1,227 @@
+# docker-compose.langfuse.yml — Self-contained Langfuse v3 observability stack
+#
+# Usage:
+#   1. Start the Langfuse stack:
+#        docker compose -f docker-compose.langfuse.yml up -d
+#
+#   2. Wait for healthy status (~30-60s on first boot):
+#        docker compose -f docker-compose.langfuse.yml ps
+#
+#   3. Access the Langfuse UI:
+#        http://localhost:3003
+#        Login: admin@fractal.local / FractalAdmin123!
+#
+#   4. Stop the stack:
+#        docker compose -f docker-compose.langfuse.yml down
+#
+#   5. Stop and remove all data:
+#        docker compose -f docker-compose.langfuse.yml down -v
+#
+# Network:
+#   Creates "langfuse_network" which the main docker-compose.yml joins
+#   as an external network (same pattern as Supabase). Runtimes reach
+#   langfuse-web at langfuse-web:3000 over this shared network.
+#
+# Headless Initialization:
+#   On first boot, Langfuse automatically creates:
+#     - Org:     fractal-dev / "Fractal Agents Dev"
+#     - Project: fractal-agents-runtime / "Fractal Agents Runtime"
+#     - User:    admin@fractal.local / FractalAdmin123!
+#     - API Keys: lf_pk_fractal_dev_local / lf_sk_fractal_dev_local
+#
+# Port Map (avoids conflicts with Supabase/runtimes/mock-LLM):
+#   3003  = langfuse-web (UI + API) — only externally exposed port
+#   All other services are internal-only on langfuse_network
+#
+# Reference: https://github.com/langfuse/langfuse/blob/main/docker-compose.yml
+
+networks:
+  default:
+    name: langfuse_network
+
+volumes:
+  langfuse_postgres_data:
+    driver: local
+  langfuse_clickhouse_data:
+    driver: local
+  langfuse_clickhouse_logs:
+    driver: local
+  langfuse_minio_data:
+    driver: local
+
+services:
+  # ===========================================================================
+  # Langfuse Postgres — dedicated database (separate from Supabase)
+  # ===========================================================================
+  langfuse-postgres:
+    image: docker.io/postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse-dev-password
+      POSTGRES_DB: langfuse
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # ===========================================================================
+  # ClickHouse — analytics / trace storage
+  # ===========================================================================
+  langfuse-clickhouse:
+    image: docker.io/clickhouse/clickhouse-server
+    restart: unless-stopped
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse-dev-password
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+
+  # ===========================================================================
+  # Redis — queue / cache for async ingestion
+  # ===========================================================================
+  langfuse-redis:
+    image: docker.io/redis:7
+    restart: unless-stopped
+    command: >
+      --requirepass langfuse-redis-dev-password
+      --maxmemory-policy noeviction
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "langfuse-redis-dev-password", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  # ===========================================================================
+  # MinIO — S3-compatible blob storage for events & media
+  # ===========================================================================
+  langfuse-minio:
+    image: cgr.dev/chainguard/minio
+    restart: unless-stopped
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio-dev-password
+    volumes:
+      - langfuse_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+
+  # ===========================================================================
+  # Langfuse Worker — async ingestion, clickhouse writes
+  # ===========================================================================
+  langfuse-worker:
+    image: docker.io/langfuse/langfuse-worker:3
+    restart: unless-stopped
+    depends_on: &langfuse-depends-on
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+    environment: &langfuse-worker-env # --- Core ---
+      DATABASE_URL: postgresql://langfuse:langfuse-dev-password@langfuse-postgres:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3003
+      SALT: fractal-dev-salt-not-a-secret
+      ENCRYPTION_KEY: 6672616374616c2d6465762d656e63727970742d6b65792d3030303030303031 # hex: "fractal-dev-encrypt-key-00000001"
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+
+      # --- ClickHouse ---
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse-dev-password
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+
+      # --- Redis ---
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: langfuse-redis-dev-password
+      REDIS_TLS_ENABLED: "false"
+
+      # --- S3 / MinIO: event upload ---
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: minio-dev-password
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+
+      # --- S3 / MinIO: media upload (internal-only, browser uploads unsupported) ---
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: minio-dev-password
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+
+      # --- S3 / MinIO: batch export (disabled for local dev) ---
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "false"
+
+      # --- Azure blob (unused) ---
+      LANGFUSE_USE_AZURE_BLOB: "false"
+
+  # ===========================================================================
+  # Langfuse Web — UI + API (port 3003)
+  # ===========================================================================
+  langfuse-web:
+    image: docker.io/langfuse/langfuse:3
+    restart: unless-stopped
+    depends_on: *langfuse-depends-on
+    ports:
+      - "3003:3000"
+    environment:
+      <<: *langfuse-worker-env
+      NEXTAUTH_SECRET: fractal-dev-nextauth-secret
+
+      # --- Headless Initialization (dev-only deterministic values) ---
+      # Do NOT double-quote these values (Langfuse Docker gotcha)
+      # https://langfuse.com/self-hosting/administration/headless-initialization
+      LANGFUSE_INIT_ORG_ID: fractal-dev
+      LANGFUSE_INIT_ORG_NAME: Fractal Agents Dev
+      LANGFUSE_INIT_PROJECT_ID: fractal-agents-runtime
+      LANGFUSE_INIT_PROJECT_NAME: Fractal Agents Runtime
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: lf_pk_fractal_dev_local
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: lf_sk_fractal_dev_local
+      LANGFUSE_INIT_USER_EMAIL: admin@fractal.local
+      LANGFUSE_INIT_USER_NAME: Admin
+      LANGFUSE_INIT_USER_PASSWORD: FractalAdmin123!
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://langfuse-web:3000/api/public/health",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
