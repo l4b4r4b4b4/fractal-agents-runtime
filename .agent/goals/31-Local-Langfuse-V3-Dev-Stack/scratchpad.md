@@ -209,6 +209,65 @@ needs a different approach (composite thread_id or actual LangGraph subgraph wra
 - `benchmarks/results/ts-tier1-ministral.json` (4.0 MB)
 - `benchmarks/results/python-tier1-ministral.json` (5.2 MB)
 
+#### Mock-LLM Benchmarks — Pure Runtime Overhead (Session 38) ✅
+
+**Infrastructure:**
+- Mock LLM server (`benchmarks/mock-llm/server.ts`) added as Docker Compose service
+  - `oven/bun:latest`, port 11434 internal only, no GPU
+  - Disabled by default (`replicas: 0`), enable with `--scale mock-llm=1`
+  - 10ms base delay, 5ms inter-token delay, 67 response tokens
+- Runtimes configured with `OPENAI_BASE_URL=http://mock-llm:11434/v1`
+- Same Supabase auth (bench3@test.local), no Langfuse (network-only)
+
+**Supabase Auth Saturation Discovery:**
+- Initial 10-VU ramp-up for TS: 815 out of 4358 HTTP requests failed (18.7%)
+- Root cause: Supabase GoTrue returning HTTP 500 on `GET /auth/v1/user` under high concurrency
+- TS iterates so fast with mock-LLM (~50ms/flow) that 10 VUs generate ~48 req/s, overwhelming local GoTrue
+- Python's slower per-iteration speed (2.46s/flow) naturally stayed within GoTrue's limits
+- Fix: Re-ran both runtimes at constant 5 VUs for clean apples-to-apples comparison
+
+**Tier 1 Results — Mock-LLM, 5 VUs constant, 90s (pure runtime overhead):**
+
+| Metric | TS (0.0.3) | Python (0.1.0) | Delta |
+|--------|-----------|---------------|-------|
+| **Iterations completed** | **430** | 167 | TS +157% |
+| **Success rate** | **100%** | 99.4% | TS cleaner |
+| **HTTP failures** | **0%** | 0.08% | Tie |
+| **Agent flow avg** | **550ms** | 2.24s | TS 4.1x faster |
+| **Agent flow p95** | **770ms** | 2.94s | TS 3.8x faster |
+| **run/wait avg** | **108ms** | 203ms | TS 1.9x faster |
+| **run/wait p95** | **143ms** | 250ms | TS 1.8x faster |
+| **create_assistant p95** | 103ms | **83ms** | Python 1.2x faster |
+| **create_thread p95** | 94ms | **81ms** | Python 1.2x faster |
+| **Throughput (iter/s)** | **4.76** | 1.81 | TS 2.6x faster |
+| **Throughput (req/s)** | **33.3** | 12.6 | TS 2.6x faster |
+
+**Key observations — mock-LLM vs Ministral comparison:**
+- **With real LLM (Ministral):** Python dominates — 7.4x faster run/wait, +33% throughput
+  - LLM inference is the bottleneck; Python's async I/O handles LLM waits more efficiently
+- **With mock-LLM (10ms):** TS dominates — 4.1x faster flow, +157% throughput
+  - Runtime overhead is the bottleneck; Bun's event loop is significantly faster than Python/asyncio
+- **CRUD operations are similar** in both scenarios (~60-100ms for both runtimes)
+- **TS runtime overhead:** ~550ms per full agent flow (create → run/wait → stream → state → cleanup)
+- **Python runtime overhead:** ~2.24s per full agent flow
+- The 4.1x pure overhead gap explains why TS catches up at higher LLM latencies (when overhead becomes proportionally smaller)
+- **Supabase GoTrue is a bottleneck** at >~30 auth req/s — relevant for production scaling
+
+**Smoke test comparison (1 VU, single iteration):**
+- TS: 614ms total flow, 68ms avg request
+- Python: 3.06s total flow, 340ms avg request
+- Ratio: TS 5x faster per-iteration with no concurrency pressure
+
+**Mock-LLM server stats (cumulative across all benchmark runs):**
+- 2,248 total requests processed
+- 132,994 prompt tokens, 107,904 completion tokens
+- 741 seconds uptime
+
+**Results saved:**
+- `benchmarks/results/ts-tier1-mock-llm-5vu.json` (13 MB)
+- `benchmarks/results/python-tier1-mock-llm-5vu.json` (4.9 MB)
+- `benchmarks/results/python-tier1-mock-llm.json` (6.0 MB, 10-VU ramp-up, 100% success)
+
 #### Task-04: Benchmark asset naming
 - k6 assistant names: `bench-test-{runtime}-v{version}-vu{vu}-iter{iter}`
 - k6 thread metadata: include `runtime_version`, `benchmark: true`
