@@ -398,7 +398,7 @@ export async function* executeRunStream(
             thread_id: threadId,
             langgraph_node: "model",
             langgraph_step: 1,
-            langgraph_checkpoint_ns: `assistant:${assistantId}`,
+            langgraph_checkpoint_ns: "",
           };
 
           // Emit the AI message content as a messages-tuple event

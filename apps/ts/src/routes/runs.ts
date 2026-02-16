@@ -208,11 +208,18 @@ function buildRunnableConfig(
   configurable.thread_id = threadId;
   configurable.assistant_id = assistantId;
 
-  // Layer 3b: Checkpoint namespace isolation.
-  // Each assistant gets its own checkpoint namespace within a thread so that
-  // multiple agents in the same chat don't overwrite each other's state.
-  // See docs/MULTI_AGENT_CHECKPOINT_ARCHITECTURE.md for full rationale.
-  configurable.checkpoint_ns = `assistant:${assistantId}`;
+  // NOTE: checkpoint_ns intentionally NOT set here.
+  //
+  // We previously set `checkpoint_ns = "assistant:<id>"` for multi-agent
+  // isolation (see docs/MULTI_AGENT_CHECKPOINT_ARCHITECTURE.md). However,
+  // LangGraph uses checkpoint_ns internally for subgraph hierarchy — it
+  // splits on NS_END (":") and NS_SEP ("|") to navigate subgraph trees.
+  // Setting it to "assistant:<id>" causes getState()/aget_state() to look
+  // for a subgraph named "assistant", which doesn't exist, triggering
+  // `ValueError: Subgraph assistant not found` on every state read.
+  //
+  // Multi-agent checkpoint isolation needs a different approach (e.g.,
+  // composite thread_id, or wrapping agents as actual LangGraph subgraphs).
 
   // Include assistant config reference for graph factory
   if (assistantConfig && typeof assistantConfig === "object") {

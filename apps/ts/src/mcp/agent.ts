@@ -80,11 +80,13 @@ function buildMcpRunnableConfig(
   configurable.owner = ownerId;
   configurable.user_id = ownerId;
 
-  // Layer 2b: Checkpoint namespace isolation.
-  // Each assistant gets its own checkpoint namespace within a thread so that
-  // multiple agents in the same chat don't overwrite each other's state.
-  // See docs/MULTI_AGENT_CHECKPOINT_ARCHITECTURE.md for full rationale.
-  configurable.checkpoint_ns = `assistant:${assistantId}`;
+  // NOTE: checkpoint_ns intentionally NOT set here.
+  //
+  // We previously set `checkpoint_ns = "assistant:<id>"` for multi-agent
+  // isolation, but LangGraph uses checkpoint_ns internally for subgraph
+  // hierarchy (splits on ":" and "|"). Setting it causes getState() to
+  // look for a subgraph named "assistant" → ValueError.
+  // See docs/MULTI_AGENT_CHECKPOINT_ARCHITECTURE.md for background.
 
   // Include assistant config reference for graph factory
   if (assistantConfig && typeof assistantConfig === "object") {

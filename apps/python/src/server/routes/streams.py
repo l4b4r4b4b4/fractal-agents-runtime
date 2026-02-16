@@ -125,11 +125,14 @@ def _build_runnable_config(
     configurable["owner"] = owner_id
     configurable["user_id"] = owner_id
 
-    # Layer 3b: Checkpoint namespace isolation.
-    # Each assistant gets its own checkpoint namespace within a thread so that
-    # multiple agents in the same chat don't overwrite each other's state.
-    # See docs/MULTI_AGENT_CHECKPOINT_ARCHITECTURE.md for full rationale.
-    configurable["checkpoint_ns"] = f"assistant:{assistant_id}"
+    # NOTE: checkpoint_ns intentionally NOT set here.
+    #
+    # We previously set checkpoint_ns = "assistant:<id>" for multi-agent
+    # isolation, but LangGraph uses checkpoint_ns internally for subgraph
+    # hierarchy — it splits on NS_END (":") and NS_SEP ("|") to navigate
+    # subgraph trees. Setting it to "assistant:<id>" causes aget_state()
+    # to look for a subgraph named "assistant" → ValueError.
+    # See docs/MULTI_AGENT_CHECKPOINT_ARCHITECTURE.md for background.
 
     # Include assistant config reference for _merge_assistant_configurable_into_run_config
     # Convert Pydantic model to dict if needed
@@ -732,7 +735,7 @@ async def execute_run_stream(
                         "langgraph_step": event_metadata.get("langgraph_step", 1),
                         "langgraph_checkpoint_ns": event_metadata.get(
                             "langgraph_checkpoint_ns",
-                            f"assistant:{assistant_id}",
+                            "",
                         ),
                         # Forward LangSmith-style ls_* keys from LangChain metadata
                         **{
