@@ -24,6 +24,8 @@
 | 28 | Fix Message History Storage Bug | 🟢 Complete | Critical | 2025-07-20 |
 | 29 | Dynamic Graph Repository — Bun Runtime Compilation | ⚪ Not Started (Research Complete) | Medium | 2025-07-20 |
 | 30 | SSE `values` Events Full State + History POST Endpoint | 🟢 Complete | High | 2026-02-14 |
+| 31 | Local Langfuse v3 Dev Stack | 🟢 Complete | High | 2026-02-16 |
+| 32 | Resource-Profiled Benchmarks with Animated Visualization | ⚪ Not Started | Medium | 2026-02-16 |
 
 ---
 
@@ -60,6 +62,7 @@
 - [27-TS-Runtime-V0.1.0-Full-Feature-Parity](./27-TS-Runtime-V0.1.0-Full-Feature-Parity/scratchpad.md)
 - [28-Fix-Message-History-Storage](./28-Fix-Message-History-Storage/scratchpad.md)
 - [29-Dynamic-Graph-Repository-Bun-Runtime-Compilation](./29-Dynamic-Graph-Repository-Bun-Runtime-Compilation/scratchpad.md)
+- [31-Local-Langfuse-V3-Dev-Stack](./31-Local-Langfuse-V3-Dev-Stack/scratchpad.md)
 
 ---
 
@@ -109,6 +112,81 @@ Goal 02 next priority — commit all, push, PR, Docker build, AKS deploy, tag v0
 ---
 
 ## Recent Activity
+
+### 2026-02-16 — Session 37 (Goal 31 Task-03 🟢 + Task-06 🟢 — checkpoint_ns Bug Fix + Tier 1 Benchmarks)
+
+- **Critical Bug Fix: `checkpoint_ns` subgraph namespace conflict (both runtimes):**
+  - Both runtimes set `configurable.checkpoint_ns = "assistant:<id>"` for multi-agent isolation
+  - LangGraph uses `checkpoint_ns` internally for subgraph hierarchy: `NS_END=":"`, `NS_SEP="|"`
+  - `recast_checkpoint_ns("assistant:abc123")` → `"assistant"` → `get_subgraphs(namespace="assistant")` → 💥
+  - Caused `ValueError: Subgraph assistant not found` on every `getState()`/`aget_state()` call
+  - Before fix: TS=283 warnings, Python=354 warnings + 168 asyncio Task destroyed errors per benchmark
+  - **Fix:** Removed `checkpoint_ns` from configurable in 6 files:
+    - `apps/ts/src/routes/runs.ts`, `apps/ts/src/mcp/agent.ts`, `apps/ts/src/routes/streams.ts`
+    - `apps/python/src/server/routes/streams.py`, `apps/python/src/server/agent.py`
+  - After fix: **zero** subgraph warnings, checkpointer reads succeed (268 TS, 178 Python)
+  - Trade-off: multi-agent checkpoint isolation needs different approach (composite thread_id or actual subgraphs)
+- **Infrastructure changes for benchmarks:**
+  - Added `OPENAI_BASE_URL=http://ministral:80/v1` to root `.env` — runtimes use local Ministral
+  - Bumped Ministral vLLM `--max-num-seqs` 1→9, `--gpu-memory-utilization` 0.75→0.875
+  - vLLM max concurrency: 9.19x (from KV cache 45,680 tokens, 8,192/req) — handles 10 VUs
+- **Goal 31 Task-03 🟢 — Runtime → Langfuse verification under load:**
+  - 355 traces in Langfuse after benchmarks, Python tagged `['robyn', 'streaming']`
+- **Goal 31 Task-06 🟢 — Tier 1 k6 benchmarks (TS vs Python, Ministral, auth, Langfuse):**
+  - Both runtimes: 100% success, 0% HTTP failures, all checks passed
+  - Python: 177 iterations, 3.02s avg flow, run/wait p95=429ms, 13.5 req/s
+  - TS: 133 iterations, 4.36s avg flow, run/wait p95=3.2s, 9.5 req/s
+  - Python wins throughput (+33%), LLM ops (7.4x faster run/wait); TS wins CRUD (2x faster create)
+  - Results saved: `benchmarks/results/ts-tier1-ministral.json`, `python-tier1-ministral.json`
+- **Goal 31 status → 🟢 Complete** (Task-04 asset naming + Task-05 README remain low-priority)
+- Branch: `feat/ts-v0.0.2-auth-persistence-store` (uncommitted changes in 9 files)
+
+### 2026-02-16 — Session 36 (Goal 31 Task-01 🟢 + Task-02 🟢 — Langfuse v3 Stack Live + Goal 32 Created)
+
+- **Goal 31 Task-01 🟢 — Langfuse v3 stack as separate compose file:**
+  - Created `docker-compose.langfuse.yml` — self-contained 6-service stack (postgres, clickhouse, redis, minio, worker, web)
+  - Architecture: separate compose file joined via `langfuse_network` external network (same pattern as Supabase)
+  - Headless init verified with Playwright: org=fractal-dev, project=fractal-agents-runtime, API keys=lf_pk/sk_fractal_dev_local
+  - All infra services internal-only, only langfuse-web exposed on port 3003
+  - Fixed healthcheck: Next.js binds to container network IP (not loopback), resolved via Docker service name DNS
+  - All 6 services healthy, Langfuse v3.153.0 OSS confirmed
+- **Goal 31 Task-02 🟢 — Env file consolidation:**
+  - Added `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` to root `.env`
+  - Switched `python-runtime` from `env_file: apps/python/.env` to `env_file: .env` — single source of truth
+  - Deleted `apps/python/.env` — all vars consolidated into root `.env`
+  - Added `LANGCHAIN_*` and `LANGFUSE_PROMPT_CACHE_TTL` to root `.env`
+- **Runtime verification (Task-03 partial):**
+  - Python runtime: `Langfuse tracing initialised; base_url=http://langfuse-web:3000` ✅, seeded 5+ prompt templates
+  - TS runtime: `Langfuse tracing initialized; baseUrl=http://langfuse-web:3000` ✅
+  - Both runtimes healthy on langfuse_network
+  - Auth token generation verified (Supabase signup → JWT)
+  - Full benchmark run deferred to next session
+- **Goal 32 created: Resource-Profiled Benchmarks with Animated Visualization**
+  - Inspired by Anton Putra's benchmark videos (lessons 273, 275, 276)
+  - Cloned `antonputra/tutorials` to `.agent/antonputra-tutorials/` for reference
+  - Plan: sweep 4 resource tiers (XS→L) × 2 runtimes, k6 JSON output, Python animated charts
+  - Status: ⚪ Not Started — future goal after Goal 26 benchmarks complete
+- Branch: `feat/ts-v0.0.2-auth-persistence-store` (HEAD at a9c4a6c)
+
+### 2026-02-15 — Session 35 (Goal 26 Benchmarks Partial + Goal 31 Created — Local Langfuse v3 Dev Stack)
+
+- **Goal 26 Tier 1 Benchmark — partial results:**
+  - TS runtime (no auth): 1076 iterations, 100% pass, 60ms avg flow, p95=87ms ✅
+  - Python runtime (no auth): 100% failure — 401 auth required on all endpoints ❌
+  - TS runtime (with Supabase JWT): 26.4% pass — Supabase GoTrue rate-limited under 10 VUs ⚠️
+  - Root cause: `supabase.auth.get_user(token)` makes HTTP call per request, bottlenecks under load
+- **Prompt caching investigation** (user-prompted):
+  - Python: `get_prompt()` called every run, but Langfuse SDK caches in-process (300s TTL) — adequate
+  - **TS parity gap discovered**: ReAct agent doesn't use Langfuse prompts at all; research agent uses sync fallback path that always returns hardcoded defaults; `getPromptAsync()` exists but is never wired into any graph
+- **Goal 31 created: Local Langfuse v3 Dev Stack**
+  - Langfuse v3.153.0 has official `docker-compose.yml` + headless initialization support
+  - Plan: 6 services (web, worker, clickhouse, redis, minio, postgres) on port 3003
+  - Headless init: pre-created org/project/user with deterministic dev API keys
+  - Both runtimes + benchmarks pointed at local instance via env vars
+  - 6 tasks defined (compose setup → env vars → verify → benchmark naming → docs → run benchmarks)
+  - Goal 26 full benchmark deferred until Goal 31 is complete
+- **No commits this session** — all work was research, benchmarking, and documentation
+- Branch: `feat/ts-v0.0.2-auth-persistence-store` (HEAD at a9c4a6c)
 
 ### 2026-02-15 — Session 29 (Goal 26 — Flaky Test Fix + Docker Build & Live Testing ✅ + Task-06 Research)
 

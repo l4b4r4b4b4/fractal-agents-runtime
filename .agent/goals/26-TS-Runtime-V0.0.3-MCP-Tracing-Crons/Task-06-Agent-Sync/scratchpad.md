@@ -626,3 +626,105 @@ k6 run -e RUNTIME_URL=http://localhost:8081 -e RUNTIME_NAME=python --out json=be
 - Docker compose ports are 9091 (Python) and 9092 (TS) — use these if running via containers instead
 - Pre-existing TS lint errors (33 errors in 8 files) — predate v0.0.3 work, committed with `--no-verify`
 - After benchmarks, push branch and tag `ts-v0.0.3` release
+
+## What Was Done (Session 35)
+
+### Benchmark Attempt — Partial Results
+
+**Infrastructure stood up successfully:**
+- Mock LLM server on port 11434 ✅
+- TS runtime on port 9092 (with `SUPABASE_URL=http://localhost:54321` auth enabled) ✅
+- Python runtime on port 9091 (same Supabase auth) ✅
+- Supabase test user created (`bench2@test.local`), JWT verified against both runtimes ✅
+
+**Benchmark results:**
+
+| Run | Runtime | Port | Auth | Result |
+|-----|---------|------|------|--------|
+| 1 | TS (no auth) | 9092 | disabled | **1076 iters, 100% pass**, 60ms avg flow, p95=87ms |
+| 2 | Python (no auth) | 9091 | always on | **100% failure** — 401 on all endpoints |
+| 3 | TS (with auth) | 9092 | JWT | **26.4% pass** — Supabase rate-limited under 10 VUs |
+| 4 | Python (with auth) | 9091 | JWT | Not attempted (same Supabase bottleneck) |
+
+**TS without auth (run 1) — full results:**
+- 1076 complete iterations, 0 failures
+- `agent_flow_duration`: avg=60ms, p95=87ms
+- `create_assistant`: p95=13.8ms
+- `create_thread`: p95=12.4ms
+- `run_wait`: p95=34.8ms (includes mock LLM 10ms delay)
+- `http_req_failed`: 0.00%
+- `agent_flow_success_rate`: 100%
+- 10760 checks, all passed
+
+**TS with auth (run 3) — Supabase bottleneck:**
+- 1914 iterations attempted, 506 fully succeeded (26.4%)
+- `create_assistant`: 534/1914 passed (27%) — auth verification is the bottleneck
+- Once past auth, downstream steps had 96-98% success
+- Root cause: `supabase.auth.get_user(token)` makes an HTTP call per request to GoTrue
+
+### Findings — Prompt Caching & TS Parity Gap
+
+**Prompted by user question: "how often do we retrieve system prompt from Langfuse?"**
+
+Investigated both runtimes' prompt retrieval patterns:
+
+1. **Python**: `get_prompt()` called at every graph compilation (every run/stream request).
+   Langfuse SDK caches in-process with 300s TTL (`LANGFUSE_PROMPT_CACHE_TTL`).
+   First call → 1 HTTP request, then zero network for 5 minutes. **Adequate, no changes needed.**
+
+2. **TS — PARITY GAP DISCOVERED**: The TS ReAct agent does NOT use Langfuse prompts at all.
+   It uses `getEffectiveSystemPrompt(config)` which is purely config-driven.
+   The research agent calls `resolvePrompt()` → sync `getPrompt()` which **always returns
+   the hardcoded fallback** because the Langfuse JS SDK is async-only. The async version
+   `getPromptAsync()` exists (L511-612 in `infra/prompts.ts`) but is never wired into any graph.
+
+3. **Impact**: Benchmarks are not comparable for prompt-related latency — Python has real
+   Langfuse overhead (cached), TS has zero. Fix is straightforward (wire `getPromptAsync()`
+   into both graphs) but out of scope for v0.0.3.
+
+### Decision: Goal 31 Created — Local Langfuse v3 Dev Stack
+
+User directed that setting up local Langfuse is significant enough for its own goal. Created
+**Goal 31: Local Langfuse v3 Dev Stack** with:
+
+- Langfuse v3 services in `docker-compose.yml` (web, worker, clickhouse, redis, minio, postgres)
+- Headless initialization (pre-created org, project, user, API keys)
+- Port 3003 for Langfuse web (avoids 3000 clashes)
+- Deterministic dev keys: `lf_pk_fractal_dev_local` / `lf_sk_fractal_dev_local`
+- Both runtimes pointed at local instance via env vars
+- k6 benchmark asset naming with version encoding
+
+Goal 31 is a **prerequisite for clean benchmarks** — the Tier 1 load test is deferred until
+Goal 31 Task-03 (verify runtimes connect) and Task-06 (run benchmarks) are complete.
+
+### What Remains for Goal 26
+
+- [x] All v0.0.3 features complete (1923 tests, 0 failures)
+- [x] Mock LLM + k6 scripts built and smoke-tested
+- [x] Docker builds verified, version 0.0.3, CHANGELOG written
+- [x] Helm chart + README updated
+- [x] Session 35 partial benchmark results documented
+- [ ] **Full Tier 1 benchmark** — blocked on Goal 31 (local Langfuse) + Supabase auth rate limit
+- [ ] **Push branch + tag `ts-v0.0.3`** — after benchmarks
+
+### Session 36 Handoff
+
+**Context:** Goal 31 (Local Langfuse v3 Dev Stack) is the next priority. Goal 26 benchmarks
+are blocked on it. See `.agent/goals/31-Local-Langfuse-V3-Dev-Stack/scratchpad.md` for full
+plan, port allocation, headless init values, and task breakdown.
+
+**Immediate next steps (Goal 31):**
+1. Task-01: Add Langfuse v3 services to `docker-compose.yml`
+2. Task-02: Update `.env` / `.env.example` with local Langfuse defaults
+3. Task-03: `docker compose up langfuse-web`, verify UI at http://localhost:3003
+4. Restart both runtimes with `LANGFUSE_BASE_URL=http://localhost:3003`, verify tracing works
+5. Then return to Goal 26 Task-06 for the full k6 benchmark
+
+**Key facts for next session:**
+- Langfuse v3.153.0 is latest, has official `docker-compose.yml` + headless init
+- Port 3003 chosen for langfuse-web (avoids 3000/3001/3002)
+- All Langfuse infra services internal-only (no external ports except web)
+- Headless init keys: `lf_pk_fractal_dev_local` / `lf_sk_fractal_dev_local`
+- TS prompt parity gap documented but NOT in scope for Goal 31 (future fix)
+- Supabase auth rate-limiting under load is a known issue — may need JWT caching in middleware
+- Branch: `feat/ts-v0.0.2-auth-persistence-store` (HEAD at a9c4a6c, nothing new committed this session)
