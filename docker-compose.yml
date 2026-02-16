@@ -118,6 +118,48 @@ services:
   # Set LANGFUSE_BASE_URL=http://langfuse-web:3000 in runtime env files.
 
   # ===========================================================================
+  # Mock LLM — fake OpenAI API for pure runtime overhead benchmarks
+  # ===========================================================================
+  #
+  # Disabled by default (replicas: 0). Enable for benchmarking:
+  #   docker compose up mock-llm --scale mock-llm=1
+  #
+  # Then run k6 with:
+  #   MODEL_NAME=openai:mock-gpt-4o OPENAI_BASE_URL=http://mock-llm:11434/v1 k6 run ...
+  #
+  # Env tunables (see benchmarks/mock-llm/server.ts):
+  #   MOCK_LLM_DELAY_MS=10        Base delay before first response
+  #   MOCK_LLM_STREAM_DELAY_MS=5  Delay between SSE chunks
+  #   MOCK_LLM_MODEL=mock-gpt-4o  Model name echoed in responses
+
+  mock-llm:
+    deploy:
+      replicas: 0
+    image: oven/bun:latest
+    working_dir: /app
+    volumes:
+      - ./benchmarks/mock-llm:/app:ro
+    environment:
+      - MOCK_LLM_PORT=11434
+      - MOCK_LLM_DELAY_MS=10
+      - MOCK_LLM_STREAM_DELAY_MS=5
+      - MOCK_LLM_MODEL=mock-gpt-4o
+    command: ["bun", "run", "server.ts"]
+    restart: no
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://localhost:11434/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ===========================================================================
   # Optional infrastructure services (disabled by default)
   # ===========================================================================
 
