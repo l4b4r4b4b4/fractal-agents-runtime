@@ -26,6 +26,7 @@
 | 30 | SSE `values` Events Full State + History POST Endpoint | 🟢 Complete | High | 2026-02-14 |
 | 31 | Local Langfuse v3 Dev Stack | 🟢 Complete | High | 2026-02-16 |
 | 32 | Resource-Profiled Benchmarks with Animated Visualization | ⚪ Not Started | Medium | 2026-02-16 |
+| 33 | TS Runtime — Native Postgres Driver + Performance Investigation | ⚪ Not Started | High | 2026-02-16 |
 
 ---
 
@@ -63,6 +64,8 @@
 - [28-Fix-Message-History-Storage](./28-Fix-Message-History-Storage/scratchpad.md)
 - [29-Dynamic-Graph-Repository-Bun-Runtime-Compilation](./29-Dynamic-Graph-Repository-Bun-Runtime-Compilation/scratchpad.md)
 - [31-Local-Langfuse-V3-Dev-Stack](./31-Local-Langfuse-V3-Dev-Stack/scratchpad.md)
+- [32-Resource-Profiled-Benchmarks](./32-Resource-Profiled-Benchmarks/scratchpad.md)
+- [33-TS-Runtime-Postgres-Native-Performance](./33-TS-Runtime-Postgres-Native-Performance/scratchpad.md)
 
 ---
 
