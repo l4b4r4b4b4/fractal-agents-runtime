@@ -116,6 +116,28 @@ Goal 02 next priority — commit all, push, PR, Docker build, AKS deploy, tag v0
 
 ## Recent Activity
 
+### 2026-02-16 — Session 39 (Goal 33 Tasks 01-03 🟢 + Task-04 🟡 — Bun.sql Native Postgres Driver)
+
+- **Task-01 🟢:** Replaced `postgres` (Postgres.js) with `import { SQL } from "bun"` in `database.ts` + `postgres.ts`
+  - Constructor, pool options (camelCase), `sql.close()`, `toJsonb()` helper, `BunSql` type alias
+  - Removed `postgres` dependency from `package.json`
+- **Task-02 🟢:** Created `BunPoolAdapter` (`bun-pool-adapter.ts`, 149 lines) wrapping Bun.sql for PostgresSaver
+  - Uses `sql.reserve()` for transaction-safe connections, `sql.unsafe()` for `$1,$2` positional params
+  - Injected via `new PostgresSaver(pool as any)` instead of `fromConnString()`
+- **JSONB bug discovered & fixed:** `JSON.stringify()` caused double-encoded JSONB (`"{\"key\":\"val\"}"`)
+  - Fix: pass raw JS objects — Bun.sql auto-serializes as JSONB natively
+  - Removed all 8 `::jsonb` casts
+- **Task-03 🟢:** Mock-LLM benchmark (5 VUs, 90s) — Bun.sql vs Postgres.js baseline:
+  - 435 iter (was 430), 543ms avg flow (was 550ms), 4.79 iter/s — **equivalent, within noise**
+  - **Postgres driver is NOT the bottleneck** — auth HTTP overhead to GoTrue dominates
+  - Saved: `benchmarks/results/ts-tier1-mock-llm-5vu-bunsql.json`
+- **Task-04 🟡:** Investigation — confirmed both TS and Python rebuild graph every request (no caching)
+  - `runs.ts:337` and `streams.ts:229` call `buildGraph()` per request
+  - Graph caching keyed by `(graph_id, model_name, config_hash)` is top optimization target
+  - Auth overhead is shared (same GoTrue) — not the cause of TS vs Python gap
+- **Tests:** 1923 pass (unit), full agent flow smoke test passes with real Postgres
+- Branch: `feat/ts-v0.0.2-auth-persistence-store` (3 commits this session)
+
 ### 2026-02-16 — Session 38 (Goal 31 Finalization + Mock-LLM Benchmarks)
 
 - **Committed all Session 37 changes (4 logical commits):**
