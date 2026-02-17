@@ -82,15 +82,26 @@ function utcNow(): string {
 }
 
 /**
- * Serialize a value to a JSON string for JSONB columns.
+ * Coerce a value for JSONB columns.
  *
- * Bun.sql passes values as typed parameters. For JSONB columns, we
- * serialize to a JSON string and rely on Postgres to auto-cast
- * `text → jsonb` (works for INSERT/UPDATE target columns and JSONB
- * operators like `@>`).
+ * Bun.sql automatically serializes plain JavaScript objects/arrays as
+ * JSONB when passed as tagged-template parameters. We just need to
+ * ensure `null`/`undefined` becomes `{}` (matching the column defaults)
+ * and that the value is a proper object or array — never a pre-stringified
+ * JSON string (which would be double-encoded by the driver).
  */
-function toJsonb(value: unknown): string {
-  return JSON.stringify(value ?? {});
+function toJsonb(value: unknown): Record<string, unknown> | unknown[] {
+  if (value === null || value === undefined) {
+    return {};
+  }
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value === "object") {
+    return value as Record<string, unknown>;
+  }
+  // Primitive fallback — wrap in an object (shouldn't happen in practice)
+  return { value };
 }
 
 /**
@@ -229,7 +240,7 @@ export class PostgresAssistantStore implements AssistantStore {
       rows = await this.sql`
         SELECT * FROM ${this.sql(SCHEMA)}.assistants
         WHERE graph_id = ${request.graph_id}
-          AND metadata @> ${toJsonb(request.metadata)}::jsonb
+          AND metadata @> ${toJsonb(request.metadata)}
           ${request.name ? this.sql`AND name ILIKE ${"%" + request.name + "%"}` : this.sql``}
         ORDER BY ${this.sql(sortBy)} ${sortOrder === "asc" ? this.sql`ASC` : this.sql`DESC`}
         LIMIT ${limit} OFFSET ${offset}
@@ -245,7 +256,7 @@ export class PostgresAssistantStore implements AssistantStore {
     } else if (request.metadata && Object.keys(request.metadata).length > 0) {
       rows = await this.sql`
         SELECT * FROM ${this.sql(SCHEMA)}.assistants
-        WHERE metadata @> ${toJsonb(request.metadata)}::jsonb
+        WHERE metadata @> ${toJsonb(request.metadata)}
           ${request.name ? this.sql`AND name ILIKE ${"%" + request.name + "%"}` : this.sql``}
         ORDER BY ${this.sql(sortBy)} ${sortOrder === "asc" ? this.sql`ASC` : this.sql`DESC`}
         LIMIT ${limit} OFFSET ${offset}
@@ -335,7 +346,7 @@ export class PostgresAssistantStore implements AssistantStore {
       rows = await this.sql`
         SELECT COUNT(*)::int AS count FROM ${this.sql(SCHEMA)}.assistants
         WHERE graph_id = ${request.graph_id}
-          AND metadata @> ${toJsonb(request.metadata)}::jsonb
+          AND metadata @> ${toJsonb(request.metadata)}
           ${request.name ? this.sql`AND name ILIKE ${"%" + request.name + "%"}` : this.sql``}
       `;
     } else if (request?.graph_id) {
@@ -347,7 +358,7 @@ export class PostgresAssistantStore implements AssistantStore {
     } else if (request?.metadata && Object.keys(request.metadata).length > 0) {
       rows = await this.sql`
         SELECT COUNT(*)::int AS count FROM ${this.sql(SCHEMA)}.assistants
-        WHERE metadata @> ${toJsonb(request.metadata)}::jsonb
+        WHERE metadata @> ${toJsonb(request.metadata)}
           ${request?.name ? this.sql`AND name ILIKE ${"%" + request.name + "%"}` : this.sql``}
       `;
     } else if (request?.name) {
@@ -501,7 +512,7 @@ export class PostgresThreadStore implements ThreadStore {
       rows = await this.sql`
         SELECT * FROM ${this.sql(SCHEMA)}.threads
         WHERE status = ${request.status}
-          AND metadata @> ${toJsonb(effectiveMetadata!)}::jsonb
+          AND metadata @> ${toJsonb(effectiveMetadata!)}
         ORDER BY ${this.sql(sortBy)} ${sortOrder === "asc" ? this.sql`ASC` : this.sql`DESC`}
         LIMIT ${limit} OFFSET ${offset}
       `;
@@ -515,7 +526,7 @@ export class PostgresThreadStore implements ThreadStore {
     } else if (hasMetadata) {
       rows = await this.sql`
         SELECT * FROM ${this.sql(SCHEMA)}.threads
-        WHERE metadata @> ${toJsonb(effectiveMetadata!)}::jsonb
+        WHERE metadata @> ${toJsonb(effectiveMetadata!)}
         ORDER BY ${this.sql(sortBy)} ${sortOrder === "asc" ? this.sql`ASC` : this.sql`DESC`}
         LIMIT ${limit} OFFSET ${offset}
       `;
@@ -626,7 +637,7 @@ export class PostgresThreadStore implements ThreadStore {
       rows = await this.sql`
         SELECT COUNT(*)::int AS count FROM ${this.sql(SCHEMA)}.threads
         WHERE status = ${request.status}
-          AND metadata @> ${toJsonb(effectiveMetadata!)}::jsonb
+          AND metadata @> ${toJsonb(effectiveMetadata!)}
       `;
     } else if (request?.status) {
       rows = await this.sql`
@@ -636,7 +647,7 @@ export class PostgresThreadStore implements ThreadStore {
     } else if (hasMetadata) {
       rows = await this.sql`
         SELECT COUNT(*)::int AS count FROM ${this.sql(SCHEMA)}.threads
-        WHERE metadata @> ${toJsonb(effectiveMetadata!)}::jsonb
+        WHERE metadata @> ${toJsonb(effectiveMetadata!)}
       `;
     } else {
       rows = await this.sql`

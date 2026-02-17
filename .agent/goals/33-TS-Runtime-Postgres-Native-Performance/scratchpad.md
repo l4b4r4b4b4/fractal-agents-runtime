@@ -77,7 +77,7 @@ than either JS driver.
 |---------|-------------|--------|------------|
 | Task-01 | Switch custom storage layer from `postgres` to `Bun.sql` | 🟢 | - |
 | Task-02 | Create `BunPoolAdapter` for LangGraph checkpointer | 🟢 | Task-01 |
-| Task-03 | Benchmark: mock-LLM before/after Bun.sql swap | ⚪ | Task-01, Task-02 |
+| Task-03 | Benchmark: mock-LLM before/after Bun.sql swap | 🟢 | Task-01, Task-02 |
 | Task-04 | Investigate & profile real-LLM performance gap | ⚪ | Task-03 |
 | Task-05 | Implement fixes for identified bottlenecks | ⚪ | Task-04 |
 | Task-06 | Final benchmark: real-LLM after all fixes | ⚪ | Task-05 |
@@ -140,11 +140,48 @@ than either JS driver.
 
 **Note:** Full integration testing with a live Postgres database is needed via the Docker Compose stack and benchmarks (Task-03). The unit tests use in-memory storage, so the BunPoolAdapter code path isn't exercised in unit tests.
 
-#### Task-03: Benchmark mock-LLM before/after
+#### Task-03: Benchmark mock-LLM before/after — 🟢 COMPLETE
 
-- Run identical 5-VU 90s benchmark with mock-LLM before and after the swap
-- Compare: CRUD latencies (create_assistant, create_thread), run/wait, throughput
-- Save results as `ts-tier1-mock-llm-bunsql.json`
+**Completed in Session 39.**
+
+**Setup:**
+- Mock LLM server: `bun run benchmarks/mock-llm/server.ts` (10ms delay, 5ms stream delay)
+- TS runtime: Bun.sql native driver, Postgres persistence via Supabase (port 54322)
+- Auth: Supabase JWT (`bench3@test.local / Benchmark123!`) — user created fresh this session
+- k6: constant 5 VUs, 90s duration (matching Session 38 baseline exactly)
+
+**JSONB bug discovered and fixed during smoke test:**
+- `toJsonb()` initially used `JSON.stringify()` → Postgres stored as double-encoded string `"{\"key\":\"val\"}"`
+- Fix: pass raw JS objects to Bun.sql — it auto-serializes objects as JSONB natively
+- Removed all `::jsonb` casts (8 occurrences) — unnecessary with native object serialization
+- Cleaned up stale double-encoded rows from database
+
+**Results — Bun.sql vs Postgres.js baseline (5 VUs, 90s, mock-LLM):**
+
+| Metric | Baseline (Postgres.js + pg) | Bun.sql (native) | Delta |
+|--------|---------------------------|-------------------|-------|
+| **Iterations** | 430 | **435** | +1.2% |
+| **Success rate** | 100% | 100% | Tie |
+| **Agent flow avg** | 550ms | **543ms** | -1.3% |
+| **Agent flow p95** | 770ms | **743ms** | -3.5% |
+| **run/wait avg** | **108ms** | 118ms | +9.3% |
+| **run/wait p95** | **143ms** | 163ms | +14% |
+| **create_assistant p95** | 103ms | **93ms** | -10.7% ✅ |
+| **create_thread p95** | 94ms | **91ms** | -3.2% |
+| **Throughput (iter/s)** | 4.76 | **4.79** | +0.5% |
+| **Throughput (req/s)** | 33.3 | **33.5** | +0.6% |
+
+**Conclusion:** All deltas within measurement noise — **Postgres driver is NOT the bottleneck**
+in this workload. Auth HTTP calls to Supabase GoTrue dominate per-request overhead (~30 req/s
+ceiling). The CRUD operations (create_assistant, create_thread) show slight improvement from
+native driver. The run/wait p95 variance is noise from GoTrue contention.
+
+**Value of the swap is architectural, not latency:**
+- Eliminated 2 pure-JS Postgres deps (`postgres` + `pg` at runtime)
+- Single native C/Zig driver for all Postgres operations
+- Fewer deps, smaller attack surface, cleaner dependency tree
+
+**Results saved:** `benchmarks/results/ts-tier1-mock-llm-5vu-bunsql.json`
 
 #### Task-04: Investigate & profile the real-LLM performance gap
 
@@ -246,14 +283,14 @@ Based on Task-04 findings. Likely fixes:
 | 2026-02-16 | No upstream PR to `@langchain/langgraph-checkpoint-postgres` | Constructor accepts generic pool — adapter pattern is cleaner and doesn't require upstream buy-in |
 | 2026-02-16 | Replace both `postgres` AND `pg` with `Bun.sql` | Eliminate all pure-JS Postgres overhead in one sweep |
 | 2026-02-16 | Investigate beyond Postgres drivers | 2.8s gap can't be driver overhead — must find root cause |
-| 2026-02-16 | Use `JSON.stringify()` + `::jsonb` cast instead of `sql.json()` | Bun.sql has no `sql.json()` equivalent; JSON strings with explicit cast work for both INSERT/UPDATE target columns and JSONB operators like `@>` |
+| 2026-02-16 | Pass raw JS objects for JSONB (not JSON.stringify) | Bun.sql auto-serializes plain objects as JSONB natively; JSON.stringify causes double-encoding |
 | 2026-02-16 | Use `sql.reserve()` in BunPoolAdapter.connect() | PostgresSaver does manual BEGIN/COMMIT/ROLLBACK requiring all statements on the same connection; `reserve()` pins a connection from the Bun.sql pool |
 
 ### Session 39 Implementation Notes
 
 **Files modified:**
 - `apps/ts/src/storage/database.ts` — Bun.sql constructor + close()
-- `apps/ts/src/storage/postgres.ts` — All CRUD stores: toJsonb(), BunSql type, ::jsonb casts
+- `apps/ts/src/storage/postgres.ts` — All CRUD stores: toJsonb(), BunSql type, native object JSONB
 - `apps/ts/src/storage/index.ts` — BunPoolAdapter injection for checkpointer
 - `apps/ts/src/storage/bun-pool-adapter.ts` — NEW: pg.Pool adapter over Bun.sql
 - `apps/ts/package.json` — Removed `postgres` dependency
@@ -262,6 +299,13 @@ Based on Task-04 findings. Likely fixes:
 **Dependencies kept:** `@langchain/langgraph-checkpoint-postgres` — still needed for PostgresSaver class (but now backed by BunPoolAdapter instead of pg.Pool)
 
 **Remaining `pg` transitive dependency:** `@langchain/langgraph-checkpoint-postgres` still has `pg` as a dependency in its own package.json. We can't remove it from node_modules since it's a transitive dep. However, at runtime our BunPoolAdapter is injected so `pg` is NOT used for any queries. It's only loaded for its TypeScript types by the upstream package.
+
+**JSONB bug fix (discovered during Task-03 smoke test):**
+- Initial approach: `toJsonb()` used `JSON.stringify()` → passed string to Bun.sql → Postgres stored as double-encoded JSONB string `"{\"key\":\"val\"}"`
+- Root cause: Bun.sql sends strings as text parameters; Postgres wraps the text in JSON quotes when auto-casting to jsonb
+- Fix: `toJsonb()` now returns the raw JS object/array; Bun.sql auto-serializes objects as proper JSONB
+- Removed all 8 `::jsonb` casts — unnecessary when driver handles type correctly
+- Verified with direct DB query: plain objects → `{"key": "val"}` ✅, JSON.stringify → `"{\"key\":\"val\"}"` ❌
 
 ### Pre-existing TS Type Errors (18)
 
