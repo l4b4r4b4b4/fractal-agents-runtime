@@ -78,7 +78,7 @@ than either JS driver.
 | Task-01 | Switch custom storage layer from `postgres` to `Bun.sql` | 🟢 | - |
 | Task-02 | Create `BunPoolAdapter` for LangGraph checkpointer | 🟢 | Task-01 |
 | Task-03 | Benchmark: mock-LLM before/after Bun.sql swap | 🟢 | Task-01, Task-02 |
-| Task-04 | Investigate & profile real-LLM performance gap | ⚪ | Task-03 |
+| Task-04 | Investigate & profile real-LLM performance gap | 🟡 | Task-03 |
 | Task-05 | Implement fixes for identified bottlenecks | ⚪ | Task-04 |
 | Task-06 | Final benchmark: real-LLM after all fixes | ⚪ | Task-05 |
 
@@ -183,65 +183,36 @@ native driver. The run/wait p95 variance is noise from GoTrue contention.
 
 **Results saved:** `benchmarks/results/ts-tier1-mock-llm-5vu-bunsql.json`
 
-#### Task-04: Investigate & profile the real-LLM performance gap
+#### Task-04: Investigate & profile the real-LLM performance gap — 🟡 IN PROGRESS
 
-This is the critical investigation task. The 2.8s unexplained gap must come from one or
-more of these suspects:
+**Session 39 investigation findings:**
 
-**Suspect 1: Graph re-compilation per request** (HIGH probability)
-- Check: Is `createAgent()` / `resolveGraphFactory()` called on every run, or are compiled
-  graphs cached per `graph_id + model_name`?
-- Key files: `apps/ts/src/routes/runs.ts`, `apps/ts/src/graphs/registry.ts`
-- Python comparison: Does the Python runtime cache compiled graphs?
-- Impact: Graph compilation involves model instantiation, tool binding, and LangGraph
-  compilation — could easily add 500ms-2s per request
-- Fix: Cache compiled graphs keyed by `(graph_id, model_name, assistant_config_hash)`
+**Suspect 1: Graph re-compilation per request — CONFIRMED ⚠️ TOP PRIORITY**
+- **Both TS and Python rebuild the graph on EVERY request** — verified in source:
+  - TS: `runs.ts:337` → `await buildGraph(configurable, { checkpointer })` — every run/wait
+  - TS: `streams.ts:229` → `await buildGraph(configurable, { checkpointer })` — every stream
+  - Python: `streams.py:641` → `await build_graph(runnable_config, checkpointer=cp, store=st)` — every stream
+- Each `buildGraph()` call: creates new ChatModel instance, resolves tools, compiles LangGraph
+- Since **both** runtimes do this equally, it's NOT the cause of the TS vs Python gap
+- BUT it IS a massive optimization opportunity for both — cache compiled graphs keyed by `(graph_id, model_name, config_hash)`, only pass runtime info (thread_id, input) at invocation time
 
-**Suspect 2: Concurrent LLM request serialization** (HIGH probability)
-- Check: Under 10 VUs, are graph `.invoke()` / `.stream()` calls running truly concurrently,
-  or is something serializing them (shared state, pool contention, event loop blocking)?
-- Key files: `apps/ts/src/routes/runs.ts` (run execution), `apps/ts/src/routes/streams.ts`
-  (stream execution)
-- With Ministral `--max-num-seqs 9`, the LLM can handle 9 concurrent requests. If TS is
-  serializing, each VU waits for others, causing the 3.2s p95
-- Tools: Add timing logs around graph.invoke() entry/exit, measure concurrency
+**Suspect 2: Concurrent LLM serialization — UNLIKELY**
+- TS uses standard `await agent.invoke()` — Bun's event loop handles concurrent async I/O natively
+- No evidence of serialization in the run execution path
 
-**Suspect 3: Auth verification HTTP overhead** (MEDIUM probability)
-- Every authenticated request → `verifyToken(token)` → HTTP call to Supabase GoTrue
-  (`GET /auth/v1/user`)
-- Under 10 VUs with fast mock-LLM, this saturated GoTrue (815 HTTP 500s)
-- With real LLM, requests are slower so GoTrue isn't saturated, but each auth call still
-  adds 20-50ms per request
-- Fix: Cache JWT verification results with TTL (e.g., 60s), or verify JWTs locally using
-  the Supabase JWT secret
-- Key file: `apps/ts/src/infra/security/auth.ts`
+**Suspect 3: Auth HTTP overhead — NOT THE GAP CAUSE**
+- Both runtimes hit the same GoTrue — shared bottleneck, not differential
+- Still worth fixing (local JWT verification) for overall throughput
 
-**Suspect 4: Checkpointer pool contention** (MEDIUM probability)
-- `pg.Pool` default max connections is 10. Under 10 VUs, each doing checkpoint reads and
-  writes, the pool could be fully saturated
-- Each graph invocation does: 1 checkpoint read (getState) + 1 checkpoint write (putState)
-  + N blob writes
-- Fix: Increase pool size, or use `Bun.sql` with higher `max` (Task-01/02 may help)
+**Remaining suspects for next session:**
+- **Data size difference**: Python 37 MB vs TS 2.3 MB `data_received` — TS may be truncating/not streaming full response data
+- **ChatOpenAI initialization**: May involve HTTP validation call to `/v1/models` per instantiation — amplified by per-request graph rebuild
+- **Checkpointer transaction overhead**: BunPoolAdapter `reserve()` / `release()` pattern vs pg.Pool direct — needs profiling
 
-**Suspect 5: Streaming response handling** (LOW probability)
-- The `run/wait` endpoint internally streams the graph and collects the final result
-- Python streams more data (37 MB vs 2.3 MB) suggesting TS might not be streaming at all,
-  or buffering differently
-- Check how the TS `executeRunStream()` consumes the LangGraph stream
-
-**Suspect 6: Node.js compatibility layer overhead** (LOW probability)
-- Bun provides Node.js API compatibility, but some polyfills (like `pg`'s use of `net`,
-  `tls`, `crypto`) go through compatibility layers that may be slower
-- Switching to `Bun.sql` (Task-01/02) eliminates this entirely for Postgres
-
-**Investigation approach:**
-1. Add `performance.now()` timing instrumentation at key points:
-   - Graph factory entry/exit (is compilation happening?)
-   - LLM call entry/exit (how long does the actual HTTP call take?)
-   - Checkpoint read/write entry/exit
-   - Auth verification entry/exit
-2. Run a single-VU real-LLM test and analyze timing breakdown
-3. Run a 10-VU test and compare — look for serialization patterns
+**Fix plan (Task-05):**
+1. **Graph caching** — cache compiled graphs, pass runtime config at invoke time
+2. **Local JWT verification** — eliminate GoTrue HTTP round-trip
+3. **Profile with `performance.now()` instrumentation** around graph build, LLM call, checkpointer ops
 
 #### Task-05: Implement fixes for identified bottlenecks
 
