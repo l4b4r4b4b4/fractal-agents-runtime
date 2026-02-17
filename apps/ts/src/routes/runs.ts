@@ -29,6 +29,7 @@ import type { Router, RouteHandler } from "../router";
 import type { RunCreateStateful } from "../models/run";
 import { getStorage, getCheckpointer } from "../storage/index";
 import { resolveGraphFactory } from "../graphs/index";
+import { getOrBuildGraph } from "../graphs/graph-cache";
 import { injectTracing } from "../infra/tracing";
 import {
   jsonResponse,
@@ -312,12 +313,9 @@ async function executeRunSync(
   const storage = getStorage();
 
   try {
-    // 1. Resolve graph factory
+    // 1. Resolve graph factory + build configurable
     const graphId =
       (assistant.graph_id as string | undefined) ?? "agent";
-    const buildGraph = resolveGraphFactory(graphId);
-
-    // 2. Build configurable and agent
     const assistantConfig = assistant.config as
       | Record<string, unknown>
       | null
@@ -330,12 +328,23 @@ async function executeRunSync(
       (body.config as Record<string, unknown>) ?? null,
     );
 
-    // The graph factory expects the flat configurable as its config param.
-    // Pass the shared checkpointer so the agent accumulates message history
-    // across runs on the same thread via the `add_messages` reducer.
-    const agent = (await buildGraph(configurable, {
-      checkpointer: getCheckpointer(),
-    })) as {
+    // 2. Get or build agent (cached by graph_id + config hash).
+    //
+    // LangGraph compiled graphs are safe to reuse across threads —
+    // thread_id is passed at invoke() time via configurable, not at
+    // compile time. The checkpointer is a singleton.
+    //
+    // Reference: LangGraph persistence docs — compile once, invoke many.
+    const agent = (await getOrBuildGraph(
+      graphId,
+      configurable,
+      async () => {
+        const buildGraph = resolveGraphFactory(graphId);
+        return buildGraph(configurable, {
+          checkpointer: getCheckpointer(),
+        });
+      },
+    )) as {
       invoke: (
         input: Record<string, unknown>,
         config?: Record<string, unknown>,
@@ -391,9 +400,14 @@ async function executeRunSync(
 
     // 5. Invoke — the checkpointer provides previous history to the LLM
     // internally via the `add_messages` reducer. We only pass NEW input.
+    const invokeStartNs = Bun.nanoseconds();
     const result = await agent.invoke(agentInput, tracedConfig);
+    const invokeElapsedMs = (Bun.nanoseconds() - invokeStartNs) / 1_000_000;
+    console.log(
+      `[perf] Agent invoke: ${invokeElapsedMs.toFixed(1)}ms threadId=${threadId} runId=${runId}`,
+    );
 
-    // 5. Read full accumulated state from checkpointer.
+    // 5b. Read full accumulated state from checkpointer.
     //
     // The checkpointer is the source of truth for message history.
     // It accumulates messages across runs via the `add_messages` reducer.
@@ -401,7 +415,12 @@ async function executeRunSync(
     // `GET /threads/{id}/state` returns the complete conversation history.
     let finalValues: Record<string, unknown>;
     try {
+      const stateReadStartNs = Bun.nanoseconds();
       const checkpointState = await agent.getState(runnableConfig);
+      const stateReadElapsedMs = (Bun.nanoseconds() - stateReadStartNs) / 1_000_000;
+      console.log(
+        `[perf] Checkpoint state read: ${stateReadElapsedMs.toFixed(1)}ms threadId=${threadId}`,
+      );
       if (checkpointState?.values) {
         const accumulatedMessages = (checkpointState.values.messages ?? []) as Array<unknown>;
         const serializedAccumulated: Array<Record<string, unknown>> = [];

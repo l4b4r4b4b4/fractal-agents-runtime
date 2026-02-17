@@ -3,7 +3,7 @@
 ## Status: 🟡 In Progress
 ## Priority: High
 ## Created: 2026-02-16 (Session 38)
-## Last Updated: 2026-02-16 (Session 39)
+## Last Updated: 2026-02-16 (Session 40)
 
 ---
 
@@ -78,8 +78,8 @@ than either JS driver.
 | Task-01 | Switch custom storage layer from `postgres` to `Bun.sql` | 🟢 | - |
 | Task-02 | Create `BunPoolAdapter` for LangGraph checkpointer | 🟢 | Task-01 |
 | Task-03 | Benchmark: mock-LLM before/after Bun.sql swap | 🟢 | Task-01, Task-02 |
-| Task-04 | Investigate & profile real-LLM performance gap | 🟡 | Task-03 |
-| Task-05 | Implement fixes for identified bottlenecks | ⚪ | Task-04 |
+| Task-04 | Investigate & profile real-LLM performance gap | 🟢 | Task-03 |
+| Task-05 | Implement fixes for identified bottlenecks | 🟢 | Task-04 |
 | Task-06 | Final benchmark: real-LLM after all fixes | ⚪ | Task-05 |
 
 ### Task Details
@@ -183,7 +183,7 @@ native driver. The run/wait p95 variance is noise from GoTrue contention.
 
 **Results saved:** `benchmarks/results/ts-tier1-mock-llm-5vu-bunsql.json`
 
-#### Task-04: Investigate & profile the real-LLM performance gap — 🟡 IN PROGRESS
+#### Task-04: Investigate & profile the real-LLM performance gap — 🟢 COMPLETE
 
 **Session 39 investigation findings:**
 
@@ -214,18 +214,81 @@ native driver. The run/wait p95 variance is noise from GoTrue contention.
 2. **Local JWT verification** — eliminate GoTrue HTTP round-trip
 3. **Profile with `performance.now()` instrumentation** around graph build, LLM call, checkpointer ops
 
-#### Task-05: Implement fixes for identified bottlenecks
+#### Task-05: Implement fixes for identified bottlenecks — 🟢 COMPLETE
 
-Based on Task-04 findings. Likely fixes:
-- Graph caching (if Suspect 1 confirmed)
-- Auth result caching / local JWT verification (if Suspect 3 confirmed)
-- Pool tuning (if Suspect 4 confirmed)
+**Completed in Session 40.**
 
-#### Task-06: Final benchmark with real LLM
+**Three fixes implemented:**
 
-- Run identical Ministral benchmark (10 VUs, ramp-up, 90s)
-- Compare with Session 37 baseline results
-- Target: TS run/wait p95 should be ≤ Python's 429ms (currently 3.2s)
+**Fix 1: Graph Caching (TOP PRIORITY) ✅**
+- Created `apps/ts/src/graphs/graph-cache.ts` (379 lines, fully documented)
+- Cache key: SHA-256 hash of `(graph_id, model_name, temperature, max_tokens, system_prompt, base_url, custom_model_name, mcp_config, rag)` — 16-char hex prefix
+- Runtime fields (thread_id, run_id, assistant_id, x-supabase-access-token) are NOT in cache key — passed at invoke() time
+- TTL: 5 minutes default, configurable via `GRAPH_CACHE_TTL_MS` env var
+- `getOrBuildGraph()` — transparent cache-or-build with timing logs
+- Lazy TTL eviction on access + `evictExpiredEntries()` for proactive cleanup
+- `getGraphCacheStats()` for monitoring (size, totalHits, totalMisses, per-entry details)
+- `clearGraphCache()` wired into shutdown flow in `index.ts`
+- Validated by LangGraph docs: compiled graphs are safe to reuse across threads — `thread_id` is runtime config, not compile-time
+- Updated `runs.ts` and `streams.ts` to use `getOrBuildGraph()` instead of raw `buildGraph()` calls
+- Exported via `graphs/index.ts`
+
+**Fix 2: Local JWT Verification ✅**
+- Added `verifyTokenLocal()` to `apps/ts/src/infra/security/auth.ts` (HS256 via Bun.CryptoHasher)
+- Uses Bun's native C/Zig HMAC-SHA256 — 0.008ms per verification (measured: 1000 calls in 8.3ms)
+- Theoretical throughput: ~120,000 req/s vs GoTrue's ~30 req/s (4000x improvement)
+- Opt-in via `SUPABASE_JWT_SECRET` env var — falls back to HTTP GoTrue when not set
+- `verifyTokenAuto()` transparently selects strategy (local vs HTTP)
+- `logVerificationStrategy()` logs active strategy at startup
+- Constant-time signature comparison to prevent timing attacks
+- Validates: HS256 algorithm, JWT structure (3 parts), expiration, `sub` claim
+- Supabase JWT payload: `sub`→identity, `email`→email, `user_metadata`→metadata
+- Updated `middleware/auth.ts` to use `verifyTokenAuto` instead of `verifyToken`
+- Tradeoff documented: local verification cannot detect revoked tokens (acceptable for benchmarks, per Supabase docs)
+- Reference: https://supabase.com/docs/guides/auth/jwts, https://bun.com/docs/runtime/hashing
+
+**Fix 3: Performance Instrumentation ✅**
+- Added `Bun.nanoseconds()` timing around key operations (per Bun docs — more precise than `performance.now()`)
+- `[perf] Graph cache HIT/MISS` — cache lookup vs cold build time
+- `[perf] Agent invoke` — LLM call + tool execution duration
+- `[perf] Checkpoint state read` — `agent.getState()` after invoke
+- Instrumented in both `runs.ts` (sync run/wait) and `streams.ts` (SSE streaming)
+- All timings logged with threadId/runId for correlation
+
+**Test results:**
+- 2030 tests pass (107 new: 60 graph-cache + 47 auth-local-jwt)
+- 0 failures
+- New test files:
+  - `tests/graph-cache.test.ts` — cache key computation, TTL eviction, hit/miss tracking, concurrent access, getOrBuildGraph integration
+  - `tests/auth-local-jwt.test.ts` — valid JWTs, expired tokens, invalid signatures, malformed JWTs, unsupported algorithms, missing claims, strategy selection, performance benchmark, edge cases (unicode, long claims, kid header)
+
+**Files modified:**
+- `apps/ts/src/graphs/graph-cache.ts` — NEW (379 lines)
+- `apps/ts/src/graphs/index.ts` — Added graph cache exports
+- `apps/ts/src/routes/runs.ts` — getOrBuildGraph + perf instrumentation
+- `apps/ts/src/routes/streams.ts` — getOrBuildGraph + perf instrumentation
+- `apps/ts/src/infra/security/auth.ts` — verifyTokenLocal, verifyTokenAuto, logVerificationStrategy
+- `apps/ts/src/middleware/auth.ts` — switched to verifyTokenAuto
+- `apps/ts/src/index.ts` — clearGraphCache in shutdown
+- `apps/ts/tests/graph-cache.test.ts` — NEW (60 tests)
+- `apps/ts/tests/auth-local-jwt.test.ts` — NEW (47 tests)
+
+**Cross-references with docs:**
+- LangGraph persistence docs confirm compile-once, invoke-many pattern with checkpointer + different thread_ids
+- Bun.CryptoHasher docs: `new Bun.CryptoHasher("sha256", key)` for native HMAC-SHA256
+- Bun.nanoseconds() docs: recommended for high-precision benchmarking
+- Supabase JWT docs: HS256 payload structure (sub, email, user_metadata, exp)
+
+#### Task-06: Final benchmark with real LLM — ⚪ NOT STARTED
+
+- Run identical Ministral benchmark (10 VUs, ramp-up, 90s) with graph caching + local JWT enabled
+- Set `SUPABASE_JWT_SECRET` env var to enable local verification
+- Compare with Session 37 baseline results (TS: 3.2s p95, Python: 429ms p95)
+- Target: TS run/wait p95 should be ≤ Python's 429ms
+- Expect significant improvement from:
+  - Graph caching: eliminates per-request model instantiation + tool fetch + compile
+  - Local JWT: eliminates GoTrue HTTP bottleneck (~30 req/s → ~120,000 req/s)
+  - Performance instrumentation: identify any remaining bottlenecks
 
 ---
 
@@ -256,6 +319,21 @@ Based on Task-04 findings. Likely fixes:
 | 2026-02-16 | Investigate beyond Postgres drivers | 2.8s gap can't be driver overhead — must find root cause |
 | 2026-02-16 | Pass raw JS objects for JSONB (not JSON.stringify) | Bun.sql auto-serializes plain objects as JSONB natively; JSON.stringify causes double-encoding |
 | 2026-02-16 | Use `sql.reserve()` in BunPoolAdapter.connect() | PostgresSaver does manual BEGIN/COMMIT/ROLLBACK requiring all statements on the same connection; `reserve()` pins a connection from the Bun.sql pool |
+
+### Session 40 Implementation Notes (Task-05)
+
+**Architecture decisions:**
+- Graph cache uses module-level `Map<string, CachedGraphEntry>` — simple, no external deps
+- Cache key is a 16-char hex prefix of SHA-256 hash (64 bits of entropy — sufficient for dedup)
+- No deduplication lock for concurrent builds of same config — acceptable because builds are idempotent and the worst case is 2-3 redundant builds on first cold start
+- Local JWT verification is synchronous (no async) — HMAC-SHA256 is CPU-bound, no I/O
+- JWT secret bytes cached in module-level variable — encoded once, reused for all verifications
+
+**Performance characteristics:**
+- Graph cache hit: ~0.001ms (Map lookup + timestamp check)
+- Graph cache miss: depends on graph complexity (model init + MCP tools + compile)
+- Local JWT verification: 0.008ms per call (measured)
+- `Bun.nanoseconds()` used instead of `performance.now()` for sub-microsecond precision
 
 ### Session 39 Implementation Notes
 

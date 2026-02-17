@@ -26,6 +26,7 @@ import { registerCronRoutes } from "./routes/crons";
 import { registerA2ARoutes } from "./routes/a2a";
 import { authMiddleware, logAuthStatus } from "./middleware/auth";
 import { initializeStorage, shutdownStorage, getStorage } from "./storage";
+import { clearGraphCache } from "./graphs/graph-cache";
 import { getConnection } from "./storage/database";
 import { initializeLangfuse, shutdownLangfuse } from "./infra/tracing";
 import { registerStorageCountsCallback } from "./infra/metrics";
@@ -264,6 +265,9 @@ if (import.meta.main) {
 
     // Flush Langfuse traces and shut down client
     await shutdownLangfuse();
+
+    // Clear cached compiled graphs
+    clearGraphCache();
 
     // Close database connections and reset storage singletons
     await shutdownStorage();

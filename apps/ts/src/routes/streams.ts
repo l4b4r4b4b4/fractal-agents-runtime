@@ -41,6 +41,7 @@ import type { Router, RouteHandler } from "../router";
 import type { RunCreateStateful } from "../models/run";
 import { getStorage, getCheckpointer } from "../storage/index";
 import { resolveGraphFactory } from "../graphs/index";
+import { getOrBuildGraph } from "../graphs/graph-cache";
 import { injectTracing } from "../infra/tracing";
 import {
   notFound,
@@ -213,7 +214,14 @@ export async function* executeRunStream(
     config,
   );
 
-  // 4. Build agent from graph registry
+  // 4. Get or build agent (cached by graph_id + config hash).
+  //
+  // LangGraph compiled graphs are safe to reuse across threads —
+  // thread_id is passed at invoke() time via configurable, not at
+  // compile time. The checkpointer is a singleton.
+  //
+  // Reference: LangGraph persistence docs — compile once, invoke many.
+  const effectiveGraphId = graphId ?? "agent";
   let agent: {
     invoke: (
       input: Record<string, unknown>,
@@ -225,10 +233,16 @@ export async function* executeRunStream(
   };
 
   try {
-    const buildGraph = resolveGraphFactory(graphId ?? undefined);
-    agent = (await buildGraph(configurable, {
-      checkpointer: getCheckpointer(),
-    })) as typeof agent;
+    agent = (await getOrBuildGraph(
+      effectiveGraphId,
+      configurable,
+      async () => {
+        const buildGraph = resolveGraphFactory(effectiveGraphId);
+        return buildGraph(configurable, {
+          checkpointer: getCheckpointer(),
+        });
+      },
+    )) as typeof agent;
   } catch (agentBuildError: unknown) {
     const message =
       agentBuildError instanceof Error
@@ -334,7 +348,12 @@ export async function* executeRunStream(
       tags: ["bun", "streaming"],
     });
 
+    const invokeStartNs = Bun.nanoseconds();
     const result = await agent.invoke(agentInput, tracedConfig) as Record<string, unknown>;
+    const invokeElapsedMs = (Bun.nanoseconds() - invokeStartNs) / 1_000_000;
+    console.log(
+      `[perf] Agent invoke (stream): ${invokeElapsedMs.toFixed(1)}ms threadId=${threadId} runId=${runId}`,
+    );
 
     // Extract messages from result — only process NEW messages for SSE
     // events. The first `previousMessageCount` messages are from prior
@@ -448,7 +467,12 @@ export async function* executeRunStream(
         ...configurable,
       },
     };
+    const stateReadStartNs = Bun.nanoseconds();
     const checkpointState = await agent.getState(runnableConfig);
+    const stateReadElapsedMs = (Bun.nanoseconds() - stateReadStartNs) / 1_000_000;
+    console.log(
+      `[perf] Checkpoint state read (stream): ${stateReadElapsedMs.toFixed(1)}ms threadId=${threadId}`,
+    );
     if (checkpointState?.values) {
       // Serialize accumulated messages from the checkpointer.
       // The checkpointer returns LangChain message objects — we need

@@ -116,6 +116,18 @@ Goal 02 next priority — commit all, push, PR, Docker build, AKS deploy, tag v0
 
 ## Recent Activity
 
+### 2026-02-16 — Session 40 (Goal 33 Task-04 🟢 + Task-05 🟢 — Graph Caching + Local JWT + Perf Instrumentation)
+
+- **Task-04 🟢:** Investigation complete — graph re-compilation per request confirmed as top optimization target
+- **Task-05 🟢:** Implemented three performance fixes:
+  - **Graph caching** (`graph-cache.ts`, 379 lines): Caches compiled LangGraph agents keyed by SHA-256 hash of `(graph_id, model_name, temperature, max_tokens, system_prompt, base_url, custom_model_name, mcp_config, rag)`. Runtime fields (thread_id, run_id, token) NOT in cache key — passed at invoke() time. 5-min TTL (env-configurable). Validated by LangGraph docs: compile-once, invoke-many pattern.
+  - **Local JWT verification** (`auth.ts`): HS256 verification via Bun.CryptoHasher (native C/Zig HMAC-SHA256). 0.008ms/call = ~120,000 req/s vs GoTrue's ~30 req/s (4000x improvement). Opt-in via `SUPABASE_JWT_SECRET` env var. Constant-time signature comparison. Falls back to HTTP GoTrue when not set.
+  - **Performance instrumentation**: `Bun.nanoseconds()` timings around graph cache lookup/build, agent invoke, checkpoint state read in both `runs.ts` and `streams.ts`. Logged as `[perf]` prefix for easy grep.
+- **Tests:** 2030 pass (+107 new: 60 graph-cache + 47 auth-local-jwt), 0 failures
+- **Files:** `graph-cache.ts` (NEW), `graphs/index.ts`, `runs.ts`, `streams.ts`, `auth.ts`, `middleware/auth.ts`, `index.ts`, 2 new test files
+- **Task-06 ⚪:** Next — re-run Ministral benchmark with caching + local JWT, target p95 ≤ Python's 429ms
+- Branch: `feat/ts-v0.0.2-auth-persistence-store` (uncommitted, ready to commit)
+
 ### 2026-02-16 — Session 39 (Goal 33 Tasks 01-03 🟢 + Task-04 🟡 — Bun.sql Native Postgres Driver)
 
 - **Task-01 🟢:** Replaced `postgres` (Postgres.js) with `import { SQL } from "bun"` in `database.ts` + `postgres.ts`

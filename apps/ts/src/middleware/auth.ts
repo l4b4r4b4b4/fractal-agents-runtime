@@ -18,7 +18,8 @@
 
 import {
   isAuthEnabled,
-  verifyToken,
+  verifyTokenAuto,
+  logVerificationStrategy,
   AuthenticationError,
 } from "../infra/security/auth";
 import { setCurrentUser, setCurrentToken, clearCurrentUser } from "./context";
@@ -174,7 +175,7 @@ export async function authMiddleware(
 
   // ── Verify token with Supabase ─────────────────────────────────────
   try {
-    const user = await verifyToken(token);
+    const user = await verifyTokenAuto(token);
     setCurrentUser(user);
     setCurrentToken(token);
     return null;
@@ -200,7 +201,8 @@ export async function authMiddleware(
  * Log the auth configuration status at startup.
  *
  * Call this once during server initialization (in `index.ts`) to inform
- * the operator whether authentication is active or disabled.
+ * the operator whether authentication is active or disabled, and which
+ * JWT verification strategy is in use.
  */
 export function logAuthStatus(): void {
   if (isAuthEnabled()) {
@@ -210,4 +212,7 @@ export function logAuthStatus(): void {
       "[auth] ⚠️  Supabase not configured — authentication disabled (all requests pass through)",
     );
   }
+
+  // Log which JWT verification strategy is active (local HS256 vs HTTP GoTrue)
+  logVerificationStrategy();
 }

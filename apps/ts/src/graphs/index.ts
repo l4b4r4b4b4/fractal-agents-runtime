@@ -27,3 +27,12 @@ export {
 } from "./registry";
 
 export { DEFAULT_GRAPH_ID, type GraphFactory, type GraphFactoryOptions } from "./types";
+
+export {
+  getOrBuildGraph,
+  clearGraphCache,
+  getGraphCacheStats,
+  evictExpiredEntries,
+  computeCacheKey,
+  type GraphCacheStats,
+} from "./graph-cache";
