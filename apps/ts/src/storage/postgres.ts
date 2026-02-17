@@ -3,7 +3,7 @@
  *
  * Provides `PostgresAssistantStore`, `PostgresThreadStore`, and `PostgresRunStore`
  * that implement the same interfaces as the in-memory stores in `memory.ts`.
- * All queries use parameterized SQL via Postgres.js tagged template literals
+ * All queries use parameterized SQL via Bun.sql tagged template literals
  * to prevent SQL injection.
  *
  * ## Schema
@@ -21,15 +21,15 @@
  *
  * ## Connection Management
  *
- * Each store receives the Postgres.js `Sql` client from `database.ts`.
- * Postgres.js handles connection pooling internally. Unlike the Python
- * runtime (per-request connections due to multi-event-loop issues), Bun
- * is single-threaded, so a shared pool is correct.
+ * Each store receives the Bun.sql `SQL` client from `database.ts`.
+ * Bun.sql uses native C/Zig bindings with built-in connection pooling.
+ * Unlike the Python runtime (per-request connections due to multi-event-loop
+ * issues), Bun is single-threaded, so a shared pool is correct.
  *
  * Reference: apps/python/src/server/postgres_storage.py
  */
 
-import type { Sql, JSONValue } from "postgres";
+import { SQL } from "bun";
 
 import type {
   Assistant,
@@ -82,14 +82,15 @@ function utcNow(): string {
 }
 
 /**
- * Cast a value to `JSONValue` for Postgres.js `sql.json()`.
+ * Serialize a value to a JSON string for JSONB columns.
  *
- * Postgres.js's `sql.json()` accepts `JSONValue`, but our types use
- * `Record<string, unknown>` which isn't directly assignable. This helper
- * performs a safe cast since all our values are JSON-serializable objects.
+ * Bun.sql passes values as typed parameters. For JSONB columns, we
+ * serialize to a JSON string and rely on Postgres to auto-cast
+ * `text → jsonb` (works for INSERT/UPDATE target columns and JSONB
+ * operators like `@>`).
  */
-function asJson(value: unknown): JSONValue {
-  return (value ?? {}) as JSONValue;
+function toJsonb(value: unknown): string {
+  return JSON.stringify(value ?? {});
 }
 
 /**
@@ -146,8 +147,11 @@ function formatTimestamp(value: unknown): string {
  *
  * Reference: apps/python/src/server/postgres_storage.py → PostgresAssistantStore
  */
+/** Type alias for the Bun.sql client instance used throughout storage. */
+type BunSql = InstanceType<typeof SQL>;
+
 export class PostgresAssistantStore implements AssistantStore {
-  constructor(private readonly sql: Sql) {}
+  constructor(private readonly sql: BunSql) {}
 
   async create(data: AssistantCreate): Promise<Assistant> {
     const assistantId = data.assistant_id || generateId();
@@ -184,9 +188,9 @@ export class PostgresAssistantStore implements AssistantStore {
       VALUES (
         ${assistantId},
         ${data.graph_id},
-        ${this.sql.json(asJson(parsedConfig))},
-        ${this.sql.json(asJson(data.context ?? {}))},
-        ${this.sql.json(asJson(data.metadata ?? {}))},
+        ${toJsonb(parsedConfig)},
+        ${toJsonb(data.context ?? {})},
+        ${toJsonb(data.metadata ?? {})},
         ${data.name ?? null},
         ${data.description ?? null},
         ${1},
@@ -218,14 +222,14 @@ export class PostgresAssistantStore implements AssistantStore {
     const sortOrder = request.sort_order ?? "desc";
 
     // Build dynamic query with conditional WHERE clauses
-    // Postgres.js tagged templates handle parameterization safely
+    // Bun.sql tagged templates handle parameterization safely
     let rows;
 
     if (request.graph_id && request.metadata && Object.keys(request.metadata).length > 0) {
       rows = await this.sql`
         SELECT * FROM ${this.sql(SCHEMA)}.assistants
         WHERE graph_id = ${request.graph_id}
-          AND metadata @> ${this.sql.json(asJson(request.metadata))}
+          AND metadata @> ${toJsonb(request.metadata)}::jsonb
           ${request.name ? this.sql`AND name ILIKE ${"%" + request.name + "%"}` : this.sql``}
         ORDER BY ${this.sql(sortBy)} ${sortOrder === "asc" ? this.sql`ASC` : this.sql`DESC`}
         LIMIT ${limit} OFFSET ${offset}
@@ -241,7 +245,7 @@ export class PostgresAssistantStore implements AssistantStore {
     } else if (request.metadata && Object.keys(request.metadata).length > 0) {
       rows = await this.sql`
         SELECT * FROM ${this.sql(SCHEMA)}.assistants
-        WHERE metadata @> ${this.sql.json(asJson(request.metadata))}
+        WHERE metadata @> ${toJsonb(request.metadata)}::jsonb
           ${request.name ? this.sql`AND name ILIKE ${"%" + request.name + "%"}` : this.sql``}
         ORDER BY ${this.sql(sortBy)} ${sortOrder === "asc" ? this.sql`ASC` : this.sql`DESC`}
         LIMIT ${limit} OFFSET ${offset}
@@ -303,9 +307,9 @@ export class PostgresAssistantStore implements AssistantStore {
       UPDATE ${this.sql(SCHEMA)}.assistants
       SET
         graph_id = ${data.graph_id ?? existing.graph_id},
-        config = ${this.sql.json(asJson(updatedConfig))},
-        context = ${this.sql.json(asJson(data.context ?? existing.context ?? {}))},
-        metadata = ${this.sql.json(asJson(mergedMetadata))},
+        config = ${toJsonb(updatedConfig)},
+        context = ${toJsonb(data.context ?? existing.context ?? {})},
+        metadata = ${toJsonb(mergedMetadata)},
         name = ${data.name ?? existing.name ?? null},
         description = ${data.description ?? existing.description ?? null},
         version = ${newVersion},
@@ -331,7 +335,7 @@ export class PostgresAssistantStore implements AssistantStore {
       rows = await this.sql`
         SELECT COUNT(*)::int AS count FROM ${this.sql(SCHEMA)}.assistants
         WHERE graph_id = ${request.graph_id}
-          AND metadata @> ${this.sql.json(asJson(request.metadata))}
+          AND metadata @> ${toJsonb(request.metadata)}::jsonb
           ${request.name ? this.sql`AND name ILIKE ${"%" + request.name + "%"}` : this.sql``}
       `;
     } else if (request?.graph_id) {
@@ -343,7 +347,7 @@ export class PostgresAssistantStore implements AssistantStore {
     } else if (request?.metadata && Object.keys(request.metadata).length > 0) {
       rows = await this.sql`
         SELECT COUNT(*)::int AS count FROM ${this.sql(SCHEMA)}.assistants
-        WHERE metadata @> ${this.sql.json(asJson(request.metadata))}
+        WHERE metadata @> ${toJsonb(request.metadata)}::jsonb
           ${request?.name ? this.sql`AND name ILIKE ${"%" + request.name + "%"}` : this.sql``}
       `;
     } else if (request?.name) {
@@ -405,7 +409,7 @@ export class PostgresAssistantStore implements AssistantStore {
  * Reference: apps/python/src/server/postgres_storage.py → PostgresThreadStore
  */
 export class PostgresThreadStore implements ThreadStore {
-  constructor(private readonly sql: Sql) {}
+  constructor(private readonly sql: BunSql) {}
 
   async create(data: ThreadCreate, ownerId?: string): Promise<Thread> {
     const threadId = data.thread_id || generateId();
@@ -438,11 +442,11 @@ export class PostgresThreadStore implements ThreadStore {
         (id, metadata, config, status, values, interrupts, created_at, updated_at)
       VALUES (
         ${threadId},
-        ${this.sql.json(asJson(metadata))},
-        ${this.sql.json(asJson({}))},
+        ${toJsonb(metadata)},
+        ${toJsonb({})},
         ${"idle"},
-        ${this.sql.json(asJson({}))},
-        ${this.sql.json(asJson({}))},
+        ${toJsonb({})},
+        ${toJsonb({})},
         ${now},
         ${now}
       )
@@ -497,7 +501,7 @@ export class PostgresThreadStore implements ThreadStore {
       rows = await this.sql`
         SELECT * FROM ${this.sql(SCHEMA)}.threads
         WHERE status = ${request.status}
-          AND metadata @> ${this.sql.json(asJson(effectiveMetadata!))}
+          AND metadata @> ${toJsonb(effectiveMetadata!)}::jsonb
         ORDER BY ${this.sql(sortBy)} ${sortOrder === "asc" ? this.sql`ASC` : this.sql`DESC`}
         LIMIT ${limit} OFFSET ${offset}
       `;
@@ -511,7 +515,7 @@ export class PostgresThreadStore implements ThreadStore {
     } else if (hasMetadata) {
       rows = await this.sql`
         SELECT * FROM ${this.sql(SCHEMA)}.threads
-        WHERE metadata @> ${this.sql.json(asJson(effectiveMetadata!))}
+        WHERE metadata @> ${toJsonb(effectiveMetadata!)}::jsonb
         ORDER BY ${this.sql(sortBy)} ${sortOrder === "asc" ? this.sql`ASC` : this.sql`DESC`}
         LIMIT ${limit} OFFSET ${offset}
       `;
@@ -525,7 +529,7 @@ export class PostgresThreadStore implements ThreadStore {
 
     let results = rows.map((row) => this.rowToModel(row));
 
-    // Apply ID filter in JS (Postgres.js doesn't support dynamic IN easily)
+    // Apply ID filter in JS (dynamic IN with variable-length lists)
     if (request.ids && request.ids.length > 0) {
       const idSet = new Set(request.ids);
       results = results.filter((thread) => idSet.has(thread.thread_id));
@@ -579,9 +583,9 @@ export class PostgresThreadStore implements ThreadStore {
     await this.sql`
       UPDATE ${this.sql(SCHEMA)}.threads
       SET
-        metadata = ${this.sql.json(asJson(mergedMetadata))},
+        metadata = ${toJsonb(mergedMetadata)},
         status = ${effectiveStatus},
-        values = ${this.sql.json(asJson(effectiveValues ?? {}))},
+        values = ${toJsonb(effectiveValues ?? {})},
         updated_at = ${now}
       WHERE id = ${threadId}
     `;
@@ -622,7 +626,7 @@ export class PostgresThreadStore implements ThreadStore {
       rows = await this.sql`
         SELECT COUNT(*)::int AS count FROM ${this.sql(SCHEMA)}.threads
         WHERE status = ${request.status}
-          AND metadata @> ${this.sql.json(asJson(effectiveMetadata!))}
+          AND metadata @> ${toJsonb(effectiveMetadata!)}::jsonb
       `;
     } else if (request?.status) {
       rows = await this.sql`
@@ -632,7 +636,7 @@ export class PostgresThreadStore implements ThreadStore {
     } else if (hasMetadata) {
       rows = await this.sql`
         SELECT COUNT(*)::int AS count FROM ${this.sql(SCHEMA)}.threads
-        WHERE metadata @> ${this.sql.json(asJson(effectiveMetadata!))}
+        WHERE metadata @> ${toJsonb(effectiveMetadata!)}::jsonb
       `;
     } else {
       rows = await this.sql`
@@ -753,13 +757,13 @@ export class PostgresThreadStore implements ThreadStore {
         (thread_id, values, metadata, next, tasks, checkpoint_id, parent_checkpoint, interrupts, created_at)
       VALUES (
         ${threadId},
-        ${this.sql.json(asJson(snapshotValues))},
-        ${this.sql.json(asJson(thread.metadata ?? {}))},
+        ${toJsonb(snapshotValues)},
+        ${toJsonb(thread.metadata ?? {})},
         ${this.sql.array([] as string[])},
-        ${this.sql.json(asJson([]))},
+        ${toJsonb([])},
         ${checkpointId},
-        ${parentCheckpoint ? this.sql.json(asJson(parentCheckpoint)) : null},
-        ${this.sql.json(asJson([]))},
+        ${parentCheckpoint ? toJsonb(parentCheckpoint) : null},
+        ${toJsonb([])},
         ${now}
       )
     `;
@@ -768,7 +772,7 @@ export class PostgresThreadStore implements ThreadStore {
     await this.sql`
       UPDATE ${this.sql(SCHEMA)}.threads
       SET
-        values = ${this.sql.json(asJson(snapshotValues))},
+        values = ${toJsonb(snapshotValues)},
         updated_at = ${now}
       WHERE id = ${threadId}
     `;
@@ -879,7 +883,7 @@ export class PostgresThreadStore implements ThreadStore {
  * Reference: apps/python/src/server/postgres_storage.py → PostgresRunStore
  */
 export class PostgresRunStore implements RunStore {
-  constructor(private readonly sql: Sql) {}
+  constructor(private readonly sql: BunSql) {}
 
   async create(data: {
     thread_id: string;
@@ -908,8 +912,8 @@ export class PostgresRunStore implements RunStore {
         ${data.thread_id},
         ${data.assistant_id},
         ${status},
-        ${this.sql.json(asJson(data.metadata ?? {}))},
-        ${this.sql.json(asJson(data.kwargs ?? {}))},
+        ${toJsonb(data.metadata ?? {})},
+        ${toJsonb(data.kwargs ?? {})},
         ${data.multitask_strategy ?? "reject"},
         ${now},
         ${now}
@@ -1059,7 +1063,7 @@ export class PostgresRunStore implements RunStore {
  * Reference: apps/python/src/server/storage.py → StoreStorage
  */
 export class PostgresStoreStorage implements StoreStorage {
-  constructor(private readonly sql: Sql) {}
+  constructor(private readonly sql: BunSql) {}
 
   async put(
     namespace: string,
@@ -1072,8 +1076,7 @@ export class PostgresStoreStorage implements StoreStorage {
     const metadataValue = metadata ?? {};
 
     // Upsert: INSERT or UPDATE on conflict.
-    // Two paths to avoid mixing PendingQuery and JSONValue in the same
-    // tagged template (Postgres.js overload resolution fails otherwise).
+    // Two paths: with metadata update vs. without metadata update.
     let rows;
 
     if (metadata !== undefined) {
@@ -1081,11 +1084,11 @@ export class PostgresStoreStorage implements StoreStorage {
         INSERT INTO ${this.sql(SCHEMA)}.store_items
           (namespace, key, value, owner_id, metadata, created_at, updated_at)
         VALUES
-          (${namespace}, ${key}, ${this.sql.json(asJson(value))}, ${ownerId}, ${this.sql.json(asJson(metadataValue))}, ${now}, ${now})
+          (${namespace}, ${key}, ${toJsonb(value)}, ${ownerId}, ${toJsonb(metadataValue)}, ${now}, ${now})
         ON CONFLICT (namespace, key, owner_id)
         DO UPDATE SET
-          value = ${this.sql.json(asJson(value))},
-          metadata = ${this.sql.json(asJson(metadataValue))},
+          value = ${toJsonb(value)},
+          metadata = ${toJsonb(metadataValue)},
           updated_at = ${now}
         RETURNING *
       `;
@@ -1094,10 +1097,10 @@ export class PostgresStoreStorage implements StoreStorage {
         INSERT INTO ${this.sql(SCHEMA)}.store_items
           (namespace, key, value, owner_id, metadata, created_at, updated_at)
         VALUES
-          (${namespace}, ${key}, ${this.sql.json(asJson(value))}, ${ownerId}, ${this.sql.json(asJson(metadataValue))}, ${now}, ${now})
+          (${namespace}, ${key}, ${toJsonb(value)}, ${ownerId}, ${toJsonb(metadataValue)}, ${now}, ${now})
         ON CONFLICT (namespace, key, owner_id)
         DO UPDATE SET
-          value = ${this.sql.json(asJson(value))},
+          value = ${toJsonb(value)},
           updated_at = ${now}
         RETURNING *
       `;
@@ -1219,7 +1222,7 @@ export class PostgresStorage implements Storage {
    */
   readonly crons: InMemoryCronStore;
 
-  constructor(sql: Sql) {
+  constructor(sql: BunSql) {
     this.assistants = new PostgresAssistantStore(sql);
     this.threads = new PostgresThreadStore(sql);
     this.runs = new PostgresRunStore(sql);

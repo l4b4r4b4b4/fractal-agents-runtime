@@ -8,14 +8,15 @@
  *
  * - When `DATABASE_URL` is configured and the database has been
  *   successfully initialized via `initializeStorage()`, returns a
- *   `PostgresStorage` instance backed by Postgres.js.
+ *   `PostgresStorage` instance backed by Bun.sql (native C/Zig driver).
  * - When `DATABASE_URL` is not set (or initialization failed), falls
  *   back to `InMemoryStorage` — matching v0.0.1 behavior.
  *
  * ## Checkpointer Selection
  *
  * - When `DATABASE_URL` is configured → `PostgresSaver` from
- *   `@langchain/langgraph-checkpoint-postgres` (persistent across restarts)
+ *   `@langchain/langgraph-checkpoint-postgres`, injected with a
+ *   `BunPoolAdapter` wrapping Bun.sql (persistent across restarts)
  * - When `DATABASE_URL` is not set → `MemorySaver` from `@langchain/langgraph`
  *   (in-memory, resets on restart)
  *
@@ -34,6 +35,7 @@ import type { Storage } from "./types";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { InMemoryStorage } from "./memory";
 import { MemorySaver } from "@langchain/langgraph";
+import { BunPoolAdapter } from "./bun-pool-adapter";
 import {
   initializeDatabase,
   shutdownDatabase,
@@ -112,7 +114,8 @@ export function resetStorage(): void {
  * same `thread_id`, using the `add_messages` reducer.
  *
  * - When `DATABASE_URL` is configured → `PostgresSaver` from
- *   `@langchain/langgraph-checkpoint-postgres` (persistent, survives restarts)
+ *   `@langchain/langgraph-checkpoint-postgres`, backed by `BunPoolAdapter`
+ *   wrapping Bun.sql native driver (persistent, survives restarts)
  * - When `DATABASE_URL` is not set → `MemorySaver` (in-memory, same
  *   lifecycle as `InMemoryStorage`)
  *
@@ -131,12 +134,19 @@ export function getCheckpointer(): BaseCheckpointSaver {
           const { PostgresSaver } = require(
             "@langchain/langgraph-checkpoint-postgres",
           ) as {
-            PostgresSaver: {
-              fromConnString: (url: string) => BaseCheckpointSaver;
-            };
+            PostgresSaver: new (
+              pool: unknown,
+              serde?: unknown,
+              options?: unknown,
+            ) => BaseCheckpointSaver;
           };
-          checkpointer = PostgresSaver.fromConnString(dbUrl);
-          console.log("[storage] Using PostgresSaver checkpointer");
+          // Inject BunPoolAdapter (Bun.sql native driver) instead of pg.Pool
+          // to eliminate the pure-JS node-postgres overhead.
+          const pool = new BunPoolAdapter(dbUrl, { max: 20 });
+          checkpointer = new PostgresSaver(pool as any);
+          console.log(
+            "[storage] Using PostgresSaver checkpointer (via BunPoolAdapter → Bun.sql native driver)",
+          );
         } catch (error: unknown) {
           const message =
             error instanceof Error ? error.message : String(error);

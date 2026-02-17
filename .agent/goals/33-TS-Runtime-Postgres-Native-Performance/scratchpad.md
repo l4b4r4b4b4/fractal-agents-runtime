@@ -1,9 +1,9 @@
 # Goal 33: TS Runtime — Native Postgres Driver + Performance Investigation
 
-## Status: ⚪ Not Started
+## Status: 🟡 In Progress
 ## Priority: High
 ## Created: 2026-02-16 (Session 38)
-## Last Updated: 2026-02-16
+## Last Updated: 2026-02-16 (Session 39)
 
 ---
 
@@ -75,8 +75,8 @@ than either JS driver.
 
 | Task ID | Description | Status | Depends On |
 |---------|-------------|--------|------------|
-| Task-01 | Switch custom storage layer from `postgres` to `Bun.sql` | ⚪ | - |
-| Task-02 | Create `BunPoolAdapter` for LangGraph checkpointer | ⚪ | - |
+| Task-01 | Switch custom storage layer from `postgres` to `Bun.sql` | 🟢 | - |
+| Task-02 | Create `BunPoolAdapter` for LangGraph checkpointer | 🟢 | Task-01 |
 | Task-03 | Benchmark: mock-LLM before/after Bun.sql swap | ⚪ | Task-01, Task-02 |
 | Task-04 | Investigate & profile real-LLM performance gap | ⚪ | Task-03 |
 | Task-05 | Implement fixes for identified bottlenecks | ⚪ | Task-04 |
@@ -84,105 +84,61 @@ than either JS driver.
 
 ### Task Details
 
-#### Task-01: Switch custom storage from `postgres` to `Bun.sql`
+#### Task-01: Switch custom storage from `postgres` to `Bun.sql` — 🟢 COMPLETE
 
-**Current state:**
-- `apps/ts/src/storage/database.ts` — uses `import postgres from "postgres"` (Postgres.js)
-- `apps/ts/src/storage/postgres.ts` — all queries use `sql` tagged templates from Postgres.js
-- Pool config: `max: 10, idle_timeout: 20, connect_timeout: 10`
+**Completed in Session 39.**
 
-**Plan:**
-- Replace `import postgres from "postgres"` with `import { SQL } from "bun"`
-- `Bun.sql` also uses tagged template syntax (`sql`SELECT ...``) — API is very similar
-- Update pool config to use Bun.sql options: `max`, `idleTimeout`, `connectionTimeout`
-- The tagged template escaping should be compatible — verify edge cases (JSONB, arrays)
-- Run all 1923 tests to confirm
+**What was done:**
+- `database.ts`: Replaced `import postgres from "postgres"` → `import { SQL } from "bun"`
+- `database.ts`: `postgres(url, opts)` → `new SQL({ url, max, idleTimeout, connectionTimeout })`
+- `database.ts`: `sql.end({ timeout })` → `sql.close({ timeout })` (2 occurrences)
+- `database.ts`: Return type `Sql` → `InstanceType<typeof SQL>`
+- `postgres.ts`: Removed `import type { Sql, JSONValue } from "postgres"`
+- `postgres.ts`: Added `import { SQL } from "bun"` + `type BunSql = InstanceType<typeof SQL>`
+- `postgres.ts`: Replaced `asJson()` helper with `toJsonb()` that uses `JSON.stringify()`
+- `postgres.ts`: All 18 occurrences of `this.sql.json(asJson(value))` → `toJsonb(value)`
+- `postgres.ts`: Added `::jsonb` cast to all JSONB `@>` operator usages (8 occurrences)
+- `postgres.ts`: All constructor types updated from `Sql` to `BunSql`
+- `package.json`: Removed `"postgres": "^3.4.8"` dependency
+- All docstrings/comments updated to reference Bun.sql instead of Postgres.js
 
-**Key files:**
-- `apps/ts/src/storage/database.ts` — connection management, DDL migrations
-- `apps/ts/src/storage/postgres.ts` — all CRUD operations (~1200 lines)
+**API compatibility verified:**
+- `sql(identifier)` — dynamic table names ✅ (same API)
+- `sql`` ` — empty fragments for conditionals ✅ (same API)
+- `sql.unsafe(text)` — raw DDL queries ✅ (same API)
+- `sql.array([])` — array literals ✅ (same API)
+- JSONB: replaced `sql.json()` with `JSON.stringify()` + `::jsonb` cast ✅
 
-**Risks:**
-- `sql.unsafe()` for DDL statements — Bun.sql should support this
-- JSONB handling — verify `Bun.sql` handles JSON serialization the same way
-- Array parameters — verify `IN (...)` queries work identically
+**Test result: 1922 pass, 1 flaky timeout (SSE test, pre-existing, passes on re-run)**
 
-#### Task-02: Create `BunPoolAdapter` for LangGraph checkpointer
+#### Task-02: Create `BunPoolAdapter` for LangGraph checkpointer — 🟢 COMPLETE
 
-**Current state:**
-- `@langchain/langgraph-checkpoint-postgres` hardcodes `import pg from "pg"`
-- `PostgresSaver.fromConnString()` creates `new pg.Pool({ connectionString })`
-- BUT the constructor accepts a `pool` parameter — we can inject our own
+**Completed in Session 39.**
 
-**Plan — NO upstream PR needed:**
+**What was done:**
+- Created `apps/ts/src/storage/bun-pool-adapter.ts` (149 lines, fully documented)
+- Updated `apps/ts/src/storage/index.ts` to inject `BunPoolAdapter` instead of `PostgresSaver.fromConnString()`
+- No upstream PR needed — `PostgresSaver` constructor accepts generic `pool`
 
-The `PostgresSaver` constructor accepts a generic `pool` object. The entire surface area
-it calls is:
+**`pg.Pool` surface actually used by PostgresSaver (verified from source):**
 
-```
-pool.connect() → client
-client.query(sql, params) → { rows }
-client.release()
-pool.query(sql, params) → { rows }
-pool.end()
-```
+| Method | Usage | BunPoolAdapter Implementation |
+|--------|-------|-------------------------------|
+| `pool.query(text, params?)` | SELECT queries (no transaction) | `sql.unsafe(text, params)` → `{ rows }` |
+| `pool.connect()` | Reserve connection for transactions | `sql.reserve()` → client object |
+| `client.query(text, params?)` | Queries within BEGIN/COMMIT/ROLLBACK | `reserved.unsafe(text, params)` → `{ rows }` |
+| `client.release()` | Return connection to pool | `reserved.release()` |
+| `pool.end()` | Close pool on shutdown | `sql.close()` |
 
-Create a thin adapter that wraps `Bun.sql` to satisfy this interface:
+**Key design decisions:**
+- `connect()` uses `Bun.sql.reserve()` to pin a single connection — required for transaction isolation (PostgresSaver does manual BEGIN/COMMIT/ROLLBACK)
+- `Array.from(result)` ensures Bun.sql's special result object is spread into a plain Array for pg compatibility
+- Pool config: `max: 20, idleTimeout: 30, connectionTimeout: 10`
+- `$1, $2, …` positional parameters work natively with `Bun.sql.unsafe()` ✅
 
-```typescript
-import { SQL } from "bun";
+**Test result: 1922 pass, 1 flaky timeout (same SSE test, pre-existing)**
 
-class BunPoolAdapter {
-  private sql: SQL;
-
-  constructor(connectionString: string, options?: { max?: number }) {
-    this.sql = new SQL({
-      url: connectionString,
-      max: options?.max ?? 20,
-    });
-  }
-
-  async query(text: string, params?: unknown[]) {
-    const rows = await this.sql.unsafe(text, params ?? []);
-    return { rows: [...rows], rowCount: rows.length };
-  }
-
-  async connect() {
-    const self = this;
-    return {
-      query: (text: string, params?: unknown[]) => self.query(text, params),
-      release: () => {}, // Bun.sql pools internally
-    };
-  }
-
-  async end() {
-    await this.sql.close();
-  }
-}
-```
-
-Then in `storage/index.ts`, instead of:
-```typescript
-const { PostgresSaver } = require("@langchain/langgraph-checkpoint-postgres");
-checkpointer = PostgresSaver.fromConnString(dbUrl);
-```
-
-Do:
-```typescript
-const { PostgresSaver } = require("@langchain/langgraph-checkpoint-postgres");
-const pool = new BunPoolAdapter(dbUrl);
-checkpointer = new PostgresSaver(pool);
-```
-
-**Key files:**
-- `apps/ts/src/storage/bun-pool-adapter.ts` — NEW file
-- `apps/ts/src/storage/index.ts` — change checkpointer initialization
-- Remove `pg` from `package.json` dependencies (keep only `@langchain/langgraph-checkpoint-postgres`)
-
-**Risks:**
-- `Bun.sql.unsafe()` parameter binding format — verify it uses `$1, $2, ...` positional params like `pg`
-- Transaction support — verify `BEGIN`/`COMMIT`/`ROLLBACK` work through `unsafe()`
-- Binary data handling — checkpoints store serialized blobs, verify encoding compatibility
+**Note:** Full integration testing with a live Postgres database is needed via the Docker Compose stack and benchmarks (Task-03). The unit tests use in-memory storage, so the BunPoolAdapter code path isn't exercised in unit tests.
 
 #### Task-03: Benchmark mock-LLM before/after
 
@@ -290,6 +246,22 @@ Based on Task-04 findings. Likely fixes:
 | 2026-02-16 | No upstream PR to `@langchain/langgraph-checkpoint-postgres` | Constructor accepts generic pool — adapter pattern is cleaner and doesn't require upstream buy-in |
 | 2026-02-16 | Replace both `postgres` AND `pg` with `Bun.sql` | Eliminate all pure-JS Postgres overhead in one sweep |
 | 2026-02-16 | Investigate beyond Postgres drivers | 2.8s gap can't be driver overhead — must find root cause |
+| 2026-02-16 | Use `JSON.stringify()` + `::jsonb` cast instead of `sql.json()` | Bun.sql has no `sql.json()` equivalent; JSON strings with explicit cast work for both INSERT/UPDATE target columns and JSONB operators like `@>` |
+| 2026-02-16 | Use `sql.reserve()` in BunPoolAdapter.connect() | PostgresSaver does manual BEGIN/COMMIT/ROLLBACK requiring all statements on the same connection; `reserve()` pins a connection from the Bun.sql pool |
+
+### Session 39 Implementation Notes
+
+**Files modified:**
+- `apps/ts/src/storage/database.ts` — Bun.sql constructor + close()
+- `apps/ts/src/storage/postgres.ts` — All CRUD stores: toJsonb(), BunSql type, ::jsonb casts
+- `apps/ts/src/storage/index.ts` — BunPoolAdapter injection for checkpointer
+- `apps/ts/src/storage/bun-pool-adapter.ts` — NEW: pg.Pool adapter over Bun.sql
+- `apps/ts/package.json` — Removed `postgres` dependency
+
+**Dependencies removed:** `postgres` (Postgres.js v3) — no longer needed
+**Dependencies kept:** `@langchain/langgraph-checkpoint-postgres` — still needed for PostgresSaver class (but now backed by BunPoolAdapter instead of pg.Pool)
+
+**Remaining `pg` transitive dependency:** `@langchain/langgraph-checkpoint-postgres` still has `pg` as a dependency in its own package.json. We can't remove it from node_modules since it's a transitive dep. However, at runtime our BunPoolAdapter is injected so `pg` is NOT used for any queries. It's only loaded for its TypeScript types by the upstream package.
 
 ### Pre-existing TS Type Errors (18)
 

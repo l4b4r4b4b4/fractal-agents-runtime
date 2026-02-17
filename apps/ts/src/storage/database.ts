@@ -4,19 +4,21 @@
  * Provides:
  *   - `initializeDatabase()` — Probe connectivity, run DDL migrations
  *   - `shutdownDatabase()` — Close connection pool, reset state
- *   - `getConnection()` — Get the singleton Postgres.js SQL client
+ *   - `getConnection()` — Get the singleton Bun.sql SQL client
  *   - `isDatabaseEnabled()` — Check if DB was successfully initialized
  *   - `getDatabaseUrl()` — Return validated connection string
  *
- * Uses `postgres` (Postgres.js) for custom storage queries. This is separate
- * from the `pg` (node-postgres) client used internally by
- * `@langchain/langgraph-checkpoint-postgres` for checkpointing.
+ * Uses Bun's native `SQL` driver (C/Zig bindings) for custom storage
+ * queries. This replaces the previous pure-JS `postgres` (Postgres.js)
+ * driver for significantly better performance. The `pg` (node-postgres)
+ * client used internally by `@langchain/langgraph-checkpoint-postgres`
+ * for checkpointing is handled separately via `BunPoolAdapter`.
  *
  * ## Connection Management
  *
  * Unlike the Python runtime (which creates per-request connections due to
  * Robyn/Actix multi-event-loop issues), Bun is single-threaded.  A single
- * `postgres` client with built-in connection pooling is correct and
+ * `Bun.sql` client with built-in connection pooling is correct and
  * efficient.
  *
  * ## Schema Compatibility
@@ -29,14 +31,13 @@
  * Reference: apps/python/src/server/postgres_storage.py → _DDL
  */
 
-import postgres from "postgres";
-import type { Sql } from "postgres";
+import { SQL } from "bun";
 
 // ---------------------------------------------------------------------------
 // Module-level state
 // ---------------------------------------------------------------------------
 
-let sql: Sql | null = null;
+let sql: InstanceType<typeof SQL> | null = null;
 let databaseUrl: string | null = null;
 let initialized = false;
 
@@ -177,11 +178,12 @@ export async function initializeDatabase(): Promise<boolean> {
     // Parse pool settings from env
     const poolMax = parseInt(process.env.DATABASE_POOL_MAX_SIZE || "10", 10);
 
-    // Create the Postgres.js client with connection pooling
-    sql = postgres(resolvedUrl, {
+    // Create the Bun.sql client with native connection pooling
+    sql = new SQL({
+      url: resolvedUrl,
       max: Number.isFinite(poolMax) && poolMax > 0 ? poolMax : 10,
-      idle_timeout: 20,
-      connect_timeout: 10,
+      idleTimeout: 20,
+      connectionTimeout: 10,
     });
 
     // Fast-fail connectivity probe
@@ -195,7 +197,7 @@ export async function initializeDatabase(): Promise<boolean> {
 
     initialized = true;
     console.log(
-      "[database] ✅ Postgres persistence initialized (connection pooling via postgres.js)",
+      "[database] ✅ Postgres persistence initialized (connection pooling via Bun.sql native driver)",
     );
     return true;
   } catch (error: unknown) {
@@ -207,7 +209,7 @@ export async function initializeDatabase(): Promise<boolean> {
     // Clean up on failure
     if (sql) {
       try {
-        await sql.end({ timeout: 2 });
+        await sql.close({ timeout: 2 });
       } catch {
         // Ignore cleanup errors
       }
@@ -228,7 +230,7 @@ export async function initializeDatabase(): Promise<boolean> {
 export async function shutdownDatabase(): Promise<void> {
   if (sql) {
     try {
-      await sql.end({ timeout: 5 });
+      await sql.close({ timeout: 5 });
       console.log("[database] Connection pool closed");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -258,15 +260,15 @@ export function resetDatabase(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Get the singleton Postgres.js SQL client.
+ * Get the singleton Bun.sql SQL client.
  *
  * Returns `null` when the database has not been initialized or
  * `DATABASE_URL` is not configured. Callers should check
  * `isDatabaseEnabled()` before calling this, or handle `null`.
  *
- * @returns The Postgres.js SQL tagged template function, or `null`.
+ * @returns The Bun.sql SQL tagged template function, or `null`.
  */
-export function getConnection(): Sql | null {
+export function getConnection(): InstanceType<typeof SQL> | null {
   return sql;
 }
 
