@@ -1,6 +1,6 @@
 [project]
 name = "fractal-agents-runtime"
-version = "0.0.2"
+version = "0.0.3"
 description = "Free, self-hostable LangGraph agent runtime with MCP tools, RAG, and A2A protocol"
 authors = [
     { name = "l4b4r4b4b4" },
