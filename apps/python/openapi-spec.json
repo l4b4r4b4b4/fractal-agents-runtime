@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OAP LangGraph Runtime",
-    "version": "0.1.0",
+    "version": "0.0.3",
     "description": "\nRobyn-based LangGraph-compatible runtime for Open Agent Platform.\n\nThis API provides endpoints for managing assistants, threads, runs, and the store.\nIt implements the LangGraph API specification for compatibility with LangGraph clients.\n"
   },
   "tags": [
@@ -1702,20 +1702,30 @@
           "Store"
         ],
         "summary": "Delete Store Item",
-        "description": "Delete an item from the store.",
+        "description": "Delete an item from the store by namespace and key.",
         "operationId": "delete_store_item",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/StoreDeleteRequest"
-              }
-            }
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The namespace for the item."
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The key for the item to delete."
           }
-        },
+        ],
         "responses": {
-          "204": {
+          "200": {
             "description": "Item deleted successfully"
           },
           "404": {
@@ -1794,23 +1804,13 @@
       }
     },
     "/store/namespaces": {
-      "post": {
+      "get": {
         "tags": [
           "Store"
         ],
         "summary": "List Namespaces",
-        "description": "List namespaces in the store.",
+        "description": "List namespaces in the store for the authenticated user.",
         "operationId": "list_namespaces",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/StoreListNamespacesRequest"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "List of namespaces",
@@ -3669,11 +3669,10 @@
         "title": "StorePutRequest",
         "description": "Request to store an item."
       },
-      "StoreDeleteRequest": {
+      "StoreSearchRequest": {
         "type": "object",
         "required": [
-          "namespace",
-          "key"
+          "namespace"
         ],
         "properties": {
           "namespace": {
@@ -3682,27 +3681,7 @@
               "type": "string"
             },
             "title": "Namespace",
-            "description": "The namespace for the item."
-          },
-          "key": {
-            "type": "string",
-            "title": "Key",
-            "description": "The key for the item to delete."
-          }
-        },
-        "title": "StoreDeleteRequest",
-        "description": "Request to delete an item."
-      },
-      "StoreSearchRequest": {
-        "type": "object",
-        "properties": {
-          "namespace_prefix": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "title": "Namespace Prefix",
-            "description": "Filter by namespace prefix."
+            "description": "The namespace to search within."
           },
           "filter": {
             "type": "object",
@@ -3729,44 +3708,6 @@
         },
         "title": "StoreSearchRequest",
         "description": "Request to search store items."
-      },
-      "StoreListNamespacesRequest": {
-        "type": "object",
-        "properties": {
-          "prefix": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "title": "Prefix",
-            "description": "Filter by namespace prefix."
-          },
-          "suffix": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "title": "Suffix",
-            "description": "Filter by namespace suffix."
-          },
-          "max_depth": {
-            "type": "integer",
-            "title": "Max Depth",
-            "description": "Maximum namespace depth to return."
-          },
-          "limit": {
-            "type": "integer",
-            "title": "Limit",
-            "default": 100
-          },
-          "offset": {
-            "type": "integer",
-            "title": "Offset",
-            "default": 0
-          }
-        },
-        "title": "StoreListNamespacesRequest",
-        "description": "Request to list namespaces."
       },
       "Item": {
         "type": "object",

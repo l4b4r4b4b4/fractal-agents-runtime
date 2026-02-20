@@ -1,5 +1,9 @@
 /**
- * SSE streaming route handlers for the Fractal Agents Runtime — TypeScript/Bun.
+ * Stateful run streaming route handlers for the Fractal Agents Runtime — TypeScript/Bun.
+ *
+ * Owner isolation (v0.0.2): All thread access is scoped by the authenticated
+ * user's identity via `getUserIdentity()`. When auth is disabled, `ownerId`
+ * is `undefined` and no filtering is applied.
  *
  * These endpoints handle real-time streaming of agent execution:
  *
@@ -35,13 +39,16 @@
 
 import type { Router, RouteHandler } from "../router";
 import type { RunCreateStateful } from "../models/run";
-import { getStorage } from "../storage/index";
+import { getStorage, getCheckpointer } from "../storage/index";
 import { resolveGraphFactory } from "../graphs/index";
+import { getOrBuildGraph } from "../graphs/graph-cache";
+import { injectTracing } from "../infra/tracing";
 import {
   notFound,
   validationError,
   requireBody,
 } from "./helpers";
+import { getUserIdentity } from "../middleware/context";
 import {
   formatMetadataEvent,
   formatValuesEvent,
@@ -185,6 +192,7 @@ export async function* executeRunStream(
   config: Record<string, unknown> | null | undefined,
   assistantConfig: Record<string, unknown> | null | undefined,
   graphId?: string | null,
+  ownerId?: string,
 ): AsyncGenerator<string, void, unknown> {
   const storage = getStorage();
 
@@ -193,8 +201,9 @@ export async function* executeRunStream(
 
   // 2. Extract input messages and emit initial values
   const inputMessages = extractInputMessages(inputData);
-  const initialValues = { messages: inputMessages };
-  yield formatValuesEvent(initialValues);
+  // NOTE: Initial values event is deferred until after the checkpointer
+  // is available so we can read the full accumulated thread state
+  // (all previous messages) — not just the current run's input.
 
   // 3. Build configurable
   const configurable = buildRunnableConfig(
@@ -205,17 +214,35 @@ export async function* executeRunStream(
     config,
   );
 
-  // 4. Build agent from graph registry
+  // 4. Get or build agent (cached by graph_id + config hash).
+  //
+  // LangGraph compiled graphs are safe to reuse across threads —
+  // thread_id is passed at invoke() time via configurable, not at
+  // compile time. The checkpointer is a singleton.
+  //
+  // Reference: LangGraph persistence docs — compile once, invoke many.
+  const effectiveGraphId = graphId ?? "agent";
   let agent: {
     invoke: (
       input: Record<string, unknown>,
       config?: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
+    getState: (
+      config: Record<string, unknown>,
+    ) => Promise<{ values: Record<string, unknown> }>;
   };
 
   try {
-    const buildGraph = resolveGraphFactory(graphId ?? undefined);
-    agent = (await buildGraph(configurable)) as typeof agent;
+    agent = (await getOrBuildGraph(
+      effectiveGraphId,
+      configurable,
+      async () => {
+        const buildGraph = resolveGraphFactory(effectiveGraphId);
+        return buildGraph(configurable, {
+          checkpointer: getCheckpointer(),
+        });
+      },
+    )) as typeof agent;
   } catch (agentBuildError: unknown) {
     const message =
       agentBuildError instanceof Error
@@ -229,9 +256,77 @@ export async function* executeRunStream(
     return;
   }
 
-  // Track state for SSE event generation
-  const allMessages: Array<Record<string, unknown>> = [...inputMessages];
+  // Track current run's messages for SSE event generation.
+  // Full accumulated history is read from the checkpointer after invoke.
+  const currentRunMessages: Array<Record<string, unknown>> = [];
   let finalAiMessageDict: Record<string, unknown> | null = null;
+
+  // 4b. Read pre-existing checkpoint state so the initial `values`
+  // event contains the FULL accumulated thread state (all previous
+  // messages from earlier turns) plus the new input messages.
+  //
+  // On first turn there is no checkpoint yet, so we fall back to
+  // emitting only the input messages (which is correct).
+  const runnableConfig = {
+    configurable: {
+      thread_id: threadId,
+      ...configurable,
+    },
+  };
+
+  let previousMessageCount = 0;
+  let initialValues: { messages: Array<Record<string, unknown>> };
+  try {
+    const priorState = await agent.getState(runnableConfig);
+    const existingMessages = ((priorState?.values?.messages ?? []) as Array<unknown>);
+    previousMessageCount = existingMessages.length;
+
+    if (existingMessages.length > 0) {
+      // Serialize existing messages to plain dicts
+      const existingMessageDicts: Array<Record<string, unknown>> = [];
+      for (const message of existingMessages) {
+        if (typeof message === "object" && message !== null) {
+          const msgObj = message as Record<string, unknown>;
+          if (typeof (msgObj as { toJSON?: unknown }).toJSON === "function") {
+            existingMessageDicts.push(
+              (msgObj as { toJSON: () => Record<string, unknown> }).toJSON(),
+            );
+          } else {
+            const messageType =
+              typeof (msgObj as { _getType?: unknown })._getType === "function"
+                ? (msgObj as { _getType: () => string })._getType()
+                : String(msgObj.type ?? "unknown");
+            const serialized: Record<string, unknown> = {
+              content: String(msgObj.content ?? ""),
+              type: messageType,
+              id: (msgObj.id as string) ?? null,
+              additional_kwargs: msgObj.additional_kwargs ?? {},
+              response_metadata: msgObj.response_metadata ?? {},
+            };
+            if (messageType === "ai") {
+              serialized.tool_calls = msgObj.tool_calls ?? [];
+              serialized.invalid_tool_calls = msgObj.invalid_tool_calls ?? [];
+              serialized.usage_metadata = msgObj.usage_metadata ?? null;
+            }
+            existingMessageDicts.push(serialized);
+          }
+        }
+      }
+      // Combine: existing messages + new input messages
+      // This mirrors what the `add_messages` reducer will produce once the run starts.
+      initialValues = { messages: [...existingMessageDicts, ...inputMessages] };
+      console.log(
+        `[streams] Initial values: ${existingMessageDicts.length} existing + ${inputMessages.length} new = ${initialValues.messages.length} total messages for thread ${threadId}`,
+      );
+    } else {
+      initialValues = { messages: inputMessages };
+    }
+  } catch {
+    // First run on this thread — no prior state, emit only input messages
+    initialValues = { messages: inputMessages };
+  }
+
+  yield formatValuesEvent(initialValues);
 
   // 5. Invoke agent (synchronous invocation with SSE framing)
   //
@@ -239,17 +334,32 @@ export async function* executeRunStream(
   // True token-level streaming (`.streamEvents()`) will be added later.
   try {
     const agentInput = { messages: inputMessages };
-    const runnableConfig = {
-      configurable: {
-        thread_id: threadId,
-        ...configurable,
-      },
-    };
 
-    const result = await agent.invoke(agentInput, runnableConfig);
+    // The checkpointer accumulates messages across runs via the
+    // `add_messages` reducer. We only pass the NEW input messages —
+    // the checkpointer provides previous history to the LLM internally.
+    // previousMessageCount was already read above for the initial values event.
 
-    // Extract messages from result
-    const resultMessages = (result.messages ?? []) as Array<unknown>;
+    // 5b. Inject Langfuse tracing (no-op if not configured)
+    const tracedConfig = injectTracing(runnableConfig, {
+      userId: ownerId,
+      sessionId: threadId,
+      traceName: "agent-stream",
+      tags: ["bun", "streaming"],
+    });
+
+    const invokeStartNs = Bun.nanoseconds();
+    const result = await agent.invoke(agentInput, tracedConfig) as Record<string, unknown>;
+    const invokeElapsedMs = (Bun.nanoseconds() - invokeStartNs) / 1_000_000;
+    console.log(
+      `[perf] Agent invoke (stream): ${invokeElapsedMs.toFixed(1)}ms threadId=${threadId} runId=${runId}`,
+    );
+
+    // Extract messages from result — only process NEW messages for SSE
+    // events. The first `previousMessageCount` messages are from prior
+    // runs and should not be re-emitted to the client.
+    const allResultMessages = (result.messages ?? []) as Array<unknown>;
+    const resultMessages = allResultMessages.slice(previousMessageCount);
 
     for (const message of resultMessages) {
       // Determine message type and content
@@ -324,7 +434,7 @@ export async function* executeRunStream(
           finalAiMessageDict = serialized;
         }
 
-        allMessages.push(serialized);
+        currentRunMessages.push(serialized);
       }
     }
 
@@ -343,14 +453,87 @@ export async function* executeRunStream(
     // Don't return — still emit final values with what we have
   }
 
-  // 6. Emit final values event
-  const finalValues = { messages: allMessages };
+  // 6. Read full accumulated state from checkpointer.
+  //
+  // The checkpointer is the source of truth for message history.
+  // It accumulates messages across runs via the `add_messages` reducer.
+  // We read the full state and write it to the runtime storage so that
+  // `GET /threads/{id}/state` returns the complete conversation history.
+  let finalValues: Record<string, unknown>;
+  try {
+    const runnableConfig = {
+      configurable: {
+        thread_id: threadId,
+        ...configurable,
+      },
+    };
+    const stateReadStartNs = Bun.nanoseconds();
+    const checkpointState = await agent.getState(runnableConfig);
+    const stateReadElapsedMs = (Bun.nanoseconds() - stateReadStartNs) / 1_000_000;
+    console.log(
+      `[perf] Checkpoint state read (stream): ${stateReadElapsedMs.toFixed(1)}ms threadId=${threadId}`,
+    );
+    if (checkpointState?.values) {
+      // Serialize accumulated messages from the checkpointer.
+      // The checkpointer returns LangChain message objects — we need
+      // plain dicts for storage and SSE emission.
+      const accumulatedMessages = (checkpointState.values.messages ?? []) as Array<unknown>;
+      const serializedAccumulated: Array<Record<string, unknown>> = [];
+
+      for (const message of accumulatedMessages) {
+        if (typeof message === "object" && message !== null) {
+          const msgObj = message as Record<string, unknown>;
+          if (typeof (msgObj as { toJSON?: unknown }).toJSON === "function") {
+            serializedAccumulated.push(
+              (msgObj as { toJSON: () => Record<string, unknown> }).toJSON(),
+            );
+          } else {
+            // Already a plain dict or manually serialize
+            const messageType =
+              typeof (msgObj as { _getType?: unknown })._getType === "function"
+                ? (msgObj as { _getType: () => string })._getType()
+                : String(msgObj.type ?? "unknown");
+            const serialized: Record<string, unknown> = {
+              content: String(msgObj.content ?? ""),
+              type: messageType,
+              id: (msgObj.id as string) ?? null,
+              additional_kwargs: msgObj.additional_kwargs ?? {},
+              response_metadata: msgObj.response_metadata ?? {},
+            };
+            if (messageType === "ai") {
+              serialized.tool_calls = msgObj.tool_calls ?? [];
+              serialized.invalid_tool_calls = msgObj.invalid_tool_calls ?? [];
+              serialized.usage_metadata = msgObj.usage_metadata ?? null;
+            }
+            serializedAccumulated.push(serialized);
+          }
+        }
+      }
+
+      console.log(
+        `[streams] Read ${serializedAccumulated.length} accumulated messages from checkpointer for thread ${threadId}`,
+      );
+      finalValues = { messages: serializedAccumulated };
+    } else {
+      console.warn(
+        `[streams] Checkpointer returned empty state for thread ${threadId}, falling back to current run messages`,
+      );
+      finalValues = { messages: [...inputMessages, ...currentRunMessages] };
+    }
+  } catch (stateReadError: unknown) {
+    console.warn(
+      "[streams] Failed to read accumulated state from checkpointer, falling back to current run messages:",
+      stateReadError instanceof Error ? stateReadError.message : stateReadError,
+    );
+    finalValues = { messages: [...inputMessages, ...currentRunMessages] };
+  }
+
   yield formatValuesEvent(finalValues);
 
-  // Store final state in thread
+  // Store final state in thread (with correct key shape for addStateSnapshot)
   try {
-    await storage.threads.addStateSnapshot(threadId, finalValues as Record<string, unknown>);
-    await storage.threads.update(threadId, { values: finalValues as Record<string, unknown> });
+    await storage.threads.addStateSnapshot(threadId, { values: finalValues } as Record<string, unknown>, ownerId);
+    await storage.threads.update(threadId, { values: finalValues as Record<string, unknown> }, ownerId);
   } catch (persistError: unknown) {
     // Persistence failure should not prevent the stream from completing
     console.warn(
@@ -388,12 +571,14 @@ const createRunStream: RouteHandler = async (request, params) => {
 
   const storage = getStorage();
 
+  const ownerId = getUserIdentity();
+
   // Check if thread exists
   let effectiveThreadId = threadId;
-  const thread = await storage.threads.get(threadId);
+  const thread = await storage.threads.get(threadId, ownerId);
   if (thread === null) {
     if (body.if_not_exists === "create") {
-      const newThread = await storage.threads.create({});
+      const newThread = await storage.threads.create({}, ownerId);
       effectiveThreadId = newThread.thread_id;
     } else {
       return notFound(`Thread ${threadId} not found`);
@@ -425,7 +610,7 @@ const createRunStream: RouteHandler = async (request, params) => {
   });
 
   // Update thread status to busy
- await storage.threads.update(effectiveThreadId, { status: "busy" });
+ await storage.threads.update(effectiveThreadId, { status: "busy" }, ownerId);
 
   // Create the SSE generator with lifecycle management
   async function* streamWithLifecycle(): AsyncGenerator<
@@ -442,6 +627,7 @@ const createRunStream: RouteHandler = async (request, params) => {
         (body!.config as Record<string, unknown>) ?? null,
         (assistant!.config as Record<string, unknown>) ?? null,
         (assistant!.graph_id as string) ?? null,
+        ownerId,
       );
     } catch (streamError: unknown) {
       const message =
@@ -458,7 +644,7 @@ const createRunStream: RouteHandler = async (request, params) => {
       }
       await storage.threads.update(effectiveThreadId, {
         status: "idle" as const,
-      });
+      }, ownerId);
     }
   }
 
@@ -483,9 +669,10 @@ const joinRunStream: RouteHandler = async (_request, params) => {
   if (!runId) return validationError("run_id is required");
 
   const storage = getStorage();
+  const ownerId = getUserIdentity();
 
   // Check thread exists
-  const thread = await storage.threads.get(threadId);
+  const thread = await storage.threads.get(threadId, ownerId);
   if (thread === null) {
     return notFound(`Thread ${threadId} not found`);
   }
@@ -506,7 +693,7 @@ const joinRunStream: RouteHandler = async (_request, params) => {
     yield formatMetadataEvent(runId, 1);
 
     // Emit current values from thread state
-    const state = await storage.threads.getState(threadId);
+    const state = await storage.threads.getState(threadId, ownerId);
     if (state !== null) {
       const stateValues =
         typeof state === "object" && "values" in (state as unknown as Record<string, unknown>)

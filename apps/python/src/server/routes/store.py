@@ -8,8 +8,11 @@ Implements LangGraph-compatible key-value storage endpoints:
 - GET /store/namespaces — List namespaces
 """
 
+from __future__ import annotations
+
 import json
 import logging
+from urllib.parse import unquote
 
 from robyn import Request, Response, Robyn
 
@@ -18,6 +21,44 @@ from server.routes.helpers import error_response, json_response, parse_json_body
 from server.storage import get_storage
 
 logger = logging.getLogger(__name__)
+
+
+def _normalise_namespace(namespace: str | list[str] | None) -> str | None:
+    """Normalise a namespace value to a dot-joined string.
+
+    The LangGraph SDK convention sends namespaces as ``list[str]`` (tuple of
+    path segments) in JSON bodies (PUT, search).  Query parameters (GET,
+    DELETE) arrive as plain strings — or as JSON-encoded arrays when sent
+    by k6 / SDK clients.
+
+    This helper accepts both forms and returns a canonical dot-joined
+    string, matching the TS runtime's ``normaliseNamespace()`` from
+    ``routes/store.ts``.
+
+    Args:
+        namespace: A string, list of strings, or ``None`` from the request.
+
+    Returns:
+        The canonical dot-joined string, or ``None`` if the value is
+        empty / invalid.
+    """
+    if isinstance(namespace, list):
+        segments = [s for s in namespace if isinstance(s, str) and len(s) > 0]
+        return ".".join(segments) if segments else None
+    if isinstance(namespace, str) and len(namespace) > 0:
+        # Robyn does NOT URL-decode query parameter values, so a k6/SDK
+        # request like ``namespace=%5B%22a%22%2C%22b%22%5D`` arrives as
+        # the raw percent-encoded string.  URL-decode first, then try
+        # JSON-parse in case it's a JSON-encoded array (e.g. '["a","b"]').
+        url_decoded = unquote(namespace)
+        try:
+            decoded = json.loads(url_decoded)
+            if isinstance(decoded, list):
+                return _normalise_namespace(decoded)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return url_decoded
+    return None
 
 
 def register_store_routes(app: Robyn) -> None:
@@ -56,7 +97,7 @@ def register_store_routes(app: Robyn) -> None:
             return error_response("Invalid JSON in request body", 422)
 
         # Validate required fields
-        namespace = body.get("namespace")
+        namespace = _normalise_namespace(body.get("namespace"))
         key = body.get("key")
         value = body.get("value")
 
@@ -95,14 +136,16 @@ def register_store_routes(app: Robyn) -> None:
         except AuthenticationError as e:
             return error_response(e.message, 401)
 
-        # Parse query params
-        namespace = None
+        # Parse query params — namespace may be a plain string or a
+        # JSON-encoded array (e.g. '["benchmark","ts"]' from k6/SDK).
+        raw_namespace = None
         key = None
 
         if request.query_params:
-            namespace = request.query_params.get("namespace", None)
+            raw_namespace = request.query_params.get("namespace", None)
             key = request.query_params.get("key", None)
 
+        namespace = _normalise_namespace(raw_namespace)
         if not namespace:
             return error_response("namespace query parameter is required", 422)
         if not key:
@@ -135,14 +178,15 @@ def register_store_routes(app: Robyn) -> None:
         except AuthenticationError as e:
             return error_response(e.message, 401)
 
-        # Parse query params
-        namespace = None
+        # Parse query params — same normalisation as GET.
+        raw_namespace = None
         key = None
 
         if request.query_params:
-            namespace = request.query_params.get("namespace", None)
+            raw_namespace = request.query_params.get("namespace", None)
             key = request.query_params.get("key", None)
 
+        namespace = _normalise_namespace(raw_namespace)
         if not namespace:
             return error_response("namespace query parameter is required", 422)
         if not key:
@@ -188,7 +232,7 @@ def register_store_routes(app: Robyn) -> None:
         except json.JSONDecodeError:
             return error_response("Invalid JSON in request body", 422)
 
-        namespace = body.get("namespace")
+        namespace = _normalise_namespace(body.get("namespace"))
         if not namespace:
             return error_response("namespace is required", 422)
 

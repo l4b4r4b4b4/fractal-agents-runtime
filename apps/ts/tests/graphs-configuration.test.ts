@@ -161,7 +161,15 @@ describe("Graph Configuration — parseGraphConfig edge cases", () => {
       "temperature",
       "max_tokens",
       "system_prompt",
+      "base_url",
+      "custom_model_name",
+      "custom_api_key",
+      "mcp_config",
+      "rag",
+      "rag_config",
     ]);
+    // mcp_config with empty servers array parses to null
+    expect(config.mcp_config).toBeNull();
   });
 
   test("string temperature is coerced to number", () => {
@@ -326,14 +334,19 @@ describe("Graph Configuration — getEffectiveSystemPrompt", () => {
 // ---------------------------------------------------------------------------
 
 describe("Graph Configuration — return type", () => {
-  test("parseGraphConfig returns exactly 4 fields", () => {
+  test("parseGraphConfig returns exactly 10 fields", () => {
     const config = parseGraphConfig({});
     const keys = Object.keys(config);
-    expect(keys.length).toBe(4);
+    expect(keys.length).toBe(10);
     expect(keys).toContain("model_name");
     expect(keys).toContain("temperature");
     expect(keys).toContain("max_tokens");
     expect(keys).toContain("system_prompt");
+    expect(keys).toContain("base_url");
+    expect(keys).toContain("custom_model_name");
+    expect(keys).toContain("custom_api_key");
+    expect(keys).toContain("mcp_config");
+    expect(keys).toContain("rag");
   });
 
   test("all fields have correct types", () => {
@@ -344,11 +357,24 @@ describe("Graph Configuration — return type", () => {
     expect(typeof config.system_prompt).toBe("string");
   });
 
+  test("nullable fields default to null", () => {
+    const config = parseGraphConfig({});
+    expect(config.base_url).toBeNull();
+    expect(config.custom_model_name).toBeNull();
+    expect(config.custom_api_key).toBeNull();
+    expect(config.mcp_config).toBeNull();
+  });
+
   test("no undefined fields in returned config", () => {
     const config = parseGraphConfig({});
     expect(config.model_name).toBeDefined();
     expect(config.temperature).toBeDefined();
     expect(config.max_tokens).toBeDefined();
     expect(config.system_prompt).toBeDefined();
+    // Nullable fields are null, not undefined
+    expect(config.base_url).toBeDefined();
+    expect(config.custom_model_name).toBeDefined();
+    expect(config.custom_api_key).toBeDefined();
+    expect(config.mcp_config).toBeDefined();
   });
 });

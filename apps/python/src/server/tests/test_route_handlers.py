@@ -946,6 +946,33 @@ class TestStoreRouteGet:
 
         assert resp.status_code == 404
 
+    async def test_delete_with_url_encoded_json_array_namespace(self):
+        """DELETE with URL-encoded JSON array namespace matches PUT array."""
+        cap = _store_capture()
+        put_h = cap.get_handler("PUT", "/store/items")
+        del_h = cap.get_handler("DELETE", "/store/items")
+
+        with _patch_auth():
+            await put_h(
+                MockRequest(
+                    body={
+                        "namespace": ["benchmark", "ts"],
+                        "key": "k1",
+                        "value": {},
+                    }
+                )
+            )
+            resp = await del_h(
+                MockRequest(
+                    query_params={
+                        "namespace": "%5B%22benchmark%22%2C%22ts%22%5D",
+                        "key": "k1",
+                    }
+                )
+            )
+
+        assert resp.status_code == 200
+
     async def test_get_unauthenticated(self):
         cap = _store_capture()
         get_h = cap.get_handler("GET", "/store/items")
@@ -956,6 +983,74 @@ class TestStoreRouteGet:
             )
 
         assert resp.status_code == 401
+
+    async def test_get_with_url_encoded_json_array_namespace(self):
+        """GET with URL-encoded JSON array namespace (k6/SDK convention).
+
+        Robyn does NOT URL-decode query parameter values, so a request
+        like ``?namespace=%5B%22benchmark%22%2C%22ts%22%5D&key=k1``
+        arrives with the raw percent-encoded string.  The normaliser
+        must URL-decode then JSON-parse to match the dot-joined key
+        stored by PUT (which receives a plain list from JSON body).
+        """
+        cap = _store_capture()
+        put_h = cap.get_handler("PUT", "/store/items")
+        get_h = cap.get_handler("GET", "/store/items")
+
+        with _patch_auth():
+            # PUT with array namespace (from JSON body — already parsed)
+            await put_h(
+                MockRequest(
+                    body={
+                        "namespace": ["benchmark", "ts", "vu1"],
+                        "key": "k1",
+                        "value": {"data": 1},
+                    }
+                )
+            )
+            # GET with URL-encoded JSON array (simulates Robyn query param)
+            resp = await get_h(
+                MockRequest(
+                    query_params={
+                        "namespace": "%5B%22benchmark%22%2C%22ts%22%2C%22vu1%22%5D",
+                        "key": "k1",
+                    }
+                )
+            )
+
+        assert resp.status_code == 200
+        body = response_json(resp)
+        assert body["namespace"] == "benchmark.ts.vu1"
+        assert body["key"] == "k1"
+
+    async def test_get_with_plain_json_array_namespace(self):
+        """GET with already-decoded JSON array string (e.g. '["a","b"]')."""
+        cap = _store_capture()
+        put_h = cap.get_handler("PUT", "/store/items")
+        get_h = cap.get_handler("GET", "/store/items")
+
+        with _patch_auth():
+            await put_h(
+                MockRequest(
+                    body={
+                        "namespace": ["a", "b"],
+                        "key": "k2",
+                        "value": {"v": 2},
+                    }
+                )
+            )
+            resp = await get_h(
+                MockRequest(
+                    query_params={
+                        "namespace": '["a","b"]',
+                        "key": "k2",
+                    }
+                )
+            )
+
+        assert resp.status_code == 200
+        body = response_json(resp)
+        assert body["namespace"] == "a.b"
 
 
 class TestStoreRouteDelete:

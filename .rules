@@ -1,6 +1,6 @@
-# .rules for oap-langgraph-tools-agent
+# .rules for fractal-agents-runtime
 
-This file defines **hard** (must-follow) and **soft** (recommended) rules for oap-langgraph-tools-agent development. This repository is a fork/variant of the LangChain agent runtime for Open Agent Platform, with MCP servers and a LangConnect RAG tool. These guidelines maximize code quality, safety, and effective AI assistant collaboration.
+This file defines **hard** (must-follow) and **soft** (recommended) rules for fractal-agents-runtime development. This monorepo provides fully open-source LangGraph-compatible agent runtimes in Python (Robyn) and TypeScript (Bun) with MCP tool integration, ChromaDB archive RAG, LangConnect RAG, A2A protocol, multi-provider LLM, Supabase auth, and Postgres persistence. These guidelines maximize code quality, safety, and effective AI assistant collaboration.
 
 ---
 
@@ -128,7 +128,9 @@ UV is 10-100x faster, reproducible, follows PEP 621, single source of truth.
 
 ### LangGraph Tool Integration
 - **MCP tools** are fetched dynamically from remote MCP servers
-- **RAG tools** require Supabase authentication token
+- **LangConnect RAG tools** require Supabase authentication token (config key: `rag`)
+- **ChromaDB archive RAG** uses direct HTTP to ChromaDB v2 + TEI embeddings (config key: `rag_config`)
+- **Both RAG systems coexist** — different config keys, different files, both can be active simultaneously
 - **Tool authentication** must be handled gracefully with user-friendly error messages
 - **Tool descriptions** must be clear for LLM understanding
 

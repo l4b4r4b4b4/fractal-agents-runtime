@@ -2,15 +2,15 @@
 
 This document tracks the Robyn runtime server's **endpoint parity** with the `langgraph dev` (LangGraph API) surface area.
 
-**Current Status (Updated 2024-02-05):**
+**Current Status (Updated 2025-02-20):**
 - ✅ **Tier 1 Complete** — Core CRUD + SSE Streaming
-- ✅ **Tier 2 Complete** — Search/Count/List + Join Streams
+- ✅ **Tier 2 Complete** — Search/Count/List + Join Streams + Wait Endpoints
 - 🟡 **Tier 3 Partial** — Store + Metrics implemented; Crons/A2A/MCP deferred
 
 **Testing:**
-- 240+ unit tests passing
+- 130+ unit tests passing
 - Full integration tests with vLLM backend validated
-- 37 API routes registered and functional
+- 40 API routes registered and functional (including wait + background endpoints)
 
 > Source of truth for the desired contract: `langgraph dev` OpenAPI (`/openapi.json`).
 > A reference copy is checked in at: `.agent/tmp/langgraph-serve_openape_spec.json`.
@@ -172,11 +172,11 @@ Note: Each frame ends with a blank line (two newlines after `data:`).
 | `/threads/{thread_id}/runs/{run_id}` | GET | 1 | ✅ | Poll run status |
 | `/threads/{thread_id}/runs/stream` | POST | 1 | ✅ | **SSE create+stream with real agent execution** |
 | `/threads/{thread_id}/runs` | GET | 2 | ✅ | List runs for thread |
-| `/threads/{thread_id}/runs/wait` | POST | 2 | ⚪ | Create run and wait (deferred) |
+| `/threads/{thread_id}/runs/wait` | POST | 2 | ✅ | **Create run, wait for output (real agent execution via `ainvoke`)** |
 | `/threads/{thread_id}/runs/{run_id}/stream` | GET | 2 | ✅ | Join a run stream |
 | `/threads/{thread_id}/runs/{run_id}/join` | GET | 2 | ⚪ | Wait for run completion (deferred) |
-| `/threads/{thread_id}/runs/{run_id}/cancel` | POST | 2 | ⚪ | Cancel run (deferred) |
-| `/threads/{thread_id}/runs/{run_id}` | DELETE | 3 | ⚪ | Delete run (deferred) |
+| `/threads/{thread_id}/runs/{run_id}/cancel` | POST | 2 | ✅ | Cancel running/pending run |
+| `/threads/{thread_id}/runs/{run_id}` | DELETE | 2 | ✅ | Delete run |
 | `/runs/cancel` | POST | 3 | ⚪ | Cancel multiple runs (deferred) |
 
 ---
@@ -194,8 +194,8 @@ Note: Each frame ends with a blank line (two newlines after `data:`).
 | Endpoint | Method | Tier | Status | Notes |
 |---|---:|---:|---|---|
 | `/runs/stream` | POST | 1 | ✅ | **SSE for stateless execution with real agent** |
-| `/runs/wait` | POST | 2 | ⚪ | Stateless wait-for-output (deferred) |
-| `/runs` | POST | 2 | ⚪ | Stateless background run (deferred) |
+| `/runs/wait` | POST | 2 | ✅ | **Stateless wait-for-output (real agent execution via `ainvoke`)** |
+| `/runs` | POST | 2 | ✅ | **Stateless background run (blocks until completion)** |
 | `/runs/batch` | POST | 3 | ⚪ | Batch stateless run creation (deferred) |
 
 ---
@@ -208,7 +208,7 @@ Note: Each frame ends with a blank line (two newlines after `data:`).
 | `/store/items` | PUT | 3 | ✅ | Put item with owner isolation |
 | `/store/items` | DELETE | 3 | ✅ | Delete item |
 | `/store/items/search` | POST | 3 | ✅ | Search items with filters |
-| `/store/namespaces` | POST | 3 | ⚪ | List namespaces (deferred) |
+| `/store/namespaces` | GET | 3 | ⚪ | List namespaces (deferred) |
 
 ---
 
@@ -263,6 +263,13 @@ Note: Each frame ends with a blank line (two newlines after `data:`).
 - Join stream endpoints:
   - `GET /threads/{thread_id}/runs/{run_id}/stream` — Join run stream
   - `GET /threads/{thread_id}/stream` — Subscribe to thread activity
+- Wait (synchronous) endpoints with real agent execution:
+  - `POST /threads/{thread_id}/runs/wait` — Stateful wait (executes graph via `ainvoke`)
+  - `POST /runs/wait` — Stateless wait (ephemeral thread + `ainvoke`)
+  - `POST /runs` — Stateless background run (blocks until completion)
+- Run management:
+  - `POST /threads/{thread_id}/runs/{run_id}/cancel` — Cancel run
+  - `DELETE /threads/{thread_id}/runs/{run_id}` — Delete run
 
 **Tier 3 — Platform Features:**
 - Store API with full CRUD (namespace/key-value with owner isolation)

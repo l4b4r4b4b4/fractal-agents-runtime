@@ -58,8 +58,10 @@ class AgentSyncData(BaseModel):
         organization_id: Organization UUID owning the agent.
         name: Display name.
         system_prompt: System prompt text.
-        temperature: LLM temperature.
-        max_tokens: Max tokens for response.
+        sampling_params: Full JSONB bag of LLM sampling overrides (temperature,
+            max_tokens, top_p, etc.).  Empty dict means "use model defaults".
+        assistant_tool_ids: UUIDs of other agents that this agent can invoke
+            as sub-agent tools (agents-as-tools feature).
         runtime_model_name: Fully qualified provider model, e.g. "openai:gpt-4o".
         graph_id: LangGraph graph id to run (typically "agent").
         langgraph_assistant_id: Existing assistant id stored in Supabase (if any).
@@ -71,8 +73,8 @@ class AgentSyncData(BaseModel):
 
     name: str | None = None
     system_prompt: str | None = None
-    temperature: float | None = None
-    max_tokens: int | None = None
+    sampling_params: dict[str, Any] = Field(default_factory=dict)
+    assistant_tool_ids: list[str] = Field(default_factory=list)
 
     runtime_model_name: str | None = None
     graph_id: str | None = None
@@ -262,20 +264,26 @@ def _agent_from_row(row: dict[str, Any]) -> AgentSyncData:
         raise ValueError("Agent query row missing agent_id/id")
 
     organization_id = _coerce_uuid(row.get("organization_id"))
-    temperature_value = row.get("temperature")
-    max_tokens_value = row.get("max_tokens")
 
-    temperature: float | None
-    if temperature_value is None:
-        temperature = None
-    else:
-        temperature = float(temperature_value)
+    # Parse sampling_params JSONB — psycopg returns dict for jsonb columns,
+    # but we handle str fallback defensively.
+    sampling_params_raw = row.get("sampling_params")
+    sampling_params: dict[str, Any] = {}
+    if isinstance(sampling_params_raw, dict):
+        sampling_params = sampling_params_raw
+    elif isinstance(sampling_params_raw, str):
+        import json
 
-    max_tokens: int | None
-    if max_tokens_value is None:
-        max_tokens = None
-    else:
-        max_tokens = int(max_tokens_value)
+        try:
+            parsed = json.loads(sampling_params_raw)
+            if isinstance(parsed, dict):
+                sampling_params = parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Parse assistant_tool_ids (Postgres uuid[] → list of strings).
+    assistant_tool_ids_raw = row.get("assistant_tool_ids") or []
+    assistant_tool_ids = [str(tid) for tid in assistant_tool_ids_raw if tid]
 
     runtime_model_name = row.get("runtime_model_name")
     if runtime_model_name is not None:
@@ -290,8 +298,8 @@ def _agent_from_row(row: dict[str, Any]) -> AgentSyncData:
             if row.get("system_prompt") is not None
             else None
         ),
-        temperature=temperature,
-        max_tokens=max_tokens,
+        sampling_params=sampling_params,
+        assistant_tool_ids=assistant_tool_ids,
         runtime_model_name=runtime_model_name,
         graph_id=str(row.get("graph_id")) if row.get("graph_id") is not None else None,
         langgraph_assistant_id=(
@@ -357,8 +365,8 @@ def _build_fetch_agents_sql(scope: AgentSyncScope) -> tuple[str, dict[str, Any]]
       a.organization_id,
       a.name,
       a.system_prompt,
-      a.temperature,
-      a.max_tokens,
+      a.sampling_params,
+      a.assistant_tool_ids,
       a.langgraph_assistant_id,
       a.graph_id,
       mt.id AS mcp_tool_id,
@@ -448,8 +456,8 @@ async def fetch_active_agent_by_id(
       a.organization_id,
       a.name,
       a.system_prompt,
-      a.temperature,
-      a.max_tokens,
+      a.sampling_params,
+      a.assistant_tool_ids,
       a.langgraph_assistant_id,
       a.graph_id,
       mt.id AS mcp_tool_id,
@@ -508,13 +516,16 @@ def _build_assistant_configurable(agent: AgentSyncData) -> dict[str, Any]:
 
         configurable["mcp_config"] = {
             "servers": [
-                {"name": "...", "url": "...", "tools": [...], "auth_required": bool},
+                {"name": "...", "url": "...", "auth_required": bool},
                 ...
             ]
         }
 
-    Servers are grouped by MCP endpoint URL, and tool filters are applied per
-    server entry. This enables agents to use multiple MCP servers.
+    Servers are grouped by MCP endpoint URL.  Tool-name entries from the DB
+    are used as human-readable server names rather than as per-tool filters,
+    because the DB stores *server identifiers* (e.g. ``"supabase-mcp"``), not
+    individual tool names served by that endpoint.  Omitting the ``tools``
+    key lets the agent access all tools the server exposes.
     """
     configurable: dict[str, Any] = {}
 
@@ -526,14 +537,20 @@ def _build_assistant_configurable(agent: AgentSyncData) -> dict[str, Any]:
         configurable["model_name"] = agent.runtime_model_name
     if agent.system_prompt is not None:
         configurable["system_prompt"] = agent.system_prompt
-    if agent.temperature is not None:
-        configurable["temperature"] = agent.temperature
-    if agent.max_tokens is not None:
-        configurable["max_tokens"] = agent.max_tokens
+
+    # Spread all sampling params into configurable (matches frontend behaviour).
+    for param_key, param_value in agent.sampling_params.items():
+        if param_value is not None:
+            configurable[param_key] = param_value
+
+    # Agents-as-tools: pass selected assistant IDs so the graph can
+    # instantiate sub-agent tool wrappers at runtime.
+    if agent.assistant_tool_ids:
+        configurable["agent_tools"] = agent.assistant_tool_ids
 
     if agent.mcp_tools:
         # Group tool names by endpoint URL.
-        tools_by_endpoint_url: dict[str, list[str]] = {}
+        names_by_endpoint_url: dict[str, list[str]] = {}
         auth_required_by_endpoint_url: dict[str, bool] = {}
 
         for mcp_tool in agent.mcp_tools:
@@ -542,20 +559,24 @@ def _build_assistant_configurable(agent: AgentSyncData) -> dict[str, Any]:
             if not endpoint_url or not tool_name:
                 continue
 
-            tools_by_endpoint_url.setdefault(endpoint_url, []).append(str(tool_name))
+            names_by_endpoint_url.setdefault(endpoint_url, []).append(str(tool_name))
             auth_required_by_endpoint_url[endpoint_url] = bool(
                 auth_required_by_endpoint_url.get(endpoint_url, False)
                 or bool(mcp_tool.auth_required)
             )
 
         servers: list[dict[str, Any]] = []
-        for index, endpoint_url in enumerate(sorted(tools_by_endpoint_url.keys())):
-            tool_names = sorted(set(tools_by_endpoint_url[endpoint_url]))
+        for index, endpoint_url in enumerate(sorted(names_by_endpoint_url.keys())):
+            # Use the first tool_name as a human-readable server name
+            # (these are server identifiers in the DB, not individual tool
+            # names).  Fall back to a positional name.
+            tool_names = sorted(set(names_by_endpoint_url[endpoint_url]))
+            server_name = tool_names[0] if tool_names else f"server-{index + 1}"
+
             servers.append(
                 {
-                    "name": f"server-{index + 1}",
+                    "name": server_name,
                     "url": endpoint_url,
-                    "tools": tool_names,
                     "auth_required": auth_required_by_endpoint_url.get(
                         endpoint_url, False
                     ),
@@ -577,6 +598,7 @@ def _assistant_payload_for_agent(agent: AgentSyncData) -> dict[str, Any]:
     assistant_id = str(agent.agent_id)
     return {
         "assistant_id": assistant_id,
+        "name": agent.name,
         "graph_id": agent.graph_id or "agent",
         "config": {
             "configurable": _build_assistant_configurable(agent),
@@ -687,11 +709,13 @@ async def sync_single_agent(
             wrote_back_assistant_id=wrote_back,
         )
 
-    # Update when config differs (best-effort shallow comparison of configurable)
+    # Update when config or name differs (best-effort shallow comparison).
     existing_configurable = _extract_assistant_configurable(existing_assistant)
     desired_configurable = payload["config"]["configurable"]
+    existing_name = getattr(existing_assistant, "name", None)
+    desired_name = payload.get("name")
 
-    if existing_configurable == desired_configurable:
+    if existing_configurable == desired_configurable and existing_name == desired_name:
         return AgentSyncResult(
             assistant_id=assistant_id,
             action="skipped",

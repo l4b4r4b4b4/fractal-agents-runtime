@@ -5,12 +5,17 @@ the quality of the original FastAPI LangGraph runtime's documentation.
 
 Robyn's built-in OpenAPI generator doesn't auto-infer schemas from Pydantic
 models like FastAPI does, so we define the spec explicitly here.
+
+Version is read from ``pyproject.toml`` via the server package's
+``__version__`` — that file is the **single source of truth**.
 """
 
 from typing import Any
 
-# API version and metadata
-API_VERSION = "0.1.0"
+from server import __version__
+
+# API version and metadata — derived from pyproject.toml, never hardcoded
+API_VERSION = __version__
 API_TITLE = "OAP LangGraph Runtime"
 API_DESCRIPTION = """
 Robyn-based LangGraph-compatible runtime for Open Agent Platform.
@@ -917,33 +922,15 @@ COMPONENTS: dict[str, Any] = {
             "title": "StorePutRequest",
             "description": "Request to store an item.",
         },
-        "StoreDeleteRequest": {
+        "StoreSearchRequest": {
             "type": "object",
-            "required": ["namespace", "key"],
+            "required": ["namespace"],
             "properties": {
                 "namespace": {
                     "type": "array",
                     "items": {"type": "string"},
                     "title": "Namespace",
-                    "description": "The namespace for the item.",
-                },
-                "key": {
-                    "type": "string",
-                    "title": "Key",
-                    "description": "The key for the item to delete.",
-                },
-            },
-            "title": "StoreDeleteRequest",
-            "description": "Request to delete an item.",
-        },
-        "StoreSearchRequest": {
-            "type": "object",
-            "properties": {
-                "namespace_prefix": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "title": "Namespace Prefix",
-                    "description": "Filter by namespace prefix.",
+                    "description": "The namespace to search within.",
                 },
                 "filter": {
                     "type": "object",
@@ -970,40 +957,6 @@ COMPONENTS: dict[str, Any] = {
             },
             "title": "StoreSearchRequest",
             "description": "Request to search store items.",
-        },
-        "StoreListNamespacesRequest": {
-            "type": "object",
-            "properties": {
-                "prefix": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "title": "Prefix",
-                    "description": "Filter by namespace prefix.",
-                },
-                "suffix": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "title": "Suffix",
-                    "description": "Filter by namespace suffix.",
-                },
-                "max_depth": {
-                    "type": "integer",
-                    "title": "Max Depth",
-                    "description": "Maximum namespace depth to return.",
-                },
-                "limit": {
-                    "type": "integer",
-                    "title": "Limit",
-                    "default": 100,
-                },
-                "offset": {
-                    "type": "integer",
-                    "title": "Offset",
-                    "default": 0,
-                },
-            },
-            "title": "StoreListNamespacesRequest",
-            "description": "Request to list namespaces.",
         },
         "Item": {
             "type": "object",
@@ -2098,18 +2051,26 @@ PATHS: dict[str, Any] = {
         "delete": {
             "tags": ["Store"],
             "summary": "Delete Store Item",
-            "description": "Delete an item from the store.",
+            "description": "Delete an item from the store by namespace and key.",
             "operationId": "delete_store_item",
-            "requestBody": {
-                "required": True,
-                "content": {
-                    "application/json": {
-                        "schema": {"$ref": "#/components/schemas/StoreDeleteRequest"}
-                    }
+            "parameters": [
+                {
+                    "name": "namespace",
+                    "in": "query",
+                    "required": True,
+                    "schema": {"type": "string"},
+                    "description": "The namespace for the item.",
                 },
-            },
+                {
+                    "name": "key",
+                    "in": "query",
+                    "required": True,
+                    "schema": {"type": "string"},
+                    "description": "The key for the item to delete.",
+                },
+            ],
             "responses": {
-                "204": {"description": "Item deleted successfully"},
+                "200": {"description": "Item deleted successfully"},
                 **_error_responses(),
             },
         },
@@ -2144,21 +2105,11 @@ PATHS: dict[str, Any] = {
         }
     },
     "/store/namespaces": {
-        "post": {
+        "get": {
             "tags": ["Store"],
             "summary": "List Namespaces",
-            "description": "List namespaces in the store.",
+            "description": "List namespaces in the store for the authenticated user.",
             "operationId": "list_namespaces",
-            "requestBody": {
-                "required": True,
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "$ref": "#/components/schemas/StoreListNamespacesRequest"
-                        }
-                    }
-                },
-            },
             "responses": {
                 "200": {
                     "description": "List of namespaces",

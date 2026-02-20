@@ -20,6 +20,7 @@ import {
   config,
   isLlmConfigured,
   isSupabaseConfigured,
+  isDatabaseConfigured,
   getCapabilities,
   getTiers,
 } from "../config";
@@ -107,6 +108,7 @@ function handleInfo(): Response {
     graphs: getAvailableGraphIds(),
     config: {
       supabase_configured: isSupabaseConfigured(),
+      database_configured: isDatabaseConfigured(),
       llm_configured: isLlmConfigured(),
     },
     tiers: getTiers(),
