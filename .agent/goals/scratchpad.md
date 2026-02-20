@@ -27,7 +27,11 @@
 | 31 | Local Langfuse v3 Dev Stack | 🟢 Complete | High | 2026-02-16 |
 | 32 | Resource-Profiled Benchmarks with Animated Visualization | ⚪ Not Started | Medium | 2026-02-16 |
 | 33 | TS Runtime — Native Postgres Driver + Performance Investigation | ⚪ Not Started | High | 2026-02-16 |
-| 34 | RAG ChromaDB Retriever Tool | 🟡 In Progress | P1 | 2026-02-20 |
+| 34 | RAG ChromaDB Retriever Tool | 🟢 Complete | P1 | 2026-02-20 |
+| 35 | TS RAG ChromaDB Retriever | ⚪ Not Started | P1 | 2026-02-20 |
+| 36 | `/runs/wait` Non-Streaming Endpoint (Python + TS) | ⚪ Not Started | P1 | 2026-02-20 |
+| 37 | ChromaDB Multi-Tenant Access Control with Supabase JWT | ⚪ Not Started | P2 | 2026-02-20 |
+| 38 | Store API Namespace Fix + OpenAPI Alignment | ⚪ Not Started | P1 | 2026-02-20 |
 
 ---
 
@@ -116,6 +120,22 @@ Goal 02 next priority — commit all, push, PR, Docker build, AKS deploy, tag v0
 ---
 
 ## Recent Activity
+
+### 2026-02-20 — Session 41 (Goal 34 E2E ✅ + Goals 35/36/37 Created — RAG Pipeline Verified)
+
+- **Goal 34 🟢 COMPLETE:** Full Docker E2E test passed for ChromaDB RAG retriever
+  - User question → `search_archives` tool call → TEI embedding → ChromaDB vector query → AI answer
+  - Agent correctly referenced Wartungsbericht Heizung 2025, 15. Januar 2025, Ausdehnungsgefäß
+  - ChromaDB client v1.5.1 ↔ server v1.0.0 (both use v2 API, works fine)
+  - Discovered: `/runs/wait` is a stub — only `/runs/stream` executes the agent graph
+  - Committed: docker-compose.yml (ChromaDB + TEI services, OPENAI_BASE_URL override), seed script, scratchpad
+  - Branch `feat/rag-chromadb-retriever` pushed (not yet merged — big feature branch merge later)
+- **Handoff doc created:** `docs/rag-archive-retrieval.md` — webapp integration guide for archive-backed retrieval agents
+- **Goal 35 ⚪ Created:** TS RAG ChromaDB Retriever — port Python RAG module to TypeScript runtime
+- **Goal 36 ⚪ Created:** `/runs/wait` Non-Streaming Endpoint — implement real agent execution for Python + TS
+- **Goal 37 ⚪ Created:** ChromaDB Multi-Tenant Access Control — Supabase JWT + ChromaDB v2 tenants/databases
+- **Execution order:** Goal 35 → Goal 36 → Goal 37
+- **Key finding:** No access control on ChromaDB queries — runtime trusts platform's `rag_config` blindly. ChromaDB v2 has native tenant/database namespaces that map to org/repo. Future hardening in Goal 37.
 
 ### 2026-02-16 — Session 40 (Goal 33 Task-04 🟢 + Task-05 🟢 — Graph Caching + Local JWT + Perf Instrumentation)
 
