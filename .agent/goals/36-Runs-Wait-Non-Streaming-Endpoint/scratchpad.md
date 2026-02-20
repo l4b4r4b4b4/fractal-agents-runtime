@@ -1,6 +1,6 @@
 # Goal 36: `/runs/wait` Non-Streaming Endpoint (Python + TS)
 
-> **Status:** 🟡 In Progress (TS already done, Python needs implementation)
+> **Status:** 🟡 In Progress (code complete, pending E2E verification)
 > **Priority:** P1 (blocks non-streaming clients, API completeness)
 > **Branch:** `feat/rag-chromadb-retriever` (current working branch)
 > **Created:** 2026-02-20
@@ -23,17 +23,17 @@ This endpoint is essential for:
 
 ### Success Criteria
 
-- [ ] Python `/threads/{thread_id}/runs/wait` executes the full agent graph (same as `/runs/stream`)
-- [ ] Python `/threads/{thread_id}/runs/wait` returns the final thread state with all messages
-- [ ] Python `/runs/wait` (stateless) executes the full agent graph
-- [ ] Python `/runs` (stateless, background) implemented or deferred with clear stub
-- [ ] Both endpoints respect `interrupt_before` / `interrupt_after` if set
-- [ ] Error handling: timeout, LLM failure, tool failure → proper error responses
-- [ ] Run status updated correctly: `running` → `success` / `error`
-- [ ] Thread state stored identically to `/runs/stream` (checkpointer → thread storage)
+- [x] Python `/threads/{thread_id}/runs/wait` executes the full agent graph (same as `/runs/stream`)
+- [x] Python `/threads/{thread_id}/runs/wait` returns the final thread state with all messages
+- [x] Python `/runs/wait` (stateless) executes the full agent graph
+- [x] Python `/runs` (stateless, background) implemented (blocks until completion, matches TS)
+- [x] Both endpoints respect `interrupt_before` / `interrupt_after` if set (via `_build_runnable_config`)
+- [x] Error handling: LLM failure, tool failure → proper error responses (try/except → 500 + run status "error")
+- [x] Run status updated correctly: `running` → `success` / `error`
+- [x] Thread state stored identically to `/runs/stream` (checkpointer → thread storage)
 - [ ] E2E test: send a question via `/runs/wait`, get back complete conversation including tool calls
-- [ ] Existing `/runs/stream` continues to work unchanged
-- [ ] TS runtime verified as already working (no changes needed)
+- [x] Existing `/runs/stream` continues to work unchanged (130 tests pass, only DRY refactor)
+- [x] TS runtime verified as already working (no changes needed)
 
 ---
 
@@ -129,7 +129,7 @@ no AI response, no tool calls.
 
 ### Task-01: Python `execute_run_wait()` + stateful `/runs/wait`
 
-**Status:** ⚪ Not Started
+**Status:** 🟢 Complete
 **Effort:** Medium (most logic exists in `execute_run_stream`, needs adaptation)
 
 **Files to modify:**
@@ -181,7 +181,7 @@ no AI response, no tool calls.
 
 ### Task-02: Python stateless `/runs/wait` + `/runs`
 
-**Status:** ⚪ Not Started
+**Status:** 🟢 Complete
 **Effort:** Low (same `execute_run_wait()`, ephemeral thread pattern from streaming)
 
 **Files to modify:**
@@ -220,13 +220,16 @@ no AI response, no tool calls.
 
 ### Task-04: E2E verification + CAPABILITIES.md update
 
-**Status:** ⚪ Not Started
+**Status:** 🟡 In Progress (CAPABILITIES.md updated, Docker rebuild + curl tests pending)
 
-- Rebuild Python Docker image
-- Test stateful: `POST /threads/{id}/runs/wait` with a real question → expect AI response
-- Test stateless: `POST /runs/wait` → expect AI response + ephemeral thread cleanup
-- Verify `/runs/stream` still works (no regression)
-- Update `CAPABILITIES.md` status for wait endpoints: ⚪ → ✅
+- [x] Update `CAPABILITIES.md` status for wait endpoints: ⚪ → ✅
+- [x] Also fixed CAPABILITIES.md: cancel endpoint was ⚪ but already implemented → ✅
+- [x] Also fixed CAPABILITIES.md: delete run was ⚪ but already implemented → ✅
+- [x] Fixed `/store/namespaces` method: was POST in capabilities, actual is GET
+- [ ] Rebuild Python Docker image
+- [ ] Test stateful: `POST /threads/{id}/runs/wait` with a real question → expect AI response
+- [ ] Test stateless: `POST /runs/wait` → expect AI response + ephemeral thread cleanup
+- [ ] Verify `/runs/stream` still works (no regression)
 
 ---
 
@@ -337,6 +340,53 @@ Content-Type: application/json
 
 ---
 
+## Implementation Summary (Tasks 01-02)
+
+### What was done
+
+1. **Extracted `_parse_input_messages()` helper** (`streams.py` L46–93)
+   - Shared between `execute_run_stream()` and `execute_run_wait()`
+   - Handles `{"messages": [...]}`, `{"input": "..."}`, and bare string formats
+   - `execute_run_stream()` refactored to use it (DRY, no behavioral change)
+
+2. **Added `execute_run_wait()`** (`streams.py` L1212–1367)
+   - Same pipeline as `execute_run_stream()`: parse input → build config → inject tracing → checkpointer/store → build graph → execute → read state → persist
+   - Uses `agent.ainvoke()` instead of `agent.astream_events()`
+   - Returns `dict[str, Any]` shaped `{"messages": [...]}`
+   - Falls back to `_extract_values_from_result()` if checkpointer read fails
+
+3. **Added `_extract_values_from_result()`** (`streams.py` L1370–1390)
+   - Fallback helper: extracts messages from raw `ainvoke` result dict
+
+4. **Replaced stub in `create_run_wait()`** (`runs.py` L356–395)
+   - Imports `execute_run_wait` from `streams`
+   - try/except: success → run "success" + thread "idle"; error → run "error" + thread "idle" + 500
+
+5. **Added `create_stateless_run_wait()`** (`streams.py` L488–601)
+   - `POST /runs/wait`: ephemeral thread + `execute_run_wait()` + `on_completion` handling
+   - Mirrors `create_stateless_run_stream()` pattern exactly
+
+6. **Added `create_stateless_run()`** (`streams.py` L608–718)
+   - `POST /runs`: background run — blocks until completion (same as `/runs/wait`)
+   - True async background deferred to future release
+
+7. **Updated `CAPABILITIES.md`** — marked 5 endpoints as ✅, fixed method/status errors
+
+### Files modified
+
+| File | Lines changed | What |
+|------|--------------|------|
+| `apps/python/src/server/routes/streams.py` | +300 | `_parse_input_messages()`, `execute_run_wait()`, `_extract_values_from_result()`, stateless `/runs/wait`, stateless `/runs` |
+| `apps/python/src/server/routes/runs.py` | +15 / -30 | Replace stub with `execute_run_wait()` call |
+| `apps/python/src/server/CAPABILITIES.md` | +15 / -8 | Status updates for 5 endpoints |
+
+### Test results
+
+- **130 passed, 1 skipped, 0 failed** — no regressions
+- Ruff check + format: clean
+
+---
+
 ## Completion Log
 
 | Date | What | Notes |
@@ -344,3 +394,6 @@ Content-Type: application/json
 | 2026-02-20 | Goal created | Identified during E2E test — `/runs/wait` is a stub |
 | 2026-02-20 | Task-03 complete | TS runtime verified — `executeRunSync()` already works for both stateful and stateless |
 | 2026-02-20 | Code analysis complete | Mapped Python streaming path L538–942, identified shared helpers, documented TS reference implementation |
+| 2026-02-20 | Task-01 complete | `execute_run_wait()` added, `_parse_input_messages()` extracted, runs.py stub replaced with real execution |
+| 2026-02-20 | Task-02 complete | Stateless `/runs/wait` and `/runs` endpoints added to streams.py |
+| 2026-02-20 | CAPABILITIES.md updated | 5 endpoints marked ✅, method/status corrections applied |

@@ -1,9 +1,15 @@
-"""SSE streaming endpoints for Robyn server.
+"""SSE streaming and synchronous execution endpoints for Robyn server.
 
-Implements LangGraph-compatible streaming endpoints:
-- POST /threads/{thread_id}/runs/stream — Create run, stream output
+Implements LangGraph-compatible endpoints:
+- POST /threads/{thread_id}/runs/stream — Create run, stream output (SSE)
 - GET /threads/{thread_id}/runs/{run_id}/stream — Join existing run stream
-- POST /runs/stream — Stateless run with streaming
+- POST /runs/stream — Stateless run with streaming (SSE)
+- POST /runs/wait — Stateless run, wait for output (JSON)
+- POST /runs — Stateless background run (JSON, blocks until completion)
+
+Execution engines:
+- execute_run_stream() — Streaming via agent.astream_events()
+- execute_run_wait() — Synchronous via agent.ainvoke()
 """
 
 import json
@@ -14,12 +20,12 @@ from typing import Any, AsyncGenerator
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from pydantic import ValidationError
-from robyn import Request, Robyn
+from robyn import Request, Response, Robyn
 from robyn.responses import SSEResponse
 
 from server.auth import AuthenticationError, require_user
 from server.models import RunCreate
-from server.routes.helpers import error_response, parse_json_body
+from server.routes.helpers import error_response, json_response, parse_json_body
 from server.routes.sse import (
     create_ai_message,
     format_error_event,
@@ -35,6 +41,56 @@ from infra.tracing import inject_tracing
 from server.database import checkpointer as create_checkpointer, store as create_store
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_input_messages(input_data: Any) -> list[BaseMessage]:
+    """Parse input data into a list of LangChain message objects.
+
+    Handles multiple input formats:
+    - ``{"messages": [...]}``: List of message dicts, BaseMessage objects, or strings
+    - ``{"input": "..."}``: Plain text input (fallback)
+    - ``"plain string"``: Direct string input
+
+    Args:
+        input_data: Raw input from the run request body.
+
+    Returns:
+        List of LangChain BaseMessage instances ready for agent invocation.
+    """
+    input_messages: list[BaseMessage] = []
+
+    if isinstance(input_data, dict):
+        # Handle {"messages": [...]} format
+        raw_messages = input_data.get("messages", [])
+        for msg in raw_messages:
+            if isinstance(msg, BaseMessage):
+                input_messages.append(msg)
+            elif isinstance(msg, dict):
+                content = msg.get("content", "")
+                msg_type = msg.get("type") or msg.get("role", "human")
+                msg_id = msg.get("id") or str(uuid.uuid4())
+                if msg_type in ("human", "user"):
+                    input_messages.append(HumanMessage(content=content, id=msg_id))
+                elif msg_type in ("ai", "assistant"):
+                    input_messages.append(AIMessage(content=content, id=msg_id))
+                else:
+                    # Default to human message
+                    input_messages.append(HumanMessage(content=content, id=msg_id))
+            elif isinstance(msg, str):
+                input_messages.append(HumanMessage(content=msg, id=str(uuid.uuid4())))
+
+        # Handle {"input": "..."} format as fallback
+        if not input_messages and "input" in input_data:
+            input_messages.append(
+                HumanMessage(
+                    content=str(input_data["input"]),
+                    id=str(uuid.uuid4()),
+                )
+            )
+    elif isinstance(input_data, str):
+        input_messages.append(HumanMessage(content=input_data, id=str(uuid.uuid4())))
+
+    return input_messages
 
 
 def _message_to_dict(message: BaseMessage) -> dict[str, Any]:
@@ -424,6 +480,247 @@ def register_stream_routes(app: Robyn) -> None:
     # Stateless Streaming - POST /runs/stream
     # ========================================================================
 
+    # ========================================================================
+    # Stateless Wait - POST /runs/wait
+    # ========================================================================
+
+    @app.post("/runs/wait")
+    async def create_stateless_run_wait(request: Request) -> Response:
+        """Create a stateless run and wait for output.
+
+        Creates an ephemeral thread, executes the agent graph synchronously,
+        and returns the final state. The thread can be deleted after
+        completion based on the ``on_completion`` setting (default:
+        ``"delete"``).
+
+        Request body: RunCreate
+        Response: Thread state dict (200) or error (4xx/5xx)
+        """
+        try:
+            user = require_user()
+        except AuthenticationError as auth_error:
+            return error_response(auth_error.message, 401)
+
+        try:
+            body = parse_json_body(request)
+            create_data = RunCreate(**body)
+        except json.JSONDecodeError:
+            return error_response("Invalid JSON in request body", 422)
+        except ValidationError as validation_error:
+            return error_response(str(validation_error), 422)
+
+        storage = get_storage()
+
+        # Check if assistant exists
+        assistant = await storage.assistants.get(
+            create_data.assistant_id, user.identity
+        )
+        if assistant is None:
+            assistants = await storage.assistants.list(user.identity)
+            assistant = next(
+                (a for a in assistants if a.graph_id == create_data.assistant_id),
+                None,
+            )
+            if assistant is None:
+                return error_response(
+                    f"Assistant {create_data.assistant_id} not found", 404
+                )
+
+        # Create an ephemeral thread for stateless execution
+        ephemeral_thread = await storage.threads.create(
+            {
+                "metadata": {
+                    "stateless": True,
+                    "on_completion": create_data.on_completion,
+                }
+            },
+            user.identity,
+        )
+        thread_id = ephemeral_thread.thread_id
+
+        # Build run data
+        run_data: dict[str, Any] = {
+            "thread_id": thread_id,
+            "assistant_id": assistant.assistant_id,
+            "status": "running",
+            "metadata": {**create_data.metadata, "stateless": True},
+            "kwargs": {
+                "input": create_data.input,
+                "config": create_data.config,
+                "context": create_data.context,
+                "interrupt_before": create_data.interrupt_before,
+                "interrupt_after": create_data.interrupt_after,
+            },
+            "multitask_strategy": create_data.multitask_strategy,
+        }
+
+        run = await storage.runs.create(run_data, user.identity)
+
+        on_completion = create_data.on_completion
+
+        try:
+            await execute_run_wait(
+                run_id=run.run_id,
+                thread_id=thread_id,
+                assistant_id=assistant.assistant_id,
+                input_data=create_data.input,
+                config=create_data.config,
+                owner_id=user.identity,
+                assistant_config=assistant.config,
+                graph_id=assistant.graph_id,
+            )
+            await storage.runs.update_status(run.run_id, "success", user.identity)
+            await storage.threads.update(thread_id, {"status": "idle"}, user.identity)
+
+            state = await storage.threads.get_state(thread_id, user.identity)
+        except Exception as execution_error:
+            logger.exception(
+                "Stateless run %s failed for ephemeral thread %s",
+                run.run_id,
+                thread_id,
+            )
+            await storage.runs.update_status(run.run_id, "error", user.identity)
+            await storage.threads.update(thread_id, {"status": "idle"}, user.identity)
+
+            # Clean up ephemeral thread on error too
+            if on_completion == "delete":
+                await storage.runs.delete_by_thread(
+                    thread_id, run.run_id, user.identity
+                )
+                await storage.threads.delete(thread_id, user.identity)
+
+            return error_response(f"Agent execution failed: {execution_error}", 500)
+
+        # Handle on_completion behaviour
+        if on_completion == "delete":
+            await storage.runs.delete_by_thread(thread_id, run.run_id, user.identity)
+            await storage.threads.delete(thread_id, user.identity)
+
+        return json_response(
+            state if state else {"values": {}, "next": [], "tasks": []}
+        )
+
+    # ========================================================================
+    # Stateless Background Run - POST /runs
+    # ========================================================================
+
+    @app.post("/runs")
+    async def create_stateless_run(request: Request) -> Response:
+        """Create a stateless background run.
+
+        Currently blocks until completion (same as ``/runs/wait``).
+        True async background execution is deferred to a future release.
+
+        Request body: RunCreate
+        Response: Thread state dict (200) or error (4xx/5xx)
+        """
+        try:
+            user = require_user()
+        except AuthenticationError as auth_error:
+            return error_response(auth_error.message, 401)
+
+        try:
+            body = parse_json_body(request)
+            create_data = RunCreate(**body)
+        except json.JSONDecodeError:
+            return error_response("Invalid JSON in request body", 422)
+        except ValidationError as validation_error:
+            return error_response(str(validation_error), 422)
+
+        storage = get_storage()
+
+        # Check if assistant exists
+        assistant = await storage.assistants.get(
+            create_data.assistant_id, user.identity
+        )
+        if assistant is None:
+            assistants = await storage.assistants.list(user.identity)
+            assistant = next(
+                (a for a in assistants if a.graph_id == create_data.assistant_id),
+                None,
+            )
+            if assistant is None:
+                return error_response(
+                    f"Assistant {create_data.assistant_id} not found", 404
+                )
+
+        # Create an ephemeral thread for stateless execution
+        ephemeral_thread = await storage.threads.create(
+            {
+                "metadata": {
+                    "stateless": True,
+                    "on_completion": create_data.on_completion,
+                }
+            },
+            user.identity,
+        )
+        thread_id = ephemeral_thread.thread_id
+
+        # Build run data
+        run_data: dict[str, Any] = {
+            "thread_id": thread_id,
+            "assistant_id": assistant.assistant_id,
+            "status": "running",
+            "metadata": {**create_data.metadata, "stateless": True},
+            "kwargs": {
+                "input": create_data.input,
+                "config": create_data.config,
+                "context": create_data.context,
+                "interrupt_before": create_data.interrupt_before,
+                "interrupt_after": create_data.interrupt_after,
+            },
+            "multitask_strategy": create_data.multitask_strategy,
+        }
+
+        run = await storage.runs.create(run_data, user.identity)
+
+        on_completion = create_data.on_completion
+
+        try:
+            await execute_run_wait(
+                run_id=run.run_id,
+                thread_id=thread_id,
+                assistant_id=assistant.assistant_id,
+                input_data=create_data.input,
+                config=create_data.config,
+                owner_id=user.identity,
+                assistant_config=assistant.config,
+                graph_id=assistant.graph_id,
+            )
+            await storage.runs.update_status(run.run_id, "success", user.identity)
+            await storage.threads.update(thread_id, {"status": "idle"}, user.identity)
+
+            state = await storage.threads.get_state(thread_id, user.identity)
+        except Exception as execution_error:
+            logger.exception(
+                "Stateless background run %s failed for ephemeral thread %s",
+                run.run_id,
+                thread_id,
+            )
+            await storage.runs.update_status(run.run_id, "error", user.identity)
+            await storage.threads.update(thread_id, {"status": "idle"}, user.identity)
+
+            if on_completion == "delete":
+                await storage.runs.delete_by_thread(
+                    thread_id, run.run_id, user.identity
+                )
+                await storage.threads.delete(thread_id, user.identity)
+
+            return error_response(f"Agent execution failed: {execution_error}", 500)
+
+        # Handle on_completion behaviour
+        if on_completion == "delete":
+            await storage.runs.delete_by_thread(thread_id, run.run_id, user.identity)
+            await storage.threads.delete(thread_id, user.identity)
+
+        return json_response(
+            state if state else {"values": {}, "next": [], "tasks": []}
+        )
+
+    # ========================================================================
+    # Stateless Streaming - POST /runs/stream
+    # ========================================================================
+
     @app.post("/runs/stream")
     async def create_stateless_run_stream(request: Request):
         """Create a stateless run and stream output via SSE.
@@ -572,37 +869,7 @@ async def execute_run_stream(
     yield format_metadata_event(run_id, attempt=1)
 
     # 2. Extract input messages and emit initial values
-    input_messages: list[BaseMessage] = []
-    if isinstance(input_data, dict):
-        # Handle {"messages": [...]} format
-        raw_messages = input_data.get("messages", [])
-        for msg in raw_messages:
-            if isinstance(msg, BaseMessage):
-                input_messages.append(msg)
-            elif isinstance(msg, dict):
-                content = msg.get("content", "")
-                msg_type = msg.get("type") or msg.get("role", "human")
-                msg_id = msg.get("id") or str(uuid.uuid4())
-                if msg_type in ("human", "user"):
-                    input_messages.append(HumanMessage(content=content, id=msg_id))
-                elif msg_type in ("ai", "assistant"):
-                    input_messages.append(AIMessage(content=content, id=msg_id))
-                else:
-                    # Default to human message
-                    input_messages.append(HumanMessage(content=content, id=msg_id))
-            elif isinstance(msg, str):
-                input_messages.append(HumanMessage(content=msg, id=str(uuid.uuid4())))
-
-        # Handle {"input": "..."} format as fallback
-        if not input_messages and "input" in input_data:
-            input_messages.append(
-                HumanMessage(
-                    content=str(input_data["input"]),
-                    id=str(uuid.uuid4()),
-                )
-            )
-    elif isinstance(input_data, str):
-        input_messages.append(HumanMessage(content=input_data, id=str(uuid.uuid4())))
+    input_messages = _parse_input_messages(input_data)
 
     # NOTE: Initial values event is deferred until after the checkpointer
     # is available so we can read the full accumulated thread state
@@ -940,3 +1207,184 @@ async def execute_run_stream(
             thread_id,
             persist_error,
         )
+
+
+async def execute_run_wait(
+    run_id: str,
+    thread_id: str,
+    assistant_id: str,
+    input_data: Any,
+    config: dict[str, Any] | None,
+    owner_id: str,
+    assistant_config: dict[str, Any] | None = None,
+    graph_id: str | None = None,
+) -> dict[str, Any]:
+    """Execute a run using the agent graph and return the final state.
+
+    Same pipeline as :func:`execute_run_stream` but uses
+    ``agent.ainvoke()`` instead of ``agent.astream_events()``, returning
+    the final thread state synchronously rather than yielding SSE events.
+
+    The caller is responsible for updating run status (success/error) and
+    thread status (idle) — this function only handles graph execution and
+    state persistence, mirroring how ``execute_run_stream`` delegates
+    status updates to its caller (``create_run_stream``).
+
+    Args:
+        run_id: The run ID.
+        thread_id: The thread ID.
+        assistant_id: The assistant ID.
+        input_data: Input data for the run (messages or dict with messages).
+        config: Configuration from the run request.
+        owner_id: Owner ID for storage operations.
+        assistant_config: Configuration from the assistant (base settings).
+        graph_id: The assistant's ``graph_id`` (e.g. ``"agent"``,
+            ``"research_agent"``).  Falls back to ``"agent"`` if not
+            provided.
+
+    Returns:
+        Dict with the final thread state, shaped as
+        ``{"messages": [...]}``.
+
+    Raises:
+        Exception: Propagated from graph build, ``ainvoke``, or state
+            persistence failures so the caller can set error status.
+    """
+    storage = get_storage()
+
+    # 1. Parse input messages
+    input_messages = _parse_input_messages(input_data)
+
+    # 2. Build RunnableConfig
+    runnable_config = _build_runnable_config(
+        run_id=run_id,
+        thread_id=thread_id,
+        assistant_id=assistant_id,
+        assistant_config=assistant_config,
+        run_config=config,
+        owner_id=owner_id,
+    )
+
+    # 3. Inject Langfuse tracing (no-op if not configured)
+    runnable_config = inject_tracing(
+        runnable_config,
+        user_id=owner_id,
+        session_id=thread_id,
+        trace_name="agent-run",
+        tags=["robyn", "sync"],
+    )
+
+    # 4-5. Build agent, invoke, read state.
+    #
+    # The checkpointer and store are created as per-request async context
+    # managers — each gets a fresh AsyncConnection on the current event
+    # loop, matching the streaming path exactly.
+    final_values: dict[str, Any] = {"messages": []}
+
+    async with create_checkpointer() as checkpointer, create_store() as store:
+        # 4. Build the agent graph
+        build_graph = resolve_graph_factory(graph_id)
+        agent = await build_graph(
+            runnable_config,
+            checkpointer=checkpointer,
+            store=store,
+        )
+
+        # 5. Invoke the agent synchronously
+        agent_input = {"messages": input_messages}
+        logger.info(
+            "Invoking agent for thread %s run %s (%d input messages)",
+            thread_id,
+            run_id,
+            len(input_messages),
+        )
+        result = await agent.ainvoke(agent_input, runnable_config)
+
+        # 5b. Read full accumulated state from checkpointer.
+        #
+        # The checkpointer (via the `add_messages` reducer) accumulates
+        # the complete message history across all runs on this thread.
+        # We read it back so that final_values contains the FULL
+        # conversation — not just the current run's input + output.
+        #
+        # This MUST happen inside the `async with create_checkpointer()`
+        # block while the connection is still open.
+        try:
+            checkpoint_state = await agent.aget_state(runnable_config)
+            if checkpoint_state and checkpoint_state.values:
+                accumulated_messages = checkpoint_state.values.get("messages", [])
+                if accumulated_messages:
+                    final_values = {
+                        "messages": [
+                            _message_to_dict(m) if isinstance(m, BaseMessage) else m
+                            for m in accumulated_messages
+                        ]
+                    }
+                    logger.info(
+                        "Read %d accumulated messages from checkpointer for "
+                        "thread %s (wait)",
+                        len(accumulated_messages),
+                        thread_id,
+                    )
+                else:
+                    logger.warning(
+                        "Checkpointer returned empty messages for thread %s "
+                        "(wait); falling back to ainvoke result",
+                        thread_id,
+                    )
+                    final_values = _extract_values_from_result(result)
+            else:
+                logger.warning(
+                    "Checkpointer returned no state for thread %s (wait); "
+                    "falling back to ainvoke result",
+                    thread_id,
+                )
+                final_values = _extract_values_from_result(result)
+        except Exception as state_read_error:
+            logger.warning(
+                "Failed to read accumulated state from checkpointer for "
+                "thread %s (wait): %s — falling back to ainvoke result",
+                thread_id,
+                state_read_error,
+            )
+            final_values = _extract_values_from_result(result)
+
+    # 6. Persist final state to thread storage (outside the
+    # checkpointer/store context — PostgresStorage has its own
+    # connections).
+    await storage.threads.add_state_snapshot(
+        thread_id, {"values": final_values}, owner_id
+    )
+    await storage.threads.update(thread_id, {"values": final_values}, owner_id)
+
+    logger.info(
+        "Run %s completed for thread %s (%d messages in final state)",
+        run_id,
+        thread_id,
+        len(final_values.get("messages", [])),
+    )
+
+    return final_values
+
+
+def _extract_values_from_result(result: Any) -> dict[str, Any]:
+    """Extract a ``{"messages": [...]}`` dict from an ``ainvoke`` result.
+
+    Used as a fallback when the checkpointer state read fails.
+
+    Args:
+        result: The raw return value from ``agent.ainvoke()``.
+
+    Returns:
+        Dict shaped ``{"messages": [...]}``.
+    """
+    if isinstance(result, dict):
+        raw_messages = result.get("messages", [])
+        return {
+            "messages": [
+                _message_to_dict(m) if isinstance(m, BaseMessage) else m
+                for m in raw_messages
+            ]
+        }
+
+    return {"messages": []}

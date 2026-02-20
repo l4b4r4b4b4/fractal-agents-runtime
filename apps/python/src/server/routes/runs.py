@@ -5,9 +5,9 @@ Implements LangGraph-compatible endpoints:
 - GET /threads/{thread_id}/runs — List runs for a thread
 - GET /threads/{thread_id}/runs/{run_id} — Get a run by ID
 - DELETE /threads/{thread_id}/runs/{run_id} — Delete a run
-- POST /threads/{thread_id}/runs/wait — Create run, wait for output
+- POST /threads/{thread_id}/runs/wait — Create run, wait for output (real agent execution)
 
-SSE streaming endpoints are implemented in Task 07.
+SSE streaming endpoints are implemented in streams.py.
 """
 
 import json
@@ -20,6 +20,7 @@ from robyn import Request, Response, Robyn
 from server.auth import AuthenticationError, require_user
 from server.models import RunCreate
 from server.routes.helpers import error_response, json_response, parse_json_body
+from server.routes.streams import execute_run_wait
 from server.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -270,12 +271,12 @@ def register_run_routes(app: Robyn) -> None:
     async def create_run_wait(request: Request) -> Response:
         """Create a run and wait for output.
 
-        This endpoint blocks until the run completes and returns the final state.
-        For now, this is a simplified implementation that creates the run
-        and returns the thread state. Full agent execution will be added later.
+        This endpoint blocks until the run completes and returns the final
+        thread state.  The agent graph is executed synchronously via
+        :func:`execute_run_wait` (``agent.ainvoke``).
 
         Request body: RunCreate
-        Response: thread state (200) or error (4xx)
+        Response: thread state (200) or error (4xx/5xx)
         """
         try:
             user = require_user()
@@ -355,49 +356,43 @@ def register_run_routes(app: Robyn) -> None:
 
         run = await storage.runs.create(run_data, user.identity)
 
-        # Update thread status
+        # Update thread status to busy while executing
         await storage.threads.update(thread_id, {"status": "busy"}, user.identity)
 
-        # TODO: Execute agent graph here
-        # For now, we simulate execution by:
-        # 1. Storing the input in thread state
-        # 2. Marking run as success
-        # 3. Returning the thread state
-
-        # Store input as thread state (simplified)
-        if create_data.input:
-            await storage.threads.add_state_snapshot(
-                thread_id,
-                {
-                    "values": create_data.input
-                    if isinstance(create_data.input, dict)
-                    else {"input": create_data.input}
-                },
-                user.identity,
-            )
-            await storage.threads.update(
-                thread_id,
-                {
-                    "values": create_data.input
-                    if isinstance(create_data.input, dict)
-                    else {"input": create_data.input}
-                },
-                user.identity,
+        # Execute agent graph synchronously
+        try:
+            await execute_run_wait(
+                run_id=run.run_id,
+                thread_id=thread_id,
+                assistant_id=assistant.assistant_id,
+                input_data=create_data.input,
+                config=create_data.config,
+                owner_id=user.identity,
+                assistant_config=assistant.config,
+                graph_id=assistant.graph_id,
             )
 
-        # Mark run as success
-        await storage.runs.update_status(run.run_id, "success", user.identity)
+            # Mark run as success and thread as idle
+            await storage.runs.update_status(run.run_id, "success", user.identity)
+            await storage.threads.update(thread_id, {"status": "idle"}, user.identity)
 
-        # Update thread status back to idle
-        await storage.threads.update(thread_id, {"status": "idle"}, user.identity)
+            # Get final thread state (includes full message history)
+            state = await storage.threads.get_state(thread_id, user.identity)
 
-        # Get final thread state
-        state = await storage.threads.get_state(thread_id, user.identity)
+            response = json_response(state)
+            response.headers["Content-Location"] = (
+                f"/threads/{thread_id}/runs/{run.run_id}"
+            )
+            return response
 
-        # Return with Content-Location header
-        response = json_response(state)
-        response.headers["Content-Location"] = f"/threads/{thread_id}/runs/{run.run_id}"
-        return response
+        except Exception as execution_error:
+            logger.exception("Run %s failed for thread %s", run.run_id, thread_id)
+
+            # Mark run as error and thread as idle
+            await storage.runs.update_status(run.run_id, "error", user.identity)
+            await storage.threads.update(thread_id, {"status": "idle"}, user.identity)
+
+            return error_response(f"Agent execution failed: {execution_error}", 500)
 
     # ========================================================================
     # Cancel Endpoint
