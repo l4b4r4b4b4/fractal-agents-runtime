@@ -7,7 +7,9 @@
  *   3. Create run + wait (POST /threads/:id/runs/wait)
  *   4. Stream run (POST /threads/:id/runs/stream)
  *   5. Get thread state (GET /threads/:id/state)
- *   6. Cleanup (DELETE assistant, thread)
+ *   6. Stateless run + wait (POST /runs/wait)
+ *   7. Store put + get + list (POST /store/items, GET /store/items, POST /store/list)
+ *   8. Cleanup (DELETE assistant, thread, store items)
  *
  * Prerequisites:
  *   - Mock LLM server running: bun run benchmarks/mock-llm/server.ts
@@ -94,6 +96,12 @@ export const options = IS_SMOKE
         "http_req_duration{operation:create_thread}": ["p(95)<500"],
         // 95th percentile for run/wait < 5s (includes mock LLM delay)
         "http_req_duration{operation:run_wait}": ["p(95)<5000"],
+        // 95th percentile for stateless run/wait < 5s
+        "http_req_duration{operation:stateless_run_wait}": ["p(95)<5000"],
+        // 95th percentile for store operations < 500ms
+        "http_req_duration{operation:store_put}": ["p(95)<500"],
+        "http_req_duration{operation:store_get}": ["p(95)<500"],
+        "http_req_duration{operation:store_list}": ["p(95)<500"],
         // Custom metrics
         agent_flow_duration: ["p(95)<8000"],
         agent_flow_success_rate: ["rate>0.95"],
@@ -109,7 +117,9 @@ const agentFlowSuccessRate = new Rate("agent_flow_success_rate");
 const assistantsCreated = new Counter("assistants_created");
 const threadsCreated = new Counter("threads_created");
 const runsCompleted = new Counter("runs_completed");
+const statelessRunsCompleted = new Counter("stateless_runs_completed");
 const streamsCompleted = new Counter("streams_completed");
+const storeOpsCompleted = new Counter("store_ops_completed");
 const cleanupErrors = new Counter("cleanup_errors");
 
 // ---------------------------------------------------------------------------
@@ -332,6 +342,133 @@ function deleteThread(threadId) {
 }
 
 // ---------------------------------------------------------------------------
+// Stateless runs
+// ---------------------------------------------------------------------------
+
+function statelessRunWait(assistantId) {
+  const payload = {
+    assistant_id: assistantId,
+    input: {
+      messages: [
+        {
+          role: "user",
+          content: `Stateless benchmark from VU ${__VU}, iteration ${__ITER}`,
+        },
+      ],
+    },
+    config: {
+      configurable: {
+        model_name: MODEL_NAME,
+      },
+    },
+  };
+
+  const response = http.post(`${RUNTIME_URL}/runs/wait`, jsonBody(payload), {
+    headers: headers(),
+    tags: { operation: "stateless_run_wait" },
+    timeout: "30s",
+  });
+
+  const body = parseJsonResponse(response, "stateless_run_wait");
+  const success = check(response, {
+    "stateless run/wait: status 200": (r) => r.status === 200,
+    "stateless run/wait: has response body": () => body !== null,
+  });
+
+  if (success) {
+    statelessRunsCompleted.add(1);
+  }
+
+  return success ? body : null;
+}
+
+// ---------------------------------------------------------------------------
+// Store operations
+// ---------------------------------------------------------------------------
+
+function storePut(namespace, key, value) {
+  const payload = {
+    namespace: namespace,
+    key: key,
+    value: value,
+  };
+
+  const response = http.put(`${RUNTIME_URL}/store/items`, jsonBody(payload), {
+    headers: headers(),
+    tags: { operation: "store_put" },
+  });
+
+  const success = check(response, {
+    "store put: status 200 or 204": (r) => r.status === 200 || r.status === 204,
+  });
+
+  if (success) {
+    storeOpsCompleted.add(1);
+  }
+
+  return success;
+}
+
+function storeGet(namespace, key) {
+  const queryParams = `namespace=${encodeURIComponent(JSON.stringify(namespace))}&key=${encodeURIComponent(key)}`;
+
+  const response = http.get(`${RUNTIME_URL}/store/items?${queryParams}`, {
+    headers: headers(),
+    tags: { operation: "store_get" },
+  });
+
+  const body = parseJsonResponse(response, "store_get");
+  const success = check(response, {
+    "store get: status 200": (r) => r.status === 200,
+    "store get: has response body": () => body !== null,
+  });
+
+  if (success) {
+    storeOpsCompleted.add(1);
+  }
+
+  return success ? body : null;
+}
+
+function storeList(namespace) {
+  const payload = {
+    namespace: namespace,
+    limit: 10,
+  };
+
+  const response = http.post(`${RUNTIME_URL}/store/list`, jsonBody(payload), {
+    headers: headers(),
+    tags: { operation: "store_list" },
+  });
+
+  const body = parseJsonResponse(response, "store_list");
+  const success = check(response, {
+    "store list: status 200": (r) => r.status === 200,
+  });
+
+  if (success) {
+    storeOpsCompleted.add(1);
+  }
+
+  return success ? body : null;
+}
+
+function storeDelete(namespace, key) {
+  const response = http.del(
+    `${RUNTIME_URL}/store/items`,
+    jsonBody({ namespace: namespace, key: key }),
+    {
+      headers: headers(),
+      tags: { operation: "store_delete" },
+    },
+  );
+
+  if (response.status !== 200 && response.status !== 204) {
+    cleanupErrors.add(1);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Health check (setup)
 // ---------------------------------------------------------------------------
 
@@ -433,8 +570,38 @@ export default function (_setupData) {
     getThreadState(threadId);
   });
 
-  // Step 6: Cleanup
-  group("06_cleanup", function () {
+  // Step 6: Stateless run (no thread — ephemeral)
+  group("06_stateless_run", function () {
+    const result = statelessRunWait(assistantId);
+    if (!result) {
+      flowSuccess = false;
+    }
+  });
+
+  // Step 7: Store operations (put → get → list → cleanup)
+  const storeNamespace = ["benchmark", RUNTIME_NAME, `vu${__VU}`];
+  const storeKey = `iter-${__ITER}-${Date.now()}`;
+
+  group("07_store_ops", function () {
+    const putSuccess = storePut(storeNamespace, storeKey, {
+      benchmark: true,
+      runtime: RUNTIME_NAME,
+      vu: __VU,
+      iter: __ITER,
+      timestamp: new Date().toISOString(),
+    });
+
+    if (putSuccess) {
+      storeGet(storeNamespace, storeKey);
+      storeList(storeNamespace);
+    }
+  });
+
+  // Step 8: Cleanup
+  group("08_cleanup", function () {
+    // Clean up store item
+    storeDelete(storeNamespace, storeKey);
+
     if (threadId) {
       deleteThread(threadId);
     }

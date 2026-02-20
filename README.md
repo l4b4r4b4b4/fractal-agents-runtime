@@ -9,20 +9,20 @@ The monorepo provides runtime implementations in **Python (Robyn)** and **TypeSc
 
 | Runtime | Version | Tests | Server | Graphs |
 |---------|---------|-------|--------|--------|
-| **Python** | 0.0.2 | 867 tests, 74% coverage | Robyn (multi-worker) | `agent`, `research_agent` |
-| **TypeScript** | 0.0.3 | 1923 tests, 3648 assertions | Bun (single-process) | `agent`, `research_agent` |
+| **Python** | 0.0.3 | 1261 tests, 74% coverage | Robyn (multi-worker) | `agent`, `research_agent` |
+| **TypeScript** | 0.1.0 | 2124 tests, 3971 assertions | Bun (single-process) | `agent`, `research_agent` |
 
 ## Repository Structure
 
 ```text
 fractal-agents-runtime/
 ├── apps/
-│   ├── python/                      # Python runtime (Robyn) — v0.0.2
+│   ├── python/                      # Python runtime (Robyn) — v0.0.3
 │   │   └── src/
 │   │       ├── server/              # HTTP server, routes, config, persistence
 │   │       ├── graphs/              # Agent graphs (react_agent, research_agent)
 │   │       └── infra/               # Tracing, auth, store namespace
-│   └── ts/                          # TypeScript runtime (Bun) — v0.0.3
+│   └── ts/                          # TypeScript runtime (Bun) — v0.1.0
 │       └── src/
 │           ├── routes/              # HTTP routes (assistants, threads, runs, etc.)
 │           ├── graphs/              # Agent graphs (react-agent, research-agent)
@@ -35,7 +35,8 @@ fractal-agents-runtime/
 │           └── crons/               # Scheduled agent runs
 ├── benchmarks/
 │   ├── mock-llm/                    # Mock OpenAI API server (Bun)
-│   └── k6/                          # k6 benchmark scripts
+│   ├── k6/                          # k6 benchmark scripts
+│   └── results/                     # Raw k6 JSON benchmark data
 ├── .devops/
 │   ├── docker/                      # Multi-stage Dockerfiles
 │   └── helm/fractal-agents-runtime/ # Unified Helm chart with runtime toggle
@@ -62,7 +63,7 @@ Both runtimes implement the full LangGraph API contract:
 
 - **Assistants** — CRUD, search, count with metadata filtering
 - **Threads** — Stateful conversations with state and history
-- **Runs** — Stateful and stateless agent invocations with lifecycle management
+- **Runs** — Stateful and stateless agent invocations (streaming + non-streaming + background)
 - **SSE Streaming** — Real-time event streaming (metadata → values → messages → end)
 - **Store** — Cross-thread long-term memory (namespaced key-value store)
 - **MCP Server** — JSON-RPC 2.0 endpoint for Model Context Protocol integration
@@ -77,13 +78,24 @@ Both runtimes implement the full LangGraph API contract:
 - **OpenAPI Spec** — Auto-generated and served at `/openapi.json`
 - **Multi-Agent Checkpoint Isolation** — `checkpoint_ns="assistant:<id>"` prevents state collisions
 
+### RAG (Retrieval-Augmented Generation)
+
+Both runtimes support two independent RAG systems that can run simultaneously:
+
+| RAG System | Config Key | Backend | Auth | Description |
+|------------|-----------|---------|------|-------------|
+| **ChromaDB Archives** | `rag_config` | ChromaDB v2 + TEI embeddings | None (internal) | Document archive search via `search_archives` tool. Cross-archive ranking, German-formatted results. |
+| **LangConnect** | `rag` | Supabase-hosted RAG API | Supabase token | Per-collection semantic search via dynamically created tools. |
+
+ChromaDB RAG uses direct HTTP (`fetch()` in TS, `chromadb-client` in Python) — no heavy dependencies.
+
 ### Shipped Graphs
 
 Both runtimes ship identical agent graphs with full prompt and config parity:
 
 | Graph | ID | Description |
 |-------|----|-------------|
-| **ReAct Agent** | `agent` | General-purpose ReAct agent with MCP tool integration, Supabase RAG tool factory, multi-provider LLM, and OAuth token exchange |
+| **ReAct Agent** | `agent` | General-purpose ReAct agent with MCP tool integration, ChromaDB archive RAG, LangConnect RAG, multi-provider LLM, and OAuth token exchange |
 | **Research Agent** | `research_agent` | Two-phase parallel research with human-in-the-loop review, worker fan-out via `Send`, Langfuse prompt templates |
 
 All 6 Langfuse prompt names are identical across runtimes, enabling shared prompt configuration.
@@ -91,14 +103,79 @@ All 6 Langfuse prompt names are identical across runtimes, enabling shared promp
 ### Python Runtime (Robyn)
 
 - **Robyn HTTP Server** — Multi-worker async server (34 paths, 44 operations)
-- **867 Tests, 74% Coverage** — Three-tier enforcement (global floor, per-file floor, diff-cover)
+- **1261 Tests, 74% Coverage** — Three-tier enforcement (global floor, per-file floor, diff-cover)
 - **APScheduler** — Cron scheduling with persistent job store
 
 ### TypeScript Runtime (Bun)
 
 - **Bun HTTP Server** — Single-process, zero-dependency HTTP server (47 routes)
-- **1923 Tests, 3648 Assertions** — Comprehensive unit and integration tests across 28 files
+- **2124 Tests, 3971 Assertions** — Comprehensive unit and integration tests across 31 files
 - **Pattern-Matching Router** — Custom router with middleware, path params, and automatic metrics
+- **Bun.sql** — Native Postgres driver with zero-copy binary protocol
+
+## Benchmarks
+
+### Tier 1: Runtime Overhead (Mock LLM)
+
+Measures pure runtime overhead — HTTP routing, serialisation, storage, streaming — by pointing both runtimes at a mock LLM server (10ms base delay). This isolates the runtime from LLM inference variance.
+
+**Test setup:** Mock LLM (10ms delay, 5ms stream chunk), 5 VUs ramping, in-memory storage, same machine.
+
+**k6 agent flow:** create assistant → thread → run/wait → stream → get state → cleanup.
+
+#### Latency Comparison (p50 / p95 / p99)
+
+| Operation | TypeScript (Bun) | Python (Robyn) | Winner |
+|-----------|-----------------|----------------|--------|
+| Create assistant | 56 / 93 / 101 ms | 67 / 84 / 88 ms | TS p50, Py p95 |
+| Create thread | 53 / 91 / 96 ms | 66 / 82 / 90 ms | TS p50, Py p95 |
+| Run/wait | 119 / 164 / 179 ms | 199 / 251 / 299 ms | **TS 1.7x** |
+| Run/stream | 124 / 166 / 187 ms | 1725 / 2399 / 2641 ms | **TS 14x** |
+| Get state | 54 / 91 / 98 ms | 65 / 79 / 89 ms | TS p50, Py p95 |
+| **Full flow** | **509 / 743 / 773 ms** | **2256 / 2946 / 3174 ms** | **TS 4.4x** |
+
+#### Throughput
+
+| Metric | TypeScript (Bun) | Python (Robyn) |
+|--------|-----------------|----------------|
+| Total iterations | 435 | 167 |
+| HTTP error rate | 0.0% | 0.0% |
+| Flow success rate | 100% | 100% |
+
+```
+Full Agent Flow — p50 Latency (ms)
+──────────────────────────────────────────────────────────────
+             TypeScript (Bun)          Python (Robyn)
+──────────────────────────────────────────────────────────────
+Assistant    ██▊                  56    ███▍                 67
+Thread       ██▋                  53    ███▎                 66
+Run/wait     █████▉              119    █████████▉          199
+Run/stream   ██████▏             124    ████████████████████████████████████ 1725
+Get state    ██▋                  54    ███▎                 65
+──────────────────────────────────────────────────────────────
+FULL FLOW    █████████████████   509    ████████████████████████████████████ 2256
+──────────────────────────────────────────────────────────────
+```
+
+> **Key finding:** TypeScript/Bun has significantly lower streaming overhead (14x faster p50 for SSE), resulting in a 4.4x faster full-flow execution. CRUD operations are comparable. Both runtimes achieve 0% error rates under load.
+
+#### Benchmark Infrastructure
+
+- **Mock LLM Server** (`benchmarks/mock-llm/server.ts`) — Fake OpenAI `/v1/chat/completions` with configurable delay and streaming
+- **k6 Scripts** (`benchmarks/k6/agent-flow.js`) — Full agent lifecycle: create assistant → thread → run/wait → stream → stateless run → store ops → cleanup
+
+```bash
+# Start mock LLM
+bun run benchmarks/mock-llm/server.ts
+
+# Start a runtime pointed at mock LLM
+OPENAI_API_KEY=mock OPENAI_BASE_URL=http://localhost:11434/v1 bun run apps/ts/src/index.ts
+
+# Smoke test
+k6 run -e SMOKE=1 benchmarks/k6/agent-flow.js
+```
+
+See [benchmarks/README.md](benchmarks/README.md) for full documentation, configuration, and methodology.
 
 ## Getting Started
 
@@ -192,6 +269,12 @@ Both runtimes read configuration from environment variables. The same variables 
 | `LANGCHAIN_TRACING_V2` | No | Enable LangSmith tracing (`true`/`false`) |
 | `LANGCHAIN_API_KEY` | No | LangSmith API key |
 | `PORT` | No | Server port (Python: 8081, TS: 3000) |
+| `DOCPROC_CHROMADB_URL` | No | ChromaDB server URL (default: `http://chromadb:8000`) |
+| `DOCPROC_TEI_EMBEDDINGS_URL` | No | TEI embedding endpoint (default: `http://tei-embeddings:8080`) |
+| `RAG_DEFAULT_TOP_K` | No | Default results per archive (default: 5) |
+| `RAG_DEFAULT_LAYER` | No | Default metadata layer filter (default: `chunk`) |
+| `RAG_QUERY_TIMEOUT_SECONDS` | No | ChromaDB query timeout (default: 5) |
+| `RAG_EMBED_TIMEOUT_SECONDS` | No | TEI embedding timeout (default: 10) |
 
 \* At least one LLM provider key is required.
 
@@ -219,27 +302,20 @@ docker build -f .devops/docker/ts.Dockerfile . -t fractal-agents-runtime-ts:loca
 docker compose up python-runtime ts-runtime
 ```
 
-Python runtime listens on port 8081, TypeScript on port 8082 (mapped from 3000).
+Python runtime listens on port 9091 (mapped from 8081), TypeScript on port 9092 (mapped from 3000).
 
-## Benchmarks
-
-The `benchmarks/` directory provides infrastructure for comparing runtime overhead:
-
-- **Mock LLM Server** (`benchmarks/mock-llm/server.ts`) — Fake OpenAI `/v1/chat/completions` with configurable delay and streaming
-- **k6 Scripts** (`benchmarks/k6/agent-flow.js`) — Full agent lifecycle: create assistant → thread → run/wait → stream → cleanup
+### Optional Infrastructure
 
 ```bash
-# Start mock LLM
-bun run benchmarks/mock-llm/server.ts
+# ChromaDB (vector database for RAG) — port 8100
+docker compose up chromadb
 
-# Start a runtime pointed at mock LLM
-OPENAI_API_KEY=mock OPENAI_BASE_URL=http://localhost:11434/v1 bun run apps/ts/src/index.ts
+# TEI Embeddings (requires NVIDIA GPU) — port 8011
+docker compose up embeddings
 
-# Smoke test
-k6 run -e SMOKE=1 benchmarks/k6/agent-flow.js
+# Mock LLM (benchmarks) — port 11434
+docker compose up mock-llm --scale mock-llm=1
 ```
-
-See [benchmarks/README.md](benchmarks/README.md) for full documentation.
 
 ## Helm Chart
 
@@ -293,14 +369,14 @@ Branch strategy: `feature/*` → `development` → `main`
 ### Quality Gates
 
 **Python:**
-- 867 tests, 74% global coverage floor
+- 1261 tests, 74% global coverage floor
 - Per-file coverage thresholds (`coverage-threshold`)
 - 80% diff-cover on changed lines
 - Ruff lint + format
 - OpenAPI spec validation (34 paths, 44 operations)
 
 **TypeScript:**
-- 1923 tests, 3648 assertions
+- 2124 tests, 3971 assertions across 31 files
 - TypeScript strict type checking (`tsc --noEmit`)
 - OpenAPI spec validation
 - Bun version pinning (`.bun-version`)
@@ -320,8 +396,8 @@ Both runtimes implement the LangGraph API:
 | System | `/ /health /ok /info /openapi.json` | Health checks, service info, OpenAPI spec |
 | Assistants | `/assistants/*` | CRUD, search, count |
 | Threads | `/threads/*` | Conversation management, state, history |
-| Runs (stateful) | `/threads/{id}/runs/*` | Agent invocations, streaming, cancel, join |
-| Runs (stateless) | `/runs/*` | Stateless agent invocations |
+| Runs (stateful) | `/threads/{id}/runs/*` | Agent invocations (wait, stream, background), cancel, join |
+| Runs (stateless) | `/runs/*` | Stateless agent invocations (wait, stream, background) |
 | Store | `/store/*` | Cross-thread long-term memory |
 | Crons | `/runs/crons/*` | Scheduled recurring runs |
 | MCP | `/mcp` | Model Context Protocol server |
@@ -334,8 +410,8 @@ Components are versioned independently following [Semantic Versioning](https://s
 
 | Component | Current | Source of Truth |
 |-----------|---------|-----------------|
-| Python runtime | **0.0.2** | `apps/python/pyproject.toml` |
-| TypeScript runtime | **0.0.3** | `apps/ts/package.json` |
+| Python runtime | **0.0.3** | `apps/python/pyproject.toml` |
+| TypeScript runtime | **0.1.0** | `apps/ts/package.json` |
 | Helm chart | **0.0.2** | `.devops/helm/fractal-agents-runtime/Chart.yaml` |
 
 ## Architecture Documentation
@@ -343,7 +419,8 @@ Components are versioned independently following [Semantic Versioning](https://s
 | Document | Description |
 |----------|-------------|
 | [Multi-Agent Checkpoint Architecture](docs/MULTI_AGENT_CHECKPOINT_ARCHITECTURE.md) | Checkpoint namespace isolation for concurrent agents in shared threads |
-| [Benchmarks](benchmarks/README.md) | Mock LLM server and k6 benchmark setup |
+| [RAG Archive Retrieval](docs/rag-archive-retrieval.md) | ChromaDB + TEI architecture for document archive search |
+| [Benchmarks](benchmarks/README.md) | Mock LLM server, k6 benchmark setup, and methodology |
 | [Helm Chart](/.devops/helm/fractal-agents-runtime/README.md) | Kubernetes deployment, secrets, env vars |
 | [Contributing](CONTRIBUTING.md) | Development workflow and coding standards |
 

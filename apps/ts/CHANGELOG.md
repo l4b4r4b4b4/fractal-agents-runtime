@@ -1,10 +1,104 @@
 # Changelog
 
-All notable changes to the **Fractal Agents Runtime — TypeScript/Bun** will be
-documented in this file.
+All notable changes to the **Fractal Agents Runtime** (both Python and
+TypeScript runtimes) will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] — 2026-02-20
+
+First minor release. Full feature parity between Python and TypeScript runtimes.
+Adds ChromaDB archive RAG to both runtimes, implements Python `/runs/wait`
+non-streaming endpoints, fixes store namespace handling, upgrades TS Postgres
+driver to Bun.sql, adds graph caching and local JWT verification, and resolves
+all TypeScript type errors.
+
+**Breaking change:** Version jump from 0.0.3 → 0.1.0 reflects accumulated
+feature breadth (RAG, A2A, MCP, multi-provider LLM, persistence, auth, metrics,
+research agent) and confirmed feature parity across both runtimes.
+
+### Added
+
+#### ChromaDB Archive RAG — TypeScript (94 tests)
+- `src/graphs/react-agent/utils/chromadb-rag.ts` — Config types, TEI embedding
+  client, ChromaDB v2 HTTP client, German result formatting, tool factory
+- Direct HTTP via native `fetch()` — no `chromadb` npm dependency
+- ChromaDB v2 REST API: GET collection by name → POST query by UUID
+- TEI `/v1/embeddings` for query vectorisation (OpenAI-compatible)
+- Cross-archive search with distance-based ranking
+- Graceful degradation: unreachable archives silently skipped
+- Coexists with LangConnect RAG (different config keys: `rag` vs `rag_config`)
+- `rag_config` field added to `GraphConfigValues` + `parseGraphConfig()`
+- Wired into `agent.ts` alongside existing LangConnect RAG block
+- 94 unit tests covering config extraction, embedding, collection lookup,
+  query, formatting, archive init, tool creation, and env var resolution
+
+#### ChromaDB Archive RAG — Python
+- `src/graphs/react_agent/rag/` package — config, embeddings, retriever modules
+- `chromadb-client` (HTTP-only) for ChromaDB v2 collection access
+- TEI embedding via `httpx` to `/v1/embeddings` endpoint
+- `search_archives` structured tool with cross-archive distance ranking
+- German-formatted results identical to TypeScript output
+- Docker Compose services for ChromaDB + TEI added
+- Seed script for test data population
+
+#### Python `/runs/wait` Non-Streaming Endpoints
+- `execute_run_wait()` function in `streams.py` — mirrors streaming pipeline
+  but uses `agent.ainvoke()` and returns dict
+- Shared `_parse_input_messages()` helper extracted for DRYness
+- `POST /threads/{id}/runs/wait` — stateful non-streaming run
+- `POST /runs/wait` — stateless non-streaming run (ephemeral thread)
+- `POST /runs` — background run (returns immediately, runs async)
+- All endpoints E2E verified (stateful + stateless + background)
+
+#### TypeScript Performance & Infrastructure
+- `Bun.sql` native Postgres driver replacing `postgres.js` and `pg` — zero-copy
+  binary protocol, ~2x faster for checkpoint operations
+- Graph cache with `Map<string, CompiledGraph>` — avoids re-creating agent
+  graphs on every request
+- Local JWT verification via `crypto.subtle` — eliminates Supabase round-trip
+  for token validation
+- Performance instrumentation logging for graph creation and model init
+
+### Changed
+- `configuration.ts` — `GraphConfigValues` now has 10 fields (added `rag_config`)
+- `agent.ts` — ChromaDB RAG block added after LangConnect RAG block
+- Existing config tests updated for 9→10 field count
+- Python `pyproject.toml` version: 0.0.2 → 0.0.3
+- TypeScript `package.json` version: 0.0.3 → 0.1.0
+
+### Fixed
+- **Python store namespace** — GET/DELETE 404 on valid keys due to namespace
+  normalisation mismatch; aligned with OpenAPI spec
+- **Python agent_sync SQL** — Aligned with DocProc schema, pass `name` field
+  to assistant creation
+- **TypeScript type errors** — Resolved all 24 TypeScript strict-mode errors
+  for clean CI (`tsc --noEmit`)
+- **JSONB storage** — Pass raw objects (not `JSON.stringify`) for Postgres
+  JSONB columns in TS runtime
+- **checkpoint_ns** — Removed from configurable dict to fix LangGraph
+  subgraph namespace conflict
+
+### Technical Details
+- **Python tests:** 1261 passed, 74% coverage (73% floor enforced)
+- **TypeScript tests:** 2124 passed, 3971 assertions across 31 files
+- **New TS test file:** `tests/chromadb-rag.test.ts` (94 tests)
+- **Pre-commit hooks:** Bun version check, TS OpenAPI spec, TS lint — all green
+- **Zero new dependencies** in TypeScript (ChromaDB RAG uses native `fetch()`)
+- **Python new dependency:** `chromadb-client` (HTTP-only ChromaDB wrapper)
+
+### Environment Variables Added
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DOCPROC_CHROMADB_URL` | `http://chromadb:8000` | Fallback ChromaDB URL |
+| `DOCPROC_TEI_EMBEDDINGS_URL` | `http://tei-embeddings:8080` | TEI embedding endpoint |
+| `RAG_DEFAULT_TOP_K` | `5` | Default results per archive |
+| `RAG_DEFAULT_LAYER` | `chunk` | Default metadata layer filter |
+| `RAG_QUERY_TIMEOUT_SECONDS` | `5` | ChromaDB query timeout |
+| `RAG_EMBED_TIMEOUT_SECONDS` | `10` | TEI embedding timeout |
+
+---
 
 ## [0.0.3] — 2026-02-15
 

@@ -1,6 +1,6 @@
 {
   "name": "fractal-agents-runtime-ts",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "bun run --watch src/index.ts",

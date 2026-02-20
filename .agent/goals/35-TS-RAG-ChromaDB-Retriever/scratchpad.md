@@ -1,8 +1,8 @@
 # Goal 35: TypeScript RAG ChromaDB Retriever
 
-> **Status:** 🟡 In Progress (research complete, implementation starting)
+> **Status:** 🟡 In Progress (Tasks 01–03 complete, Task 04 remaining)
 > **Priority:** P1 (blocks full RAG feature parity)
-> **Branch:** `feat/rag-chromadb-retriever` (current working branch)
+> **Branch:** `release/v0.1.0` (local, branched from feat/rag-chromadb-retriever)
 > **Created:** 2026-02-20
 > **Depends on:** Goal 34 (Python RAG — ✅ Complete)
 > **Reference:** `.agent/rag-feature.md`, `docs/rag-archive-retrieval.md`
@@ -18,13 +18,13 @@ sends.
 
 ### Success Criteria
 
-- [ ] `rag_config` with `archives` is read from `config.configurable` in TS runtime
-- [ ] `search_archives` tool is dynamically registered when archives are configured
-- [ ] Agent can invoke the tool and receive formatted document chunks
-- [ ] Query embedding via TEI `/v1/embeddings` endpoint works correctly
-- [ ] Error handling: unreachable ChromaDB / TEI → graceful degradation (no crash)
-- [ ] Old LangConnect RAG (`rag.rag_url` + `rag.collections`) still works (backward compat)
-- [ ] Unit tests for config extraction, embedding, ChromaDB query, tool creation
+- [x] `rag_config` with `archives` is read from `config.configurable` in TS runtime
+- [x] `search_archives` tool is dynamically registered when archives are configured
+- [x] Agent can invoke the tool and receive formatted document chunks
+- [x] Query embedding via TEI `/v1/embeddings` endpoint works correctly
+- [x] Error handling: unreachable ChromaDB / TEI → graceful degradation (no crash)
+- [x] Old LangConnect RAG (`rag.rag_url` + `rag.collections`) still works (backward compat)
+- [x] Unit tests for config extraction, embedding, ChromaDB query, tool creation
 - [ ] Local Docker E2E: TS runtime agent searches real ChromaDB collection
 
 ---
@@ -141,8 +141,9 @@ Die Kosten für die Heizungswartung betrugen...
 
 ### Task-01: `chromadb-rag.ts` — Config + Embedding + Retriever + Tool Factory
 
-**Status:** ⚪ Not Started
+**Status:** 🟢 Complete
 **Effort:** Medium (~45 min)
+**Commit:** `b44121b` on `release/v0.1.0`
 
 **Single file to create:**
 `apps/ts/src/graphs/react-agent/utils/chromadb-rag.ts`
@@ -200,8 +201,9 @@ query time, call `queryCollection(url, collectionId, ...)` using the UUID.
 
 ### Task-02: Agent wiring — `configuration.ts` + `agent.ts`
 
-**Status:** ⚪ Not Started
+**Status:** 🟢 Complete
 **Effort:** Low (~15 min)
+**Commit:** `b44121b` on `release/v0.1.0` (same commit as Task-01)
 
 **Files to modify:**
 
@@ -224,21 +226,28 @@ query time, call `queryCollection(url, collectionId, ...)` using the UUID.
 
 ### Task-03: Unit tests
 
-**Status:** ⚪ Not Started
+**Status:** 🟢 Complete
 **Effort:** Medium (~30 min)
+**Commit:** `b44121b` on `release/v0.1.0` (same commit as Task-01)
 
-**File to create:**
-`apps/ts/tests/chromadb-rag.test.ts`
+**File created:**
+`apps/ts/tests/chromadb-rag.test.ts` — **94 tests, all passing**
 
-**Test cases:**
-- `extractRagConfig`: valid config → parsed, missing → null, empty archives → null
-- `embedQuery`: mocked fetch → returns vector, timeout → throws EmbeddingError
-- `getCollection`: mocked fetch → returns collection info, 404 → returns null
-- `queryCollection`: mocked fetch → returns documents + distances
-- `formatResults`: empty → "Keine relevanten Dokumente gefunden.", single result, multiple results
-- `createArchiveSearchTool`: no archives → null, all unreachable → null
-- Config parsing in `parseGraphConfig`: `rag_config` field extracted correctly
-- Env variable resolution: `DOCPROC_TEI_EMBEDDINGS_URL`, `RAG_DEFAULT_TOP_K`, etc.
+**Test coverage:**
+- `extractRagConfig` (17 tests): valid config, missing/null/invalid, defaults, skipping bad archives
+- `embedQuery` (12 tests): success, request body, env vars, errors (unreachable, non-200, malformed), URL handling
+- `getCollection` (9 tests): success, v2 API path, 404/500 graceful, network errors, URL encoding
+- `queryCollection` (7 tests): success, request body, UUID endpoint, null filter, graceful degradation
+- `formatResults` (9 tests): empty, single, multiple, metadata combinations, topK limit
+- `initArchiveClients` (5 tests): reachable, unreachable, mixed, 404, empty
+- `createArchiveSearchTool` (8 tests): empty, unreachable, tool creation, embedding failure, empty results, formatted results, null docs, cross-archive sorting
+- Environment variable resolution (15 tests): resolveTeiUrl, resolveDefaultTopK, resolveDefaultLayer, resolveChromaDbUrl
+- `parseGraphConfig` integration (4 tests): rag_config null, parsed, empty, coexistence with rag
+- Type compliance (6 tests): RagArchiveConfig, ChromaRagConfig shapes
+
+**Also updated:**
+- `apps/ts/tests/graphs-configuration.test.ts` — field count 9→10, added `rag_config` to expected keys
+- Total across 3 related test files: **190 tests pass, 0 failures**
 
 ### Task-04: E2E verification
 
@@ -250,6 +259,7 @@ query time, call `queryCollection(url, collectionId, ...)` using the UUID.
 - Verify `search_archives` tool appears in agent tools
 - Verify LangConnect RAG still works (backward compat)
 - Run full TS test suite
+- **Note:** This task requires Docker rebuild and real infrastructure; deferred to release prep
 
 ---
 
@@ -400,3 +410,7 @@ query using the UUID.
 | 2026-02-20 | Goal created | Depends on Goal 34 (Python RAG — complete) |
 | 2026-02-20 | Research complete | Decided: direct HTTP via fetch (no chromadb npm), single file, coexist with LangConnect |
 | 2026-02-20 | API paths confirmed | Inspected Python `chromadb-client` source: v2 API, default_tenant/default_database, GET by name → POST query by UUID |
+| 2026-02-20 | Tasks 01–03 complete | `chromadb-rag.ts` (1027 lines), agent wiring, 94 unit tests — all in commit `b44121b` on `release/v0.1.0` |
+| 2026-02-20 | Existing tests updated | `graphs-configuration.test.ts` field count 9→10, added `rag_config` key — 190 total tests pass |
+| 2026-02-20 | Type check clean | `bunx tsc --noEmit` passes with zero errors |
+| 2026-02-20 | Pre-commit hooks pass | Bun version check, TS OpenAPI spec regeneration, TS lint — all green |
