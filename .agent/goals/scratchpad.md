@@ -27,6 +27,7 @@
 | 31 | Local Langfuse v3 Dev Stack | 🟢 Complete | High | 2026-02-16 |
 | 32 | Resource-Profiled Benchmarks with Animated Visualization | ⚪ Not Started | Medium | 2026-02-16 |
 | 33 | TS Runtime — Native Postgres Driver + Performance Investigation | ⚪ Not Started | High | 2026-02-16 |
+| 34 | RAG ChromaDB Retriever Tool | 🟡 In Progress | P1 | 2026-02-20 |
 
 ---
 
