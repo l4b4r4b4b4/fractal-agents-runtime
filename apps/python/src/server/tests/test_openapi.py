@@ -195,14 +195,24 @@ class TestOpenAPISchemas:
 
         required_schemas = [
             "StorePutRequest",
-            "StoreDeleteRequest",
             "StoreSearchRequest",
-            "StoreListNamespacesRequest",
             "Item",
         ]
 
         for schema in required_schemas:
             assert schema in schemas, f"Missing schema: {schema}"
+
+    def test_removed_store_schemas_absent(self):
+        """Test that obsolete store schemas have been removed.
+
+        StoreDeleteRequest was replaced by query parameters on DELETE /store/items.
+        StoreListNamespacesRequest was removed when GET /store/namespaces dropped
+        its request body.
+        """
+        schemas = COMPONENTS["schemas"]
+
+        assert "StoreDeleteRequest" not in schemas
+        assert "StoreListNamespacesRequest" not in schemas
 
     def test_error_response_schema_exists(self):
         """Test that the error response schema is defined."""
@@ -252,7 +262,7 @@ class TestOpenAPIEndpointDetails:
             if "post" in methods:
                 post_spec = methods["post"]
                 # Most POST endpoints should have requestBody (except cancels)
-                if "cancel" not in path and path not in ["/store/namespaces"]:
+                if "cancel" not in path:
                     if "requestBody" not in post_spec:
                         # Some endpoints may not need request body
                         pass

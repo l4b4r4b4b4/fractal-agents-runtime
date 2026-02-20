@@ -65,6 +65,38 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value, default=str)
 
 
+def _normalise_namespace(namespace: str | list[str]) -> list[str]:
+    """Normalise namespace to a list for consistent Postgres array serialisation.
+
+    The LangGraph SDK convention is ``namespace`` as a ``list[str]`` (tuple of
+    path segments).  PUT and search receive it from JSON bodies as a Python
+    list, and psycopg serialises that list as a Postgres array literal
+    (e.g. ``{preferences}``).  GET and DELETE receive it from query parameters
+    as a plain string, which psycopg serialises as plain text — causing a
+    mismatch against what is stored in the database.
+
+    This helper ensures every code path passes a list to psycopg, regardless
+    of whether the caller provided a string or a list.
+
+    Args:
+        namespace: Namespace as a single string or list of string segments.
+
+    Returns:
+        Namespace as a list of strings.
+
+    Examples:
+        >>> _normalise_namespace("preferences")
+        ['preferences']
+        >>> _normalise_namespace(["preferences"])
+        ['preferences']
+        >>> _normalise_namespace(["org", "user", "agent", "tokens"])
+        ['org', 'user', 'agent', 'tokens']
+    """
+    if isinstance(namespace, str):
+        return [namespace]
+    return list(namespace)
+
+
 # ---------------------------------------------------------------------------
 # DDL — idempotent, safe to run on every startup
 # ---------------------------------------------------------------------------
@@ -1214,7 +1246,7 @@ class PostgresStoreStorage:
 
     async def put(
         self,
-        namespace: str,
+        namespace: str | list[str],
         key: str,
         value: Any,
         owner_id: str,
@@ -1223,6 +1255,7 @@ class PostgresStoreStorage:
         """Store or update an item (upsert)."""
         now = _utc_now()
         metadata = metadata or {}
+        normalised_namespace = _normalise_namespace(namespace)
 
         async with self._get_connection() as connection:
             await connection.execute(
@@ -1237,7 +1270,7 @@ class PostgresStoreStorage:
                     updated_at = EXCLUDED.updated_at
                 """,
                 (
-                    namespace,
+                    normalised_namespace,
                     key,
                     _json_dumps(value),
                     owner_id,
@@ -1259,11 +1292,12 @@ class PostgresStoreStorage:
 
     async def get(
         self,
-        namespace: str,
+        namespace: str | list[str],
         key: str,
         owner_id: str,
     ) -> PostgresStoreItem | None:
         """Get an item by namespace and key."""
+        normalised_namespace = _normalise_namespace(namespace)
         async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
@@ -1271,7 +1305,7 @@ class PostgresStoreStorage:
                 FROM {_SCHEMA}.store_items
                 WHERE namespace = %s AND key = %s AND owner_id = %s
                 """,
-                (namespace, key, owner_id),
+                (normalised_namespace, key, owner_id),
             )
             row = await result.fetchone()
 
@@ -1297,30 +1331,32 @@ class PostgresStoreStorage:
 
     async def delete(
         self,
-        namespace: str,
+        namespace: str | list[str],
         key: str,
         owner_id: str,
     ) -> bool:
         """Delete an item."""
+        normalised_namespace = _normalise_namespace(namespace)
         async with self._get_connection() as connection:
             result = await connection.execute(
                 f"""
                 DELETE FROM {_SCHEMA}.store_items
                 WHERE namespace = %s AND key = %s AND owner_id = %s
                 """,
-                (namespace, key, owner_id),
+                (normalised_namespace, key, owner_id),
             )
             return result.rowcount > 0
 
     async def search(
         self,
-        namespace: str,
+        namespace: str | list[str],
         owner_id: str,
         prefix: str | None = None,
         limit: int = 10,
         offset: int = 0,
     ) -> list[PostgresStoreItem]:
         """Search items in a namespace."""
+        normalised_namespace = _normalise_namespace(namespace)
         async with self._get_connection() as connection:
             if prefix:
                 result = await connection.execute(
@@ -1331,7 +1367,7 @@ class PostgresStoreStorage:
                     ORDER BY key
                     LIMIT %s OFFSET %s
                     """,
-                    (namespace, owner_id, f"{prefix}%", limit, offset),
+                    (normalised_namespace, owner_id, f"{prefix}%", limit, offset),
                 )
             else:
                 result = await connection.execute(
@@ -1342,7 +1378,7 @@ class PostgresStoreStorage:
                     ORDER BY key
                     LIMIT %s OFFSET %s
                     """,
-                    (namespace, owner_id, limit, offset),
+                    (normalised_namespace, owner_id, limit, offset),
                 )
 
             rows = await result.fetchall()
