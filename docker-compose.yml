@@ -34,6 +34,7 @@
 
 volumes:
   hf_cache:
+  chromadb_data:
 
 networks:
   supabase:
@@ -63,6 +64,9 @@ services:
       - ROBYN_HOST=0.0.0.0
       - ROBYN_PORT=8081
       - ROBYN_WORKERS=1
+      # Clear OPENAI_BASE_URL from .env so standard provider routes to api.openai.com
+      # (the .env points it at the local ministral vLLM which may not be running)
+      - OPENAI_BASE_URL=
     networks:
       - default
       - supabase
@@ -163,10 +167,47 @@ services:
   # Optional infrastructure services (disabled by default)
   # ===========================================================================
 
+  # ---------------------------------------------------------------------------
+  # ChromaDB — vector database for RAG archive retrieval
+  # ---------------------------------------------------------------------------
+  #
+  # Enable for RAG testing:
+  #   docker compose up chromadb
+  #
+  # The runtime reaches it as chromadb:8000 over the default network.
+  # Platform-side rag_config uses chromadb_url: "http://chromadb:8000".
+  chromadb:
+    deploy:
+      replicas: 0
+    image: chromadb/chroma:latest
+    ports:
+      - "8100:8000"
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    volumes:
+      - chromadb_data:/chroma/chroma
+    restart: no
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # TEI Embeddings — query vectorisation for RAG retriever
+  # ---------------------------------------------------------------------------
+  #
+  # Enable for RAG testing (requires NVIDIA GPU):
+  #   docker compose up embeddings
+  #
+  # The runtime reaches it as embeddings:8080 over the default network.
+  # Set DOCPROC_TEI_EMBEDDINGS_URL=http://embeddings:8080 in .env.
   embeddings:
     deploy:
       replicas: 0
-    image: ghcr.io/huggingface/text-embeddings-inference:86-1.6
+    image: ghcr.io/huggingface/text-embeddings-inference:86-1.9
     volumes:
       - hf_cache:/.hf_cache
     ports:

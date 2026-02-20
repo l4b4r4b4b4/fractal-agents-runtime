@@ -1,6 +1,6 @@
 # Goal 34: RAG ChromaDB Retriever Tool
 
-> **Status:** 🟡 In Progress
+> **Status:** 🟢 Complete
 > **Priority:** P1 (blocks end-to-end RAG pipeline)
 > **Branch:** `feat/rag-chromadb-retriever`
 > **Created:** 2026-02-20
@@ -23,14 +23,14 @@ The runtime needs to:
 
 ### Success Criteria
 
-- [ ] `rag_config` with `archives` is read from `config.configurable`
-- [ ] `search_archives` tool is dynamically registered when archives are configured
-- [ ] Agent can invoke the tool and receive formatted document chunks
-- [ ] Embedding via TEI `/v1/embeddings` endpoint works correctly
-- [ ] Error handling: unreachable ChromaDB / TEI → graceful degradation (no crash)
-- [ ] Old LangConnect RAG (`cfg.rag`) still works (backward compat)
-- [ ] Unit tests for config extraction, embedding, tool creation
-- [ ] Local Docker e2e: agent searches real ChromaDB collection in chat UI
+- [x] `rag_config` with `archives` is read from `config.configurable`
+- [x] `search_archives` tool is dynamically registered when archives are configured
+- [x] Agent can invoke the tool and receive formatted document chunks
+- [x] Embedding via TEI `/v1/embeddings` endpoint works correctly
+- [x] Error handling: unreachable ChromaDB / TEI → graceful degradation (no crash)
+- [x] Old LangConnect RAG (`cfg.rag`) still works (backward compat)
+- [x] Unit tests for config extraction, embedding, tool creation
+- [x] Local Docker e2e: agent searches real ChromaDB collection in chat UI
 
 ---
 
@@ -77,7 +77,7 @@ ChromaDB collections have 4 layers (document, page, section, chunk). The
 
 ### Task-01: Implement RAG module + graph integration
 
-**Status:** ⚪ Not Started
+**Status:** 🟢 Complete
 
 **New files:**
 - `src/graphs/react_agent/rag/__init__.py` — Package init, public exports
@@ -132,7 +132,7 @@ ChromaDB collections have 4 layers (document, page, section, chunk). The
 
 ### Task-02: Tests + local Docker verification
 
-**Status:** ⚪ Not Started
+**Status:** 🟢 Complete (unit tests); ⚪ Docker e2e pending
 
 **New files:**
 - `tests/rag/test_config.py` — Config extraction unit tests
@@ -208,8 +208,50 @@ Local verification:
 
 ## Completion Log
 
-_Updated as work progresses._
-
 | Date | What | Notes |
 |------|------|-------|
 | 2026-02-20 | Goal created, plan documented | Feature branch `feat/rag-chromadb-retriever` created from `feat/ts-v0.0.2-auth-persistence-store` |
+| 2026-02-20 | Task-01 + Task-02 implemented | All new code + 104 unit tests passing. Commit `d534e3f`. |
+| 2026-02-20 | Branch pushed | `feat/rag-chromadb-retriever` pushed to origin. Full suite: 1240 passed, 75.21% coverage. |
+| 2026-02-20 | **Docker E2E PASSED** | Full pipeline verified: user question → `search_archives` tool call → TEI embedding → ChromaDB vector query → formatted results → AI answer referencing Wartungsbericht Heizung 2025, 15. Januar 2025, Ausdehnungsgefäß. ChromaDB client v1.5.1 ↔ server v1.0.0 (v2 API). Used `/runs/stream` (note: `/runs/wait` is a stub — needs implementation). |
+
+### Implementation Summary
+
+**New files created:**
+- `src/graphs/react_agent/rag/__init__.py` — Package exports
+- `src/graphs/react_agent/rag/config.py` — `RagArchiveConfig`, `ChromaRagConfig`, `extract_rag_config()`
+- `src/graphs/react_agent/rag/embeddings.py` — `embed_query()` via httpx → TEI `/v1/embeddings` (98% coverage)
+- `src/graphs/react_agent/rag/retriever.py` — `create_archive_search_tool()` factory → `search_archives` tool (100% coverage)
+- `tests/rag/test_config.py` — 21 tests for config extraction
+- `tests/rag/test_embeddings.py` — 49 tests for embedding client (mocked httpx)
+- `tests/rag/test_retriever.py` — 34 tests for retriever tool (mocked ChromaDB)
+
+**Modified files:**
+- `src/graphs/react_agent/agent.py` — Added `rag_config` field to `GraphConfigPydantic`, wired `create_archive_search_tool()` into `graph()`
+- `pyproject.toml` — Added `chromadb-client>=1.3.0` (slim HTTP-only) + `httpx>=0.27.0`
+
+**Key decisions during implementation:**
+- Used `StructuredTool.from_function()` instead of `@tool` decorator for cleaner factory pattern
+- `chromadb-client` (not full `chromadb`) — HTTP-only, no hnswlib/onnxruntime/uvicorn bloat
+- `data: dict | list | str | None` pattern for TEI response parsing with explicit type narrowing
+- `# type: ignore[index]` on ChromaDB result access — runtime-safe but type checker can't prove it
+- Metadata coerced with `or {}` pattern to handle None from ChromaDB
+
+### Remaining Work
+- ~~Local Docker e2e verification~~ ✅ Passed 2026-02-20
+- PR merge flow: feature → development → main, tag releases
+- Commit docker-compose.yml changes (OPENAI_BASE_URL override) + seed script
+
+### Future Hardening (Not Blocking Release)
+
+1. **ChromaDB multi-tenant access control** — Currently no JWT/user-based
+   access control on ChromaDB queries. The runtime trusts the platform's
+   `rag_config` blindly. ChromaDB v2 has `tenant` and `database` namespaces
+   that map naturally to `organization_id` → tenant, `repository_id` →
+   database. Wire JWT org claim validation before querying.
+2. **`/runs/wait` implementation** — The non-streaming endpoint is a stub
+   (`# TODO: Execute agent graph here`). Needs real agent graph execution
+   for clients that don't want SSE streaming.
+3. **ChromaDB server/client version alignment** — Client v1.5.1 vs server
+   v1.0.0. Both use v2 API and work, but should align versions to avoid
+   future drift.
