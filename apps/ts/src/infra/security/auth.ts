@@ -374,7 +374,7 @@ export function verifyTokenLocal(token: string): AuthUser {
   const signatureInput = `${headerBase64}.${payloadBase64}`;
   const hasher = new Bun.CryptoHasher("sha256", secretBytes);
   hasher.update(signatureInput);
-  const computedSignatureBytes = new Uint8Array(hasher.digest() as ArrayBuffer);
+  const computedSignatureBytes = new Uint8Array(hasher.digest() as unknown as ArrayBuffer);
 
   // 4. Compare with the provided signature (constant-time via loop)
   const providedSignatureBytes = base64UrlToBytes(signatureBase64);

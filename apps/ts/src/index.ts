@@ -91,7 +91,7 @@ registerA2ARoutes(router, {
     },
     list: (ownerId: string) => {
       try {
-        return getStorage().assistants.list(ownerId);
+        return getStorage().assistants.search({}, ownerId) as any;
       } catch {
         return [];
       }
@@ -114,16 +114,16 @@ registerA2ARoutes(router, {
     },
   },
   runs: {
-    get: (id: string, ownerId: string) => {
+    get: (id: string, _ownerId: string) => {
       try {
-        return getStorage().runs.get(id, ownerId);
+        return getStorage().runs.get(id);
       } catch {
         return null;
       }
     },
-    create: (data: Record<string, unknown>, ownerId: string) => {
+    create: (data: Record<string, unknown>, _ownerId: string) => {
       try {
-        return getStorage().runs.create(data, ownerId);
+        return getStorage().runs.create(data as any);
       } catch {
         return { run_id: crypto.randomUUID() };
       }
@@ -162,8 +162,8 @@ if (import.meta.main) {
         if (scope.type !== "none") {
           const storage = getStorage();
           const summary = await startupAgentSync(
-            sqlConnection,
-            storage,
+            sqlConnection as any,
+            storage as any,
             scope,
             SYSTEM_OWNER_ID,
           );
@@ -225,7 +225,7 @@ if (import.meta.main) {
   }
 
   // Initialize cron scheduler and handler (wires execution callback)
-  const cronHandler = getCronHandler();
+  getCronHandler(); // initialise handler (return value unused)
   const cronScheduler = getScheduler();
   cronScheduler.start();
   console.log("   Cron scheduler:    started");

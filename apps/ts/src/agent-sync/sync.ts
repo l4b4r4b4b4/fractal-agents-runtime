@@ -23,7 +23,7 @@ import type {
   AgentSyncScope,
   AgentSyncSummary,
 } from "./types";
-import type { AssistantStore } from "../storage/types";
+
 import {
   assistantPayloadForAgent,
   extractAssistantConfigurable,

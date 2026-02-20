@@ -55,7 +55,6 @@ import type {
   ThreadStore,
   RunStore,
   StoreStorage,
-  CronStore,
   Storage,
 } from "./types";
 import { InMemoryCronStore } from "./memory";
@@ -276,7 +275,7 @@ export class PostgresAssistantStore implements AssistantStore {
       `;
     }
 
-    return rows.map((row) => this.rowToModel(row));
+    return rows.map((row: Record<string, unknown>) => this.rowToModel(row));
   }
 
   async update(
@@ -538,18 +537,18 @@ export class PostgresThreadStore implements ThreadStore {
       `;
     }
 
-    let results = rows.map((row) => this.rowToModel(row));
+    let results = rows.map((row: Record<string, unknown>) => this.rowToModel(row));
 
     // Apply ID filter in JS (dynamic IN with variable-length lists)
     if (request.ids && request.ids.length > 0) {
       const idSet = new Set(request.ids);
-      results = results.filter((thread) => idSet.has(thread.thread_id));
+      results = results.filter((thread: { thread_id: string }) => idSet.has(thread.thread_id));
     }
 
     // Apply values filter in JS
     if (request.values && typeof request.values === "object") {
       const filterEntries = Object.entries(request.values);
-      results = results.filter((thread) => {
+      results = results.filter((thread: { values?: Record<string, unknown> }) => {
         const threadValues = thread.values as Record<string, unknown> | undefined;
         if (!threadValues) return false;
         return filterEntries.every(
@@ -974,7 +973,7 @@ export class PostgresRunStore implements RunStore {
       `;
     }
 
-    return rows.map((row) => this.rowToModel(row));
+    return rows.map((row: Record<string, unknown>) => this.rowToModel(row));
   }
 
   async getByThread(threadId: string, runId: string): Promise<Run | null> {

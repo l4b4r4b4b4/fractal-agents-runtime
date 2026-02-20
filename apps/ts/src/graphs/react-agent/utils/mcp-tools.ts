@@ -22,7 +22,7 @@
  *   // tools is DynamicStructuredTool[] ready for createAgent({ tools })
  */
 
-import type { MCPConfig, MCPServerConfig } from "../configuration";
+import type { MCPConfig } from "../configuration";
 import { getMcpAccessToken, findAuthRequiredServerUrl } from "./token";
 
 // ---------------------------------------------------------------------------

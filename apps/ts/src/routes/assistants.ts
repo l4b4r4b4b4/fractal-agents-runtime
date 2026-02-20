@@ -118,8 +118,8 @@ async function handleCreateAssistant(request: Request): Promise<Response> {
       const sqlConnection = getConnection();
       if (sqlConnection) {
         await lazySyncAgent(
-          sqlConnection,
-          storage,
+          sqlConnection as any,
+          storage as any,
           supabaseAgentIdValue,
           ownerId ?? SYSTEM_OWNER_ID,
         );

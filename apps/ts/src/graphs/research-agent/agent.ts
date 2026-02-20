@@ -92,7 +92,7 @@ async function ensureGetPrompt(): Promise<typeof getPromptFn> {
       }): string => {
         const result = promptsModule.getPrompt({
           name: options.name,
-          fallback: options.fallback,
+          fallback: options.fallback ?? "",
           variables: options.variables ?? null,
         });
         return typeof result === "string" ? result : (options.fallback ?? "");

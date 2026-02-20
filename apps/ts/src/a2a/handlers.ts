@@ -20,11 +20,7 @@ import type {
   JsonRpcRequest,
   JsonRpcResponse,
   Task,
-  TaskStatus,
   Artifact,
-  MessagePart,
-  TextPart,
-  A2AMessage,
 } from "./schemas";
 import {
   JsonRpcErrorCode,
@@ -314,7 +310,7 @@ export class A2AMethodHandler {
    */
   async handleTasksGet(
     params: Record<string, unknown>,
-    assistantId: string,
+    _assistantId: string,
     ownerId: string,
   ): Promise<Record<string, unknown>> {
     let getParams;

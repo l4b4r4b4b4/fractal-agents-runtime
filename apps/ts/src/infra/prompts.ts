@@ -446,14 +446,11 @@ export function getPrompt<T extends PromptType = "text">(
   const overrides = extractOverrides(name, config);
   const effectiveName =
     typeof overrides.name === "string" ? overrides.name : name;
-  const effectiveLabel =
-    typeof overrides.label === "string" ? overrides.label : label;
-  const effectiveVersion =
-    typeof overrides.version === "number" ? overrides.version : null;
-
-  // --- Resolve cache TTL ---
-  const effectiveTtl =
-    cacheTtlSeconds !== null ? cacheTtlSeconds : getDefaultCacheTtl();
+  // TODO: wire effectiveLabel / effectiveVersion / effectiveTtl into the
+  // Langfuse getPrompt call once the SDK integration is complete.
+  void (typeof overrides.label === "string" ? overrides.label : label);
+  void (typeof overrides.version === "number" ? overrides.version : null);
+  void (cacheTtlSeconds !== null ? cacheTtlSeconds : getDefaultCacheTtl());
 
   // --- Fast path: Langfuse not initialised ---
   if (!isLangfuseEnabled()) {
