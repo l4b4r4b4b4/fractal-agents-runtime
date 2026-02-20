@@ -166,6 +166,7 @@ describe("Graph Configuration — parseGraphConfig edge cases", () => {
       "custom_api_key",
       "mcp_config",
       "rag",
+      "rag_config",
     ]);
     // mcp_config with empty servers array parses to null
     expect(config.mcp_config).toBeNull();
@@ -333,10 +334,10 @@ describe("Graph Configuration — getEffectiveSystemPrompt", () => {
 // ---------------------------------------------------------------------------
 
 describe("Graph Configuration — return type", () => {
-  test("parseGraphConfig returns exactly 9 fields", () => {
+  test("parseGraphConfig returns exactly 10 fields", () => {
     const config = parseGraphConfig({});
     const keys = Object.keys(config);
-    expect(keys.length).toBe(9);
+    expect(keys.length).toBe(10);
     expect(keys).toContain("model_name");
     expect(keys).toContain("temperature");
     expect(keys).toContain("max_tokens");

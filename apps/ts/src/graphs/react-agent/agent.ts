@@ -41,6 +41,7 @@ import {
 import { createChatModel } from "./providers";
 import { fetchMcpTools } from "./utils/mcp-tools";
 import { createRagTools } from "./utils/rag-tools";
+import { createArchiveSearchTool } from "./utils/chromadb-rag";
 
 // ---------------------------------------------------------------------------
 // Graph factory
@@ -143,6 +144,34 @@ export const graph: GraphFactory = async function graph(
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`[agent] RAG tool loading failed: ${message}`);
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // ChromaDB archive RAG — dynamically register search_archives tool
+  // when the platform provides rag_config with archive definitions.
+  //
+  // This coexists with the LangConnect RAG above — both can be active
+  // simultaneously (they use different config keys: `rag` vs `rag_config`).
+  //
+  // Reference: apps/python/src/graphs/react_agent/agent.py (ChromaDB RAG section)
+  // -----------------------------------------------------------------------
+
+  if (
+    parsedConfig.rag_config &&
+    parsedConfig.rag_config.archives.length > 0
+  ) {
+    try {
+      const archiveTool = await createArchiveSearchTool(parsedConfig.rag_config);
+      if (archiveTool) {
+        tools.push(archiveTool);
+        console.log(
+          `[agent] ChromaDB RAG tool registered: archives=${parsedConfig.rag_config.archives.length}`,
+        );
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[agent] ChromaDB RAG tool loading failed: ${message}`);
     }
   }
 

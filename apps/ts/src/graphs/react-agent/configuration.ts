@@ -18,6 +18,8 @@
 
 import type { RagConfig } from "./utils/rag-tools";
 import { parseRagConfig } from "./utils/rag-tools";
+import type { ChromaRagConfig } from "./utils/chromadb-rag";
+import { extractRagConfig } from "./utils/chromadb-rag";
 
 // ---------------------------------------------------------------------------
 // Constants — match Python runtime exactly
@@ -248,6 +250,17 @@ export interface GraphConfigValues {
    * Mirrors Python's `RagConfig` from `graphs/react_agent/agent.py`.
    */
   rag: RagConfig | null;
+
+  /**
+   * ChromaDB archive RAG configuration.
+   * When set, the agent creates a `search_archives` tool that queries
+   * ChromaDB collections for semantically similar document chunks.
+   * Coexists with the LangConnect `rag` field above — both can be active.
+   * `null` means no ChromaDB archive tools.
+   *
+   * Mirrors Python's `GraphConfigPydantic.rag_config` from `graphs/react_agent/agent.py`.
+   */
+  rag_config: ChromaRagConfig | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +309,7 @@ export function parseGraphConfig(
     custom_api_key: parseNullableString(raw.custom_api_key),
     mcp_config: parseMcpConfig(raw.mcp_config),
     rag: parseRagConfig(raw.rag),
+    rag_config: extractRagConfig(raw),
   };
 }
 
