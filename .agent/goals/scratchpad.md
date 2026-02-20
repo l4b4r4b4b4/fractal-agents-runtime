@@ -31,7 +31,7 @@
 | 35 | TS RAG ChromaDB Retriever | ⚪ Not Started | P1 | 2026-02-20 |
 | 36 | `/runs/wait` Non-Streaming Endpoint (Python + TS) | ⚪ Not Started | P1 | 2026-02-20 |
 | 37 | ChromaDB Multi-Tenant Access Control with Supabase JWT | ⚪ Not Started | P2 | 2026-02-20 |
-| 38 | Store API Namespace Fix + OpenAPI Alignment | ⚪ Not Started | P1 | 2026-02-20 |
+| 38 | Store API Namespace Fix + OpenAPI Alignment | 🟢 Complete | P1 | 2026-02-20 |
 
 ---
 
