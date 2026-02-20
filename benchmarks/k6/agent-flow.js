@@ -436,10 +436,14 @@ function storeList(namespace) {
     limit: 10,
   };
 
-  const response = http.post(`${RUNTIME_URL}/store/list`, jsonBody(payload), {
-    headers: headers(),
-    tags: { operation: "store_list" },
-  });
+  const response = http.post(
+    `${RUNTIME_URL}/store/items/search`,
+    jsonBody(payload),
+    {
+      headers: headers(),
+      tags: { operation: "store_list" },
+    },
+  );
 
   const body = parseJsonResponse(response, "store_list");
   const success = check(response, {
@@ -454,14 +458,11 @@ function storeList(namespace) {
 }
 
 function storeDelete(namespace, key) {
-  const response = http.del(
-    `${RUNTIME_URL}/store/items`,
-    jsonBody({ namespace: namespace, key: key }),
-    {
-      headers: headers(),
-      tags: { operation: "store_delete" },
-    },
-  );
+  const queryParams = `namespace=${encodeURIComponent(JSON.stringify(namespace))}&key=${encodeURIComponent(key)}`;
+  const response = http.del(`${RUNTIME_URL}/store/items?${queryParams}`, null, {
+    headers: headers(),
+    tags: { operation: "store_delete" },
+  });
 
   if (response.status !== 200 && response.status !== 204) {
     cleanupErrors.add(1);

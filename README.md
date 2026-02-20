@@ -115,64 +115,83 @@ All 6 Langfuse prompt names are identical across runtimes, enabling shared promp
 
 ## Benchmarks
 
-### Tier 1: Runtime Overhead (Mock LLM)
+### v0.1.0 — Runtime Overhead (Mock LLM)
 
-Measures pure runtime overhead — HTTP routing, serialisation, storage, streaming — by pointing both runtimes at a mock LLM server (10ms base delay). This isolates the runtime from LLM inference variance.
+Measures pure runtime overhead — HTTP routing, serialisation, auth, storage, streaming — by pointing both runtimes at a mock LLM server (10ms base delay). This isolates the runtime from LLM inference variance.
 
-**Test setup:** Mock LLM (10ms delay, 5ms stream chunk), 5 VUs ramping, in-memory storage, same machine.
+**Test setup:** AMD Threadripper 3970X (64 threads), 64 GB RAM · NixOS 26.05, kernel 6.18.12 · Bun 1.3.9, Python 3.12.12, k6 1.6.0 · Mock LLM (10ms delay, 5ms stream chunk) · HS256 local JWT auth · In-memory storage · 5 VUs ramping (90s)
 
-**k6 agent flow:** create assistant → thread → run/wait → stream → get state → cleanup.
+**k6 agent flow:** create assistant → thread → run/wait → stream → get state → stateless run → store put/get/search → cleanup.
 
-#### Latency Comparison (p50 / p95 / p99)
+#### Latency Comparison (p50 / p95 / p99, milliseconds)
 
-| Operation | TypeScript (Bun) | Python (Robyn) | Winner |
-|-----------|-----------------|----------------|--------|
-| Create assistant | 56 / 93 / 101 ms | 67 / 84 / 88 ms | TS p50, Py p95 |
-| Create thread | 53 / 91 / 96 ms | 66 / 82 / 90 ms | TS p50, Py p95 |
-| Run/wait | 119 / 164 / 179 ms | 199 / 251 / 299 ms | **TS 1.7x** |
-| Run/stream | 124 / 166 / 187 ms | 1725 / 2399 / 2641 ms | **TS 14x** |
-| Get state | 54 / 91 / 98 ms | 65 / 79 / 89 ms | TS p50, Py p95 |
-| **Full flow** | **509 / 743 / 773 ms** | **2256 / 2946 / 3174 ms** | **TS 4.4x** |
+| Operation | TypeScript (Bun) | Python (Robyn) | Ratio (p50) |
+|-----------|-----------------|----------------|-------------|
+| Create assistant | 0.9 / 7.2 / 12.6 | 1.4 / 12.6 / 30.0 | TS 1.7x |
+| Create thread | 0.4 / 7.4 / 15.2 | 0.9 / 9.8 / 16.9 | TS 2.1x |
+| Run/wait | 18.2 / 33.2 / 40.4 | 24.9 / 52.2 / 93.4 | TS 1.4x |
+| Run/stream | 23.4 / 41.3 / 50.6 | 843.7 / 1795.2 / 1871.1 | **TS 36x** |
+| Stateless run/wait | 16.3 / 29.0 / 33.2 | 25.9 / 50.0 / 164.5 | TS 1.6x |
+| Store put | 0.9 / 5.4 / 8.8 | 1.2 / 15.7 / 29.3 | TS 1.2x |
+| Store get | 0.3 / 4.1 / 8.8 | 0.9 / 13.7 / 25.6 | TS 2.9x |
+| Store search | 0.3 / 3.6 / 6.5 | 0.9 / 11.8 / 24.1 | TS 2.9x |
+| **Full flow** | **81 / 109 / 118** | **916 / 1899 / 2007** | **TS 11.3x** |
 
 #### Throughput
 
 | Metric | TypeScript (Bun) | Python (Robyn) |
 |--------|-----------------|----------------|
-| Total iterations | 435 | 167 |
+| Total iterations | 1,038 | 290 |
+| HTTP requests | 12,458 | 3,509 |
 | HTTP error rate | 0.0% | 0.0% |
 | Flow success rate | 100% | 100% |
 
 ```
-Full Agent Flow — p50 Latency (ms)
-──────────────────────────────────────────────────────────────
-             TypeScript (Bun)          Python (Robyn)
-──────────────────────────────────────────────────────────────
-Assistant    ██▊                  56    ███▍                 67
-Thread       ██▋                  53    ███▎                 66
-Run/wait     █████▉              119    █████████▉          199
-Run/stream   ██████▏             124    ████████████████████████████████████ 1725
-Get state    ██▋                  54    ███▎                 65
-──────────────────────────────────────────────────────────────
-FULL FLOW    █████████████████   509    ████████████████████████████████████ 2256
-──────────────────────────────────────────────────────────────
+Full Agent Flow — p50 Latency (ms)        v0.1.0 · HS256 local JWT · 5 VUs
+──────────────────────────────────────────────────────────────────────────
+             TypeScript (Bun)               Python (Robyn)
+──────────────────────────────────────────────────────────────────────────
+Assistant    ▏                    0.9       ▎                      1.4
+Thread       ▏                    0.4       ▏                      0.9
+Run/wait     █▊                  18.2       ██▌                   24.9
+Run/stream   ██▍                 23.4       ████████████████████████████████████ 844
+Stateless    █▋                  16.3       ██▋                   25.9
+Store put    ▏                    0.9       ▏                      1.2
+Store get    ▏                    0.3       ▏                      0.9
+Store search ▏                    0.3       ▏                      0.9
+──────────────────────────────────────────────────────────────────────────
+FULL FLOW    ████████▏           81         ████████████████████████████████████ 916
+──────────────────────────────────────────────────────────────────────────
 ```
 
-> **Key finding:** TypeScript/Bun has significantly lower streaming overhead (14x faster p50 for SSE), resulting in a 4.4x faster full-flow execution. CRUD operations are comparable. Both runtimes achieve 0% error rates under load.
+> **Key findings:**
+> - **Streaming is the dominant bottleneck in Python** — 36x slower p50 for SSE, driving the 11.3x full-flow gap. CRUD and store ops are within 2–3x.
+> - **Sub-millisecond CRUD in both runtimes** — With local JWT auth (no HTTP round-trip to GoTrue), assistant/thread/store operations are < 2ms p50 in both runtimes.
+> - **Both runtimes achieve 100% flow success under load** — zero dropped requests at 5 concurrent users.
 
 #### Benchmark Infrastructure
 
 - **Mock LLM Server** (`benchmarks/mock-llm/server.ts`) — Fake OpenAI `/v1/chat/completions` with configurable delay and streaming
 - **k6 Scripts** (`benchmarks/k6/agent-flow.js`) — Full agent lifecycle: create assistant → thread → run/wait → stream → stateless run → store ops → cleanup
+- **Auth Scripts** — `benchmarks/scripts/create-mock-jwt.sh` (HS256 local JWT), `benchmarks/scripts/get-benchmark-token.sh` (real Supabase)
 
 ```bash
 # Start mock LLM
 bun run benchmarks/mock-llm/server.ts
 
-# Start a runtime pointed at mock LLM
-OPENAI_API_KEY=mock OPENAI_BASE_URL=http://localhost:11434/v1 bun run apps/ts/src/index.ts
+# Generate a local JWT for benchmarks (no Supabase dependency)
+AUTH_TOKEN=$(./benchmarks/scripts/create-mock-jwt.sh)
+MOCK_SECRET="benchmark-jwt-secret-that-is-at-least-32-characters-long"
 
-# Smoke test
-k6 run -e SMOKE=1 benchmarks/k6/agent-flow.js
+# Start TS runtime with local JWT auth
+PORT=9001 SUPABASE_URL=http://localhost:54321 SUPABASE_KEY=mock \
+  SUPABASE_JWT_SECRET="$MOCK_SECRET" OPENAI_API_KEY=mock \
+  OPENAI_BASE_URL=http://localhost:11434/v1 MODEL_NAME=openai:mock-gpt-4o \
+  bun run apps/ts/src/index.ts
+
+# Run k6
+k6 run -e RUNTIME_URL=http://localhost:9001 -e RUNTIME_NAME=ts \
+  -e AUTH_TOKEN="$AUTH_TOKEN" benchmarks/k6/agent-flow.js
 ```
 
 See [benchmarks/README.md](benchmarks/README.md) for full documentation, configuration, and methodology.

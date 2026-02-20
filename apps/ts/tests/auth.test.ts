@@ -30,6 +30,7 @@ import {
 import {
   AuthenticationError,
   isAuthEnabled,
+  resetAuthState,
   resetSupabaseClient,
   verifyToken,
   getSupabaseClient,
@@ -90,6 +91,7 @@ beforeEach(() => {
   savedSupabaseKey = process.env.SUPABASE_KEY;
   clearCurrentUser();
   resetSupabaseClient();
+  resetAuthState();
 });
 
 afterEach(() => {
@@ -106,6 +108,7 @@ afterEach(() => {
   }
   clearCurrentUser();
   resetSupabaseClient();
+  resetAuthState();
 });
 
 // ===========================================================================

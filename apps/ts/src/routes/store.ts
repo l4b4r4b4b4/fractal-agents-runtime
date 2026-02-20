@@ -84,6 +84,39 @@ function getEffectiveOwnerId(): string {
   return getUserIdentity() ?? ANONYMOUS_OWNER_ID;
 }
 
+/**
+ * Normalise a namespace value to a string.
+ *
+ * The LangGraph SDK convention sends namespaces as `string[]` (tuple of
+ * path segments) in JSON bodies (PUT, search). Query parameters (GET,
+ * DELETE) arrive as plain strings. This helper accepts both forms and
+ * returns a canonical dot-joined string, matching the Python runtime's
+ * `_normalise_namespace()` from `postgres_storage.py`.
+ *
+ * @param namespace - A string or array of strings from the request.
+ * @returns The canonical string form, or `null` if the value is empty/invalid.
+ *
+ * @example
+ *   normaliseNamespace(["benchmark", "ts", "vu1"]) // "benchmark.ts.vu1"
+ *   normaliseNamespace("benchmark.ts.vu1")          // "benchmark.ts.vu1"
+ *   normaliseNamespace("")                           // null
+ *   normaliseNamespace([])                           // null
+ *   normaliseNamespace(null)                         // null
+ */
+function normaliseNamespace(namespace: unknown): string | null {
+  if (Array.isArray(namespace)) {
+    const segments = namespace.filter(
+      (segment): segment is string =>
+        typeof segment === "string" && segment.length > 0,
+    );
+    return segments.length > 0 ? segments.join(".") : null;
+  }
+  if (typeof namespace === "string" && namespace.length > 0) {
+    return namespace;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // PUT /store/items — Store or update an item
 // ---------------------------------------------------------------------------
@@ -106,9 +139,10 @@ async function handlePutStoreItem(
   if (bodyError) return bodyError;
 
   // Validate required fields
-  const { namespace, key, value, metadata } = body;
+  const { key, value, metadata } = body;
+  const namespace = normaliseNamespace(body.namespace);
 
-  if (!namespace || typeof namespace !== "string") {
+  if (!namespace) {
     return validationError("namespace is required");
   }
   if (!key || typeof key !== "string") {
@@ -149,14 +183,31 @@ async function handleGetStoreItem(
   _params: Record<string, string>,
   query: URLSearchParams,
 ): Promise<Response> {
-  const namespace = query.get("namespace");
+  const rawNamespace = query.get("namespace");
   const key = query.get("key");
 
-  if (!namespace) {
+  if (!rawNamespace) {
     return validationError("namespace query parameter is required");
   }
   if (!key) {
     return validationError("key query parameter is required");
+  }
+
+  // Query params may carry a JSON-encoded array (e.g. '["benchmark","ts"]')
+  // or a plain string. Try JSON-parse first, then fall back to the raw string.
+  let parsedNamespace: unknown = rawNamespace;
+  try {
+    const decoded = JSON.parse(rawNamespace);
+    if (Array.isArray(decoded) || typeof decoded === "string") {
+      parsedNamespace = decoded;
+    }
+  } catch {
+    // Not JSON — use the raw string as-is
+  }
+
+  const namespace = normaliseNamespace(parsedNamespace);
+  if (!namespace) {
+    return validationError("namespace query parameter is required");
   }
 
   const ownerId = getEffectiveOwnerId();
@@ -188,14 +239,30 @@ async function handleDeleteStoreItem(
   _params: Record<string, string>,
   query: URLSearchParams,
 ): Promise<Response> {
-  const namespace = query.get("namespace");
+  const rawNamespace = query.get("namespace");
   const key = query.get("key");
 
-  if (!namespace) {
+  if (!rawNamespace) {
     return validationError("namespace query parameter is required");
   }
   if (!key) {
     return validationError("key query parameter is required");
+  }
+
+  // Query params may carry a JSON-encoded array — same logic as GET.
+  let parsedNamespace: unknown = rawNamespace;
+  try {
+    const decoded = JSON.parse(rawNamespace);
+    if (Array.isArray(decoded) || typeof decoded === "string") {
+      parsedNamespace = decoded;
+    }
+  } catch {
+    // Not JSON — use the raw string as-is
+  }
+
+  const namespace = normaliseNamespace(parsedNamespace);
+  if (!namespace) {
+    return validationError("namespace query parameter is required");
   }
 
   const ownerId = getEffectiveOwnerId();
@@ -231,9 +298,10 @@ async function handleSearchStoreItems(
   const [body, bodyError] = await requireBody<StoreSearchRequest>(request);
   if (bodyError) return bodyError;
 
-  const { namespace, prefix } = body;
+  const { prefix } = body;
+  const namespace = normaliseNamespace(body.namespace);
 
-  if (!namespace || typeof namespace !== "string") {
+  if (!namespace) {
     return validationError("namespace is required");
   }
 

@@ -57,8 +57,8 @@ export interface StoreItem {
  * `value` and `updated_at` are overwritten.
  */
 export interface StorePutRequest {
-  /** Namespace for the item. */
-  namespace: string;
+  /** Namespace for the item (string or array of path segments). */
+  namespace: string | string[];
 
   /** Key within the namespace. */
   key: string;
@@ -90,8 +90,8 @@ export interface StoreGetDeleteParams {
  * Results are sorted by key and paginated.
  */
 export interface StoreSearchRequest {
-  /** Namespace to search within (required). */
-  namespace: string;
+  /** Namespace to search within (string or array of path segments). */
+  namespace: string | string[];
 
   /** Optional key prefix filter (e.g., `"user-"` matches `"user-123"`). */
   prefix?: string;

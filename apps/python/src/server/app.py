@@ -33,7 +33,7 @@ from infra.tracing import (
 
 from server.agent_sync import parse_agent_sync_scope, startup_agent_sync
 from server.storage import SYSTEM_OWNER_ID
-from server.auth import auth_middleware
+from server.auth import auth_middleware, log_auth_status
 from server.config import get_config
 from server.database import (
     get_connection,
@@ -127,6 +127,8 @@ async def on_startup() -> None:
             logger.info("Robyn startup: seeded %d prompt(s) in Langfuse", seeded)
     else:
         logger.info("Robyn startup: Langfuse tracing disabled (not configured)")
+
+    log_auth_status()
 
     # -----------------------------------------------------------------------
     # Optional startup agent sync (warm cache)

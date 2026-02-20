@@ -147,18 +147,44 @@ export function resetSupabaseClient(): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * Lazy-cached auth-enabled flag.
+ *
+ * `null` means "not yet evaluated". On the first call to `isAuthEnabled()`
+ * the flag is computed from `SUPABASE_URL` and `SUPABASE_KEY` and then
+ * cached for all subsequent calls — zero per-request overhead without the
+ * eager-evaluation pitfall that breaks tests (which set env vars *after*
+ * module import).
+ *
+ * Call `resetAuthState()` in tests to force re-evaluation.
+ */
+let _authEnabled: boolean | null = null;
+
+/**
  * Check whether Supabase authentication is enabled.
  *
- * Auth is enabled when both `SUPABASE_URL` and `SUPABASE_KEY` environment
- * variables are set. When disabled, the auth middleware passes all requests
- * through without verification.
+ * Returns a cached boolean computed on first call from `SUPABASE_URL`
+ * and `SUPABASE_KEY` environment variables. When disabled, the auth
+ * middleware passes all requests through without verification.
  *
  * @returns `true` if Supabase is configured and auth is enabled.
  */
 export function isAuthEnabled(): boolean {
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_KEY;
-  return Boolean(supabaseUrl) && Boolean(supabaseKey);
+  if (_authEnabled === null) {
+    _authEnabled =
+      Boolean(process.env.SUPABASE_URL) &&
+      Boolean(process.env.SUPABASE_KEY);
+  }
+  return _authEnabled;
+}
+
+/**
+ * Reset the cached auth-enabled flag so it is re-evaluated on next call.
+ *
+ * **Test-only** — call this in `beforeEach` / `afterEach` when tests
+ * manipulate `SUPABASE_URL` or `SUPABASE_KEY` environment variables.
+ */
+export function resetAuthState(): void {
+  _authEnabled = null;
 }
 
 // ---------------------------------------------------------------------------
