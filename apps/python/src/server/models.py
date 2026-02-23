@@ -2,12 +2,17 @@
 
 This module defines the data structures used by the LangGraph-compatible API.
 Models are added as endpoints are implemented in subsequent tasks.
+
+Version is read from ``pyproject.toml`` via the server package's
+``__version__`` — that file is the **single source of truth**.
 """
 
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, field_serializer
+
+from server import __version__
 
 
 # ============================================================================
@@ -26,7 +31,7 @@ class ServiceInfoResponse(BaseModel):
 
     service: str = "oap-langgraph-tools-agent"
     runtime: str = "robyn"
-    version: str = "0.0.2"
+    version: str = __version__
 
 
 # ============================================================================

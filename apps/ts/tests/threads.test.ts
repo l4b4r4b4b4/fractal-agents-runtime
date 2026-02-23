@@ -1196,7 +1196,7 @@ describe("method validation", () => {
     expect(response.status).toBe(405);
   });
 
-  test("POST /threads/:thread_id/history returns 405", async () => {
+  test("POST /threads/:thread_id/history returns 404 for non-existent thread", async () => {
     const response = await router.handle(
       new Request(
         `http://localhost:3000/threads/${crypto.randomUUID()}/history`,
@@ -1207,7 +1207,9 @@ describe("method validation", () => {
         },
       ),
     );
-    expect(response.status).toBe(405);
+    // POST is now a valid method (matching LangGraph SDK expectations).
+    // A non-existent thread returns 404, not 405.
+    expect(response.status).toBe(404);
   });
 });
 

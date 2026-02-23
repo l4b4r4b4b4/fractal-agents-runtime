@@ -189,6 +189,8 @@ def _make_agent_row(
     mcp_endpoint_url: str | None = None,
     mcp_is_builtin: bool | None = None,
     mcp_auth_required: bool | None = None,
+    sampling_params: dict[str, Any] | None = None,
+    assistant_tool_ids: list[str] | None = None,
     **overrides: Any,
 ) -> dict[str, Any]:
     row: dict[str, Any] = {
@@ -196,8 +198,10 @@ def _make_agent_row(
         "organization_id": str(organization_id or ORG_UUID),
         "name": name,
         "system_prompt": system_prompt,
-        "temperature": None,
-        "max_tokens": None,
+        "sampling_params": sampling_params if sampling_params is not None else {},
+        "assistant_tool_ids": assistant_tool_ids
+        if assistant_tool_ids is not None
+        else [],
         "langgraph_assistant_id": None,
         "graph_id": "agent",
         "runtime_model_name": runtime_model_name,
@@ -250,11 +254,17 @@ class TestAgentSyncData:
         assert agent.organization_id is None
         assert agent.mcp_tools == []
         assert agent.name is None
+        assert agent.sampling_params == {}
+        assert agent.assistant_tool_ids == []
 
     def test_full(self):
-        agent = _make_agent(temperature=0.7, max_tokens=1024, graph_id="custom")
-        assert agent.temperature == 0.7
-        assert agent.max_tokens == 1024
+        agent = _make_agent(
+            sampling_params={"temperature": 0.7, "max_tokens": 1024},
+            assistant_tool_ids=["id-1", "id-2"],
+            graph_id="custom",
+        )
+        assert agent.sampling_params == {"temperature": 0.7, "max_tokens": 1024}
+        assert agent.assistant_tool_ids == ["id-1", "id-2"]
         assert agent.graph_id == "custom"
 
 
@@ -520,17 +530,52 @@ class TestAgentFromRow:
         with pytest.raises(ValueError, match="missing agent_id"):
             _agent_from_row(row)
 
-    def test_row_with_temperature_and_max_tokens(self):
-        row = _make_agent_row(temperature=0.5, max_tokens=512)
+    def test_row_with_sampling_params_dict(self):
+        row = _make_agent_row(sampling_params={"temperature": 0.5, "max_tokens": 512})
         agent = _agent_from_row(row)
-        assert agent.temperature == 0.5
-        assert agent.max_tokens == 512
+        assert agent.sampling_params == {"temperature": 0.5, "max_tokens": 512}
 
-    def test_row_with_none_temperature(self):
-        row = _make_agent_row(temperature=None, max_tokens=None)
+    def test_row_with_sampling_params_string(self):
+        row = _make_agent_row(sampling_params='{"temperature": 0.3}')
         agent = _agent_from_row(row)
-        assert agent.temperature is None
-        assert agent.max_tokens is None
+        assert agent.sampling_params == {"temperature": 0.3}
+
+    def test_row_with_sampling_params_empty(self):
+        row = _make_agent_row(sampling_params={})
+        agent = _agent_from_row(row)
+        assert agent.sampling_params == {}
+
+    def test_row_with_sampling_params_none(self):
+        row = _make_agent_row()
+        row["sampling_params"] = None
+        agent = _agent_from_row(row)
+        assert agent.sampling_params == {}
+
+    def test_row_with_sampling_params_invalid_string(self):
+        row = _make_agent_row()
+        row["sampling_params"] = "not-json"
+        agent = _agent_from_row(row)
+        assert agent.sampling_params == {}
+
+    def test_row_with_assistant_tool_ids(self):
+        tool_ids = [
+            "a0000000-0000-4000-a000-000000000001",
+            "b0000000-0000-4000-b000-000000000002",
+        ]
+        row = _make_agent_row(assistant_tool_ids=tool_ids)
+        agent = _agent_from_row(row)
+        assert agent.assistant_tool_ids == tool_ids
+
+    def test_row_with_empty_assistant_tool_ids(self):
+        row = _make_agent_row(assistant_tool_ids=[])
+        agent = _agent_from_row(row)
+        assert agent.assistant_tool_ids == []
+
+    def test_row_with_none_assistant_tool_ids(self):
+        row = _make_agent_row()
+        row["assistant_tool_ids"] = None
+        agent = _agent_from_row(row)
+        assert agent.assistant_tool_ids == []
 
     def test_row_with_mcp_tool(self):
         tool_id = uuid4()
@@ -638,6 +683,11 @@ class TestBuildFetchAgentsSql:
         assert "status = 'active'" in sql
         assert "organization_id = ANY" not in sql
         assert params == {}
+        # Verify new columns are queried instead of old ones
+        assert "a.sampling_params" in sql
+        assert "a.assistant_tool_ids" in sql
+        assert "a.temperature" not in sql
+        assert "a.max_tokens" not in sql
 
     def test_org_scope(self):
         org = uuid4()
@@ -668,11 +718,40 @@ class TestBuildAssistantConfigurable:
         assert config["system_prompt"] == "You are a test agent."
         assert config["supabase_organization_id"] == str(ORG_UUID)
 
-    def test_agent_with_temperature_and_max_tokens(self):
-        agent = _make_agent(temperature=0.5, max_tokens=1024)
+    def test_agent_with_sampling_params(self):
+        agent = _make_agent(sampling_params={"temperature": 0.5, "max_tokens": 1024})
         config = _build_assistant_configurable(agent)
         assert config["temperature"] == 0.5
         assert config["max_tokens"] == 1024
+
+    def test_agent_with_sampling_params_spread(self):
+        agent = _make_agent(
+            sampling_params={"temperature": 0.3, "top_p": 0.9, "seed": 42}
+        )
+        config = _build_assistant_configurable(agent)
+        assert config["temperature"] == 0.3
+        assert config["top_p"] == 0.9
+        assert config["seed"] == 42
+
+    def test_agent_with_sampling_params_none_values_skipped(self):
+        agent = _make_agent(sampling_params={"temperature": 0.5, "max_tokens": None})
+        config = _build_assistant_configurable(agent)
+        assert config["temperature"] == 0.5
+        assert "max_tokens" not in config
+
+    def test_agent_with_assistant_tool_ids(self):
+        tool_ids = [
+            "a0000000-0000-4000-a000-000000000001",
+            "b0000000-0000-4000-b000-000000000002",
+        ]
+        agent = _make_agent(assistant_tool_ids=tool_ids)
+        config = _build_assistant_configurable(agent)
+        assert config["agent_tools"] == tool_ids
+
+    def test_agent_without_assistant_tool_ids(self):
+        agent = _make_agent(assistant_tool_ids=[])
+        config = _build_assistant_configurable(agent)
+        assert "agent_tools" not in config
 
     def test_agent_without_optional_fields(self):
         agent = AgentSyncData(agent_id=AGENT_UUID)
@@ -682,6 +761,7 @@ class TestBuildAssistantConfigurable:
         assert "supabase_organization_id" not in config
         assert "temperature" not in config
         assert "max_tokens" not in config
+        assert "agent_tools" not in config
 
     def test_agent_with_mcp_tools(self):
         tools = [
@@ -704,8 +784,9 @@ class TestBuildAssistantConfigurable:
         assert "mcp_config" in config
         servers = config["mcp_config"]["servers"]
         assert len(servers) == 1  # same endpoint → grouped into 1 server
-        assert "search" in servers[0]["tools"]
-        assert "embed" in servers[0]["tools"]
+        # tools key is no longer emitted — server name comes from first tool_name
+        assert "tools" not in servers[0]
+        assert servers[0]["name"] == "embed"  # sorted alphabetically: embed < search
         # auth_required is OR'd: True because at least one tool requires it
         assert servers[0]["auth_required"] is True
 
@@ -722,6 +803,12 @@ class TestBuildAssistantConfigurable:
         # Sorted by endpoint URL
         assert servers[0]["url"] == "https://a.com"
         assert servers[1]["url"] == "https://b.com"
+        # Server names derived from tool_name entries
+        assert servers[0]["name"] == "tool-a"
+        assert servers[1]["name"] == "tool-b"
+        # No tools filter key
+        assert "tools" not in servers[0]
+        assert "tools" not in servers[1]
 
     def test_mcp_tools_without_url_or_name_skipped(self):
         tools = [
@@ -735,15 +822,16 @@ class TestBuildAssistantConfigurable:
 
     def test_server_naming(self):
         tools = [
-            AgentSyncMcpTool(tool_name="t1", endpoint_url="https://z.com"),
-            AgentSyncMcpTool(tool_name="t2", endpoint_url="https://a.com"),
+            AgentSyncMcpTool(tool_name="my-server-z", endpoint_url="https://z.com"),
+            AgentSyncMcpTool(tool_name="my-server-a", endpoint_url="https://a.com"),
         ]
         agent = _make_agent(mcp_tools=tools)
         config = _build_assistant_configurable(agent)
 
         servers = config["mcp_config"]["servers"]
-        assert servers[0]["name"] == "server-1"
-        assert servers[1]["name"] == "server-2"
+        # Sorted by endpoint URL: a.com first, z.com second
+        assert servers[0]["name"] == "my-server-a"
+        assert servers[1]["name"] == "my-server-z"
 
 
 class TestAssistantPayloadForAgent:
@@ -754,11 +842,22 @@ class TestAssistantPayloadForAgent:
         payload = _assistant_payload_for_agent(agent)
 
         assert payload["assistant_id"] == str(AGENT_UUID)
+        assert payload["name"] == "Test Agent"
         assert payload["graph_id"] == "agent"
         assert "configurable" in payload["config"]
         assert payload["metadata"]["supabase_agent_id"] == str(AGENT_UUID)
         assert payload["metadata"]["supabase_organization_id"] == str(ORG_UUID)
         assert "synced_at" in payload["metadata"]
+
+    def test_name_included_in_payload(self):
+        agent = _make_agent(name="Dokumenten-Assistent")
+        payload = _assistant_payload_for_agent(agent)
+        assert payload["name"] == "Dokumenten-Assistent"
+
+    def test_none_name_in_payload(self):
+        agent = AgentSyncData(agent_id=AGENT_UUID, name=None)
+        payload = _assistant_payload_for_agent(agent)
+        assert payload["name"] is None
 
     def test_custom_graph_id(self):
         agent = _make_agent(graph_id="custom-graph")
@@ -1078,17 +1177,19 @@ class TestSyncSingleAgent:
         assert result.action == "created"
         assert result.wrote_back_assistant_id is False
 
-    async def test_skips_when_config_unchanged(self):
+    async def test_skips_when_config_and_name_unchanged(self):
         factory, _ = _make_factory()
         storage = FakeStorage()
         agent = _make_agent()
 
-        # Pre-populate with matching config
+        # Pre-populate with matching config and name
         expected_config = _build_assistant_configurable(agent)
         storage.assistants.seed(
             str(AGENT_UUID),
             config_dict={"configurable": expected_config},
         )
+        # Patch the seeded assistant to have the matching name
+        storage.assistants._store[str(AGENT_UUID)].name = agent.name
 
         result = await sync_single_agent(
             factory, storage, agent=agent, owner_id="system"
@@ -1096,6 +1197,25 @@ class TestSyncSingleAgent:
 
         assert result.action == "skipped"
         assert result.wrote_back_assistant_id is False
+
+    async def test_updates_when_name_changed(self):
+        factory, _ = _make_factory(MockCursor(rowcount=1))
+        storage = FakeStorage()
+        agent = _make_agent(name="New Name")
+
+        # Seed with matching config but different name
+        expected_config = _build_assistant_configurable(agent)
+        storage.assistants.seed(
+            str(AGENT_UUID),
+            config_dict={"configurable": expected_config},
+        )
+        storage.assistants._store[str(AGENT_UUID)].name = "Old Name"
+
+        result = await sync_single_agent(
+            factory, storage, agent=agent, owner_id="system"
+        )
+
+        assert result.action == "updated"
 
     async def test_updates_when_config_changed(self):
         factory, _ = _make_factory(MockCursor(rowcount=1))

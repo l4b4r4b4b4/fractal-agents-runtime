@@ -5,8 +5,8 @@ description: >-
   agent runtime supporting both Python (Robyn) and TypeScript (Bun) backends.
   Use the `runtime` value to switch between runtimes.
 type: application
-version: 0.0.1
-appVersion: "0.0.1"
+version: 0.0.2
+appVersion: "0.0.3"
 keywords:
   - langgraph
   - agents

@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Fractal Agents Runtime — TypeScript",
-    "version": "0.0.1",
-    "description": "Free, self-hostable LangGraph-compatible agent runtime. TypeScript/Bun implementation — v0.0.1 with assistants, threads, stateful/stateless runs, and SSE streaming.",
+    "version": "0.1.0",
+    "description": "Free, self-hostable LangGraph-compatible agent runtime. TypeScript/Bun implementation — v0.1.0 with auth, persistence, store API, multi-provider LLM, and SSE streaming.",
     "license": {
       "name": "MIT",
       "url": "https://opensource.org/licenses/MIT"
@@ -25,6 +25,10 @@
     {
       "name": "Stateless Runs",
       "description": "A run is an invocation of a graph / assistant, with no state or memory persistence."
+    },
+    {
+      "name": "Store",
+      "description": "Cross-thread key-value storage for long-term memory. Items are scoped by namespace, key, and authenticated user."
     },
     {
       "name": "System",
@@ -1581,6 +1585,258 @@
         }
       }
     },
+    "/store/items": {
+      "put": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "Put Store Item",
+        "description": "Store or update (upsert) an item by namespace and key. If an item with the same namespace and key already exists for the authenticated user, its value and updated_at are overwritten.",
+        "operationId": "put_store_item",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorePutRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreItem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "Get Store Item",
+        "description": "Retrieve a store item by namespace and key (provided as query parameters).",
+        "operationId": "get_store_item",
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Namespace of the item."
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Key of the item within the namespace."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stored item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreItem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "Delete Store Item",
+        "description": "Delete a store item by namespace and key (provided as query parameters).",
+        "operationId": "delete_store_item",
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Namespace of the item."
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Key of the item within the namespace."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Item deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/store/items/search": {
+      "post": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "Search Store Items",
+        "description": "Search items within a namespace, optionally filtering by key prefix. Results are sorted by key and paginated.",
+        "operationId": "search_store_items",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreSearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StoreItem"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/store/namespaces": {
+      "get": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "List Store Namespaces",
+        "description": "List all namespace strings that contain at least one item for the authenticated user.",
+        "operationId": "list_store_namespaces",
+        "responses": {
+          "200": {
+            "description": "Namespace list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/": {
       "get": {
         "tags": [
@@ -1733,6 +1989,9 @@
                           "type": "boolean"
                         },
                         "llm_configured": {
+                          "type": "boolean"
+                        },
+                        "database_configured": {
                           "type": "boolean"
                         }
                       }
@@ -2773,6 +3032,120 @@
         },
         "title": "RunCreateStateless",
         "description": "Payload for creating a stateless run."
+      },
+      "StoreItem": {
+        "type": "object",
+        "required": [
+          "namespace",
+          "key",
+          "value",
+          "metadata",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "namespace": {
+            "type": "string",
+            "title": "Namespace",
+            "description": "Namespace string for logical grouping."
+          },
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "Unique key within the namespace."
+          },
+          "value": {
+            "type": "object",
+            "title": "Value",
+            "description": "Arbitrary JSON-serializable value."
+          },
+          "metadata": {
+            "type": "object",
+            "title": "Metadata",
+            "description": "Optional metadata associated with the item."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "ISO 8601 creation timestamp."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At",
+            "description": "ISO 8601 last-update timestamp."
+          }
+        },
+        "title": "StoreItem",
+        "description": "A stored item in the cross-thread key-value store."
+      },
+      "StorePutRequest": {
+        "type": "object",
+        "required": [
+          "namespace",
+          "key",
+          "value"
+        ],
+        "properties": {
+          "namespace": {
+            "type": "string",
+            "title": "Namespace",
+            "description": "Namespace for the item."
+          },
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "Key within the namespace."
+          },
+          "value": {
+            "type": "object",
+            "title": "Value",
+            "description": "Value to store (JSON-serializable object)."
+          },
+          "metadata": {
+            "type": "object",
+            "title": "Metadata",
+            "description": "Optional metadata to associate with the item."
+          }
+        },
+        "title": "StorePutRequest",
+        "description": "Payload for creating or updating a store item."
+      },
+      "StoreSearchRequest": {
+        "type": "object",
+        "required": [
+          "namespace"
+        ],
+        "properties": {
+          "namespace": {
+            "type": "string",
+            "title": "Namespace",
+            "description": "Namespace to search within (required)."
+          },
+          "prefix": {
+            "type": "string",
+            "title": "Prefix",
+            "description": "Optional key prefix filter (e.g., \"user-\" matches \"user-123\")."
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "description": "Maximum number of results to return.",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "description": "Number of results to skip for pagination.",
+            "default": 0,
+            "minimum": 0
+          }
+        },
+        "title": "StoreSearchRequest",
+        "description": "Payload for searching store items within a namespace."
       },
       "HealthResponse": {
         "type": "object",

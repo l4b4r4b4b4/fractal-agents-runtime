@@ -46,6 +46,7 @@ import {
   executeRunSync,
 } from "./runs";
 import { executeRunStream } from "./streams";
+import { getUserIdentity } from "../middleware/context";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -132,13 +133,15 @@ const createStatelessRun: RouteHandler = async (request) => {
     return notFound(`Assistant ${body.assistant_id} not found`);
   }
 
+  const ownerId = getUserIdentity();
+
   // Create an ephemeral thread
   const ephemeralThread = await storage.threads.create({
     metadata: {
       stateless: true,
       on_completion: body.on_completion ?? "delete",
     },
-  });
+  }, ownerId);
   const threadId = ephemeralThread.thread_id;
 
   // Create the run in "running" status
@@ -205,13 +208,15 @@ const createStatelessRunStream: RouteHandler = async (request) => {
     return notFound(`Assistant ${body.assistant_id} not found`);
   }
 
+  const ownerId = getUserIdentity();
+
   // Create an ephemeral thread
   const ephemeralThread = await storage.threads.create({
     metadata: {
       stateless: true,
       on_completion: body.on_completion ?? "delete",
     },
-  });
+  }, ownerId);
   const threadId = ephemeralThread.thread_id;
 
   // Create the run in "running" status
@@ -240,6 +245,7 @@ const createStatelessRunStream: RouteHandler = async (request) => {
         (body!.config as Record<string, unknown>) ?? null,
         (assistant!.config as Record<string, unknown>) ?? null,
         (assistant!.graph_id as string) ?? null,
+        ownerId,
       );
     } catch (streamError: unknown) {
       const message =
@@ -288,13 +294,15 @@ const createStatelessRunWait: RouteHandler = async (request) => {
     return notFound(`Assistant ${body.assistant_id} not found`);
   }
 
+  const ownerId = getUserIdentity();
+
   // Create an ephemeral thread
   const ephemeralThread = await storage.threads.create({
     metadata: {
       stateless: true,
       on_completion: body.on_completion ?? "delete",
     },
-  });
+  }, ownerId);
   const threadId = ephemeralThread.thread_id;
 
   // Create the run in "running" status

@@ -20,6 +20,7 @@ class ServerConfig:
     port: int = 8081
     workers: int = 1
     dev_mode: bool = False
+    log_level: str = "INFO"
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
@@ -29,6 +30,7 @@ class ServerConfig:
             port=int(os.getenv("ROBYN_PORT", "8081")),
             workers=int(os.getenv("ROBYN_WORKERS", "1")),
             dev_mode=os.getenv("ROBYN_DEV", "false").lower() in ("true", "1", "yes"),
+            log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         )
 
 

@@ -5,13 +5,10 @@
  * via LangChain v1's `createAgent`. The graph factory uses dependency injection
  * for persistence — it never imports from any specific runtime.
  *
- * v0.0.1 scope:
- *   - OpenAI provider only (ChatOpenAI)
- *   - No MCP tools, no RAG tools
- *   - System prompt from assistant config or default
- *   - MemorySaver checkpointer for thread state persistence
- *   - No multi-provider support (deferred to Goal 25)
- *   - No Langfuse prompt management (deferred to Goal 27)
+ * v0.0.2 changes:
+ *   - Model creation delegated to `providers.ts` via `createChatModel()`
+ *   - Supports OpenAI, Anthropic, Google, and custom OpenAI-compatible endpoints
+ *   - Provider prefix parsing and API key resolution moved to `providers.ts`
  *
  * The factory signature mirrors the Python runtime:
  *   `async def graph(config, *, checkpointer=None, store=None)`
@@ -34,107 +31,17 @@
  */
 
 import { createAgent } from "langchain";
-import { ChatOpenAI } from "@langchain/openai";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 
 import type { GraphFactory, GraphFactoryOptions } from "../types";
 import {
   parseGraphConfig,
   getEffectiveSystemPrompt,
-  type GraphConfigValues,
 } from "./configuration";
-
-// ---------------------------------------------------------------------------
-// Model name parsing
-// ---------------------------------------------------------------------------
-
-/**
- * Extract the model name from a `provider:model` string.
- *
- * The Python runtime uses the `provider:model` convention (e.g.,
- * `"openai:gpt-4o"`, `"anthropic:claude-3-5-sonnet-latest"`).
- *
- * In v0.0.1, only OpenAI is supported. The provider prefix is stripped
- * to produce the model name that ChatOpenAI expects.
- *
- * @param modelName - Full model name in `provider:model` format.
- * @returns The model name portion (after the colon), or the full string
- *   if no colon is present.
- */
-function extractModelName(modelName: string): string {
-  const colonIndex = modelName.indexOf(":");
-  if (colonIndex === -1) {
-    return modelName;
-  }
-  return modelName.slice(colonIndex + 1);
-}
-
-/**
- * Extract the provider prefix from a `provider:model` string.
- *
- * @param modelName - Full model name in `provider:model` format.
- * @returns The provider portion (before the colon), or "openai" as default.
- */
-function extractProvider(modelName: string): string {
-  const colonIndex = modelName.indexOf(":");
-  if (colonIndex === -1) {
-    return "openai";
-  }
-  return modelName.slice(0, colonIndex).toLowerCase();
-}
-
-// ---------------------------------------------------------------------------
-// API key resolution
-// ---------------------------------------------------------------------------
-
-/**
- * Get the API key for the configured model provider.
- *
- * Resolution order:
- * 1. `apiKeys` dict in the config (runtime-injected keys)
- * 2. Environment variable (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.)
- *
- * Mirrors Python's `get_api_key_for_model()`.
- *
- * @param config - Parsed graph configuration values.
- * @param rawConfig - The raw configurable dict (may contain apiKeys).
- * @returns The API key string, or `undefined` if not found.
- */
-function getApiKeyForModel(
-  config: GraphConfigValues,
-  rawConfig: Record<string, unknown>,
-): string | undefined {
-  const provider = extractProvider(config.model_name);
-
-  const providerToEnvVar: Record<string, string> = {
-    openai: "OPENAI_API_KEY",
-    anthropic: "ANTHROPIC_API_KEY",
-    google: "GOOGLE_API_KEY",
-  };
-
-  const envVarName = providerToEnvVar[provider];
-
-  // Check apiKeys in config (runtime-injected, e.g. from frontend)
-  const apiKeys = rawConfig.apiKeys;
-  if (
-    apiKeys !== null &&
-    apiKeys !== undefined &&
-    typeof apiKeys === "object" &&
-    envVarName
-  ) {
-    const keyFromConfig = (apiKeys as Record<string, unknown>)[envVarName];
-    if (typeof keyFromConfig === "string" && keyFromConfig.length > 0) {
-      return keyFromConfig;
-    }
-  }
-
-  // Fallback to environment variable
-  if (envVarName) {
-    return process.env[envVarName] || undefined;
-  }
-
-  return undefined;
-}
+import { createChatModel } from "./providers";
+import { fetchMcpTools } from "./utils/mcp-tools";
+import { createRagTools } from "./utils/rag-tools";
+import { createArchiveSearchTool } from "./utils/chromadb-rag";
 
 // ---------------------------------------------------------------------------
 // Graph factory
@@ -147,10 +54,11 @@ function getApiKeyForModel(
  * under the `"agent"` ID. It:
  *
  * 1. Parses the configurable dict into typed `GraphConfigValues`.
- * 2. Creates a `ChatOpenAI` model with the configured parameters.
+ * 2. Creates a chat model via the multi-provider factory (`createChatModel`).
  * 3. Resolves the effective system prompt (user config + uneditable suffix).
- * 4. Calls `createAgent()` with the model, empty tools, and system prompt.
- * 5. Returns the compiled graph (supports `.invoke()` and `.stream()`).
+ * 4. If `mcp_config` is set, fetches tools from remote MCP servers.
+ * 5. Calls `createAgent()` with the model, tools, and system prompt.
+ * 6. Returns the compiled graph (supports `.invoke()` and `.stream()`).
  *
  * The `checkpointer` and `store` options are passed through to the
  * compiled graph for thread state persistence.
@@ -160,9 +68,20 @@ function getApiKeyForModel(
  * @returns A compiled graph ready for invocation.
  *
  * @example
+ *   // OpenAI (default)
  *   const agent = await graph(
  *     { model_name: "openai:gpt-4o", temperature: 0.5 },
  *     { checkpointer: new MemorySaver() },
+ *   );
+ *
+ *   // Anthropic
+ *   const agent = await graph(
+ *     { model_name: "anthropic:claude-sonnet-4-0" },
+ *   );
+ *
+ *   // Custom vLLM endpoint
+ *   const agent = await graph(
+ *     { model_name: "custom:", base_url: "http://localhost:7374/v1" },
  *   );
  */
 export const graph: GraphFactory = async function graph(
@@ -171,30 +90,104 @@ export const graph: GraphFactory = async function graph(
 ): Promise<unknown> {
   const parsedConfig = parseGraphConfig(config);
 
-  const modelName = extractModelName(parsedConfig.model_name);
-  const apiKey = getApiKeyForModel(parsedConfig, config);
-
-  // Build the ChatOpenAI model.
-  // In v0.0.1, only OpenAI is supported. Multi-provider via init_chat_model
-  // is deferred to Goal 25.
-  const model = new ChatOpenAI({
-    modelName: modelName,
-    temperature: parsedConfig.temperature,
-    maxTokens: parsedConfig.max_tokens,
-    ...(apiKey ? { openAIApiKey: apiKey } : {}),
-  });
+  // Create the chat model using the multi-provider factory.
+  // Supports openai:*, anthropic:*, google:*, custom: prefixes.
+  const model = await createChatModel(parsedConfig, config);
 
   const effectiveSystemPrompt = getEffectiveSystemPrompt(parsedConfig);
 
+  // -----------------------------------------------------------------------
+  // MCP tool loading — fetch tools from remote MCP servers.
+  //
+  // When the assistant has `mcp_config.servers` configured, the agent
+  // dynamically loads tools from those servers. Auth-required servers
+  // receive the Supabase access token via OAuth2 token exchange.
+  //
+  // Graceful degradation: if any server is unreachable or token exchange
+  // fails, the agent continues without those tools (logged as warnings).
+  //
+  // Reference: apps/python/src/graphs/react_agent/agent.py (MCP section)
+  // -----------------------------------------------------------------------
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let tools: any[] = [];
+
+  // The Supabase access token is injected into the configurable dict by
+  // buildRunnableConfig() in runs.ts (mirroring Python's x-supabase-access-token).
+  const supabaseToken =
+    typeof config["x-supabase-access-token"] === "string"
+      ? (config["x-supabase-access-token"] as string)
+      : null;
+
+  // -----------------------------------------------------------------------
+  // RAG tool loading — create tools for Supabase vector collections.
+  //
+  // When the assistant has `rag` configured with a URL and collection IDs,
+  // and a Supabase access token is available, the agent creates one tool
+  // per collection that searches for semantically similar documents.
+  //
+  // Graceful degradation: if any collection is unreachable, the agent
+  // continues without that tool (logged as warnings).
+  //
+  // Reference: apps/python/src/graphs/react_agent/agent.py (RAG section)
+  // -----------------------------------------------------------------------
+
+  if (
+    parsedConfig.rag &&
+    parsedConfig.rag.rag_url &&
+    parsedConfig.rag.collections &&
+    supabaseToken
+  ) {
+    try {
+      const ragTools = await createRagTools(parsedConfig.rag, supabaseToken);
+      tools.push(...ragTools);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[agent] RAG tool loading failed: ${message}`);
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // ChromaDB archive RAG — dynamically register search_archives tool
+  // when the platform provides rag_config with archive definitions.
+  //
+  // This coexists with the LangConnect RAG above — both can be active
+  // simultaneously (they use different config keys: `rag` vs `rag_config`).
+  //
+  // Reference: apps/python/src/graphs/react_agent/agent.py (ChromaDB RAG section)
+  // -----------------------------------------------------------------------
+
+  if (
+    parsedConfig.rag_config &&
+    parsedConfig.rag_config.archives.length > 0
+  ) {
+    try {
+      const archiveTool = await createArchiveSearchTool(parsedConfig.rag_config);
+      if (archiveTool) {
+        tools.push(archiveTool);
+        console.log(
+          `[agent] ChromaDB RAG tool registered: archives=${parsedConfig.rag_config.archives.length}`,
+        );
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[agent] ChromaDB RAG tool loading failed: ${message}`);
+    }
+  }
+
+  if (parsedConfig.mcp_config && parsedConfig.mcp_config.servers.length > 0) {
+    const mcpTools = await fetchMcpTools(parsedConfig.mcp_config, supabaseToken);
+    tools.push(...mcpTools);
+  }
+
   // Build the agent using LangChain v1's createAgent.
-  // No tools in v0.0.1 — MCP and RAG are deferred to later goals.
   //
   // The checkpointer and store are typed as `unknown` in GraphFactoryOptions
   // to keep the registry decoupled from LangGraph types. We cast here since
   // the agent factory knows the concrete types expected by createAgent.
   const agent = createAgent({
     model,
-    tools: [],
+    tools,
     systemPrompt: effectiveSystemPrompt,
     checkpointer: (options?.checkpointer as BaseCheckpointSaver | undefined),
   });
