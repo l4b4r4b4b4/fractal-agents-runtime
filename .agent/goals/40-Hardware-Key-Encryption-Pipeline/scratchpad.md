@@ -411,13 +411,45 @@ Key rotation, revocation, recovery, audit logging, security review.
 
 | Task ID | Directory | Description | Status | Depends On | Phase |
 |---------|-----------|-------------|--------|------------|-------|
-| Task-01 | `Task-01-Protocol-Research/` | Research & Cryptographic Protocol Design | 🟢 | — | 1 |
+| Task-01 | `Task-01-Protocol-Design/` | Research & Cryptographic Protocol Design | 🟢 | — | 1 |
 | Task-02 | `Task-02-Supabase-Schema/` | Supabase Data Model — Migration Applied | 🟢 | — | 1 |
-| Task-03 | `Task-03-DB-Cron-Cleanup/` | pg_cron Assertion Cleanup Scheduling | ⚪ | Task-02 | 1 |
-| Task-04 | `Task-04-Python-Key-Service/` | Python Hardware Key Service Module | ⚪ | Task-01, Task-02 | 2 |
-| Task-05 | `Task-05-Python-Encryption-Service/` | Python Encryption Service Module | ⚪ | Task-04 | 2 |
+| Task-03 | `Task-03-DB-Cron-Cleanup/` | pg_cron Assertion Cleanup Scheduling | 🟢 | Task-02 | 1 |
+| Task-04 | `Task-04-Python-Key-Service/` | Python Hardware Key Service Module | 🟢 | Task-01, Task-02 | 2 |
+| Task-05 | `Task-05-Python-Encryption-Service/` | Python Encryption Service Module | 🟢 | Task-04 | 2 |
 | Task-06 | `Task-06-Python-Key-Routes/` | Python API Routes (`/keys/*`) | ⚪ | Task-04, Task-05 | 2 |
 | Task-07 | `Task-07-TS-Key-Service/` | TypeScript Key Service & Routes | ⚪ | Task-06 | 2 |
+
+### Session 22 Progress Summary (2026-02-23)
+
+**Completed this session:**
+- ✅ Task-01: Protocol design documented in `Task-01-Protocol-Design/scratchpad.md` (key hierarchy, 5 flows, library selections, threat model)
+- ✅ Task-03 (DB Cron): `pg_cron` enabled, `cleanup-expired-key-assertions` scheduled every 5 min
+- ✅ Task-04 (Python Key Service): `hardware_key_service.py` — 1331 lines, 15 functions (register, list, get, update, deactivate keys; record/get/consume/list assertions; create/list/get/delete policies; check_key_protected_access)
+- ✅ Task-05 (Python Encryption Service): `encryption_service.py` — ~916 lines, 7 functions (store, get, get_with_key_check, list, delete encrypted assets; update_authorized_keys; consume_matching_assertions)
+- ✅ `hardware_key_models.py` — Route-layer Pydantic models (may be superseded by service-layer models when routes are built)
+- ✅ All 1055 existing tests pass, ruff clean
+
+**Uncommitted files (on branch `goal-40-hardware-key-encryption-server`):**
+- `apps/python/src/server/hardware_key_service.py` — Core key management service
+- `apps/python/src/server/encryption_service.py` — Encrypted asset gatekeeper service
+- `apps/python/src/server/hardware_key_models.py` — Route-layer Pydantic models
+- `.agent/goals/40-Hardware-Key-Encryption-Pipeline/Task-01-Protocol-Design/scratchpad.md`
+- `.agent/goals/40-Hardware-Key-Encryption-Pipeline/Task-03-Server-Side-Key-Services/scratchpad.md`
+- Updated Goal 40 scratchpad
+
+**Key architectural decisions documented:**
+1. Server never sees plaintext — stores ciphertext, checks assertions, enforces policies
+2. Edge Function for assertion INSERT (no INSERT RLS on key_assertions by design)
+3. Interim: `py_webauthn` in runtime until Edge Function exists
+4. Per-request connections following existing `database.py` pattern
+5. KEK→DEK two-layer key hierarchy enables rotation + multi-party without re-encryption
+6. PRF salt = `{action}:{asset_type}:{asset_id}` for domain separation
+
+**What's next (Task-06):**
+- Build Python API routes in `routes/hardware_keys.py` wiring to the services
+- Register routes in `routes/__init__.py` and `app.py`
+- Write integration tests against local Supabase dev server
+- Then Task-07: TypeScript equivalent in `apps/ts/`
 | Task-08 | — | Client-Side WebAuthn + Encryption (Frontend) | ⚪ | Task-06 | 3 |
 | Task-09 | — | Multi-Party Threshold Decryption (Shamir's SSS) | ⚪ | Task-05 | 4 |
 | Task-10 | — | Live Chat Real-Time Encryption/Decryption | ⚪ | Task-05, Task-09 | 4 |
