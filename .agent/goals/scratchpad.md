@@ -138,6 +138,31 @@ All TS runtime parity goals achieved. Both runtimes released as v0.1.0 on 2026-0
 
 ## Recent Activity
 
+### 2026-02-23 — Session 23 (Goal 40 — Services Complete, Protocol Documented, Committed)
+
+**Goal 40: Hardware Key Encryption Pipeline — Phase 1-2 Services Built**
+
+- **Full schema exploration** via local Supabase MCP: queried all 4 HW key tables, RLS policies, indexes, CHECK constraints, triggers, support functions, FK relationships, extensions, data state
+- **Reviewed existing uncommitted work** from Session 22: `hardware_key_service.py` (1331 lines, 15 functions), `encryption_service.py` (~916 lines, 7 functions), `hardware_key_models.py` (route-layer Pydantic models)
+- **Task-01 (Protocol Design)**: 🟢 Created `Task-01-Protocol-Design/scratchpad.md` — 243-line protocol spec with key hierarchy (KEK→DEK), 5 complete flows (registration, single-user encrypt/decrypt, multi-party Shamir, server-side assertion), library selections (py_webauthn, @simplewebauthn, Web Crypto API), threat model (5 actors, 3 non-goals), decisions log (7 key decisions)
+- **Task-03 (DB Cron)**: 🟢 Verified pg_cron cleanup already applied
+- **Task-04 (Python Key Service)**: 🟢 Verified `hardware_key_service.py` — register/list/get/update/deactivate keys; record/get/consume/list assertions; create/list/get/delete policies; check_key_protected_access
+- **Task-05 (Python Encryption Service)**: 🟢 Verified `encryption_service.py` — store/get/get_with_key_check/list/delete encrypted assets; update_authorized_keys; consume_matching_assertions
+- **Linting**: Fixed 2 ruff errors (unused imports in encryption_service.py), format clean
+- **Tests**: 1055 passed, 0 failed, 35 skipped
+- **Committed**: `27d8c23` — `feat(goal-40): hardware key service + encryption service + protocol design` (7 files, +3382 lines)
+- **Lefthook**: All pre-commit hooks passed (python-lint, python-openapi, bun-version-check)
+
+**Key findings during schema review:**
+- `key_assertions` has NO INSERT RLS policy (by design — Edge Function writes via service_role)
+- `has_key_protected_access()` SQL function mirrors Python service logic: base perm → policy lookup → assertion check → multi-key threshold
+- `encrypted_asset_data.authorized_key_ids` has GIN index for "which keys can decrypt?" lookups
+- `key_assertions` has partial indexes on `consumed = false` for efficient TTL queries
+- pgcrypto + supabase_vault installed; pgsodium available but not installed
+- Data state: 1 user, 2 orgs, 5 agents, 2 chat sessions — 0 rows in all HW key tables
+
+**Next session**: Task-06 (Python API Routes `/keys/*`) → Task-07 (TypeScript) → Tests
+
 ### 2026-02-23 — Session 22 (Goal 40 — Schema Verified, Implementation Started)
 
 **Goal 40: Hardware Key Encryption Pipeline — Server-Side Implementation**
