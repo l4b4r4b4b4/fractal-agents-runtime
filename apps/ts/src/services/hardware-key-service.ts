@@ -14,7 +14,11 @@
 
 import type { SQL } from "bun";
 
-import { isUniqueViolation } from "../lib/db";
+import {
+  isUniqueViolation,
+  parsePostgresArray,
+  toPostgresArrayLiteral,
+} from "../lib/db";
 import type {
   HardwareKeyRegistration,
   HardwareKeyUpdate,
@@ -99,14 +103,14 @@ export function rowToAssertionResponse(
 export function rowToPolicyResponse(
   row: Record<string, unknown>,
 ): AssetKeyPolicyResponse {
-  const rawKeyIds = row.required_key_ids as string[] | null;
+  const rawKeyIds = parsePostgresArray(row.required_key_ids);
   return {
     id: String(row.id),
     asset_type: String(row.asset_type),
     asset_id: String(row.asset_id),
     protected_action: String(row.protected_action),
     required_key_count: Number(row.required_key_count),
-    required_key_ids: rawKeyIds ? rawKeyIds.map(String) : null,
+    required_key_ids: rawKeyIds && rawKeyIds.length > 0 ? rawKeyIds : null,
     created_by_user_id:
       row.created_by_user_id != null ? String(row.created_by_user_id) : null,
     created_at: formatTimestamp(row.created_at)!,
@@ -238,7 +242,7 @@ export async function registerHardwareKey(
       VALUES (
         ${userId}, ${registration.credential_id}, ${publicKeyBytes},
         ${registration.counter ?? 0},
-        ${sql.array(registration.transports ?? [])},
+        ${toPostgresArrayLiteral(registration.transports ?? [])}::text[],
         ${registration.friendly_name ?? null},
         ${registration.device_type ?? null},
         ${registration.attestation_format ?? null},
@@ -659,7 +663,7 @@ export async function createAssetKeyPolicy(
       )
       VALUES (
         ${policy.asset_type}, ${policy.asset_id}, ${policy.protected_action},
-        ${requiredKeyCount}, ${policy.required_key_ids ? sql.array(policy.required_key_ids) : null},
+        ${requiredKeyCount}, ${policy.required_key_ids ? toPostgresArrayLiteral(policy.required_key_ids) : null}::uuid[],
         ${userId}
       )
       RETURNING *
@@ -793,7 +797,8 @@ export async function checkKeyProtectedAccess(
   }
 
   const requiredCount = Number(policyRow.required_key_count);
-  const requiredKeyIds = policyRow.required_key_ids as string[] | null;
+  const rawRequiredKeyIds = parsePostgresArray(policyRow.required_key_ids);
+  const requiredKeyIds = rawRequiredKeyIds && rawRequiredKeyIds.length > 0 ? rawRequiredKeyIds : null;
 
   // Step 3: Count valid assertions
   // For multi-key: count distinct users. For single-key: count this user's assertions.
@@ -811,7 +816,7 @@ export async function checkKeyProtectedAccess(
             (ka.asset_type = ${assetType} AND ka.asset_id = ${assetId})
             OR ka.asset_type IS NULL
           )
-          AND ka.hardware_key_id = ANY(${requiredKeyIds})
+          AND ka.hardware_key_id = ANY(${toPostgresArrayLiteral(requiredKeyIds!)}::uuid[])
       `;
       assertionCount = Number(
         (assertionRows[0] as Record<string, unknown>)?.assertion_count ?? 0,
@@ -844,7 +849,7 @@ export async function checkKeyProtectedAccess(
             (ka.asset_type = ${assetType} AND ka.asset_id = ${assetId})
             OR ka.asset_type IS NULL
           )
-          AND ka.hardware_key_id = ANY(${requiredKeyIds})
+          AND ka.hardware_key_id = ANY(${toPostgresArrayLiteral(requiredKeyIds!)}::uuid[])
       `;
       assertionCount = Number(
         (assertionRows[0] as Record<string, unknown>)?.assertion_count ?? 0,

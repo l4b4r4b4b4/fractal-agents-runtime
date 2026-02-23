@@ -18,6 +18,7 @@
 
 import type { SQL } from "bun";
 
+import { parsePostgresArray, toPostgresArrayLiteral } from "../lib/db";
 import type {
   EncryptedAssetStore,
   EncryptedAssetKeyUpdate,
@@ -156,7 +157,7 @@ export function rowToEncryptedAssetResponse(
 ): EncryptedAssetResponse {
   const payload = row.encrypted_payload;
   const initializationVector = row.initialization_vector;
-  const rawKeyIds = (row.authorized_key_ids as string[]) ?? [];
+  const rawKeyIds = parsePostgresArray(row.authorized_key_ids) ?? [];
 
   return {
     id: String(row.id),
@@ -174,7 +175,7 @@ export function rowToEncryptedAssetResponse(
       : initializationVector instanceof Uint8Array
         ? encodeBytesToBase64(initializationVector)
         : String(initializationVector),
-    authorized_key_ids: rawKeyIds.map(String),
+    authorized_key_ids: rawKeyIds,
     encrypted_by_user_id:
       row.encrypted_by_user_id != null
         ? String(row.encrypted_by_user_id)
@@ -191,7 +192,7 @@ export function rowToEncryptedAssetResponse(
 export function rowToEncryptedAssetMetadata(
   row: Record<string, unknown>,
 ): EncryptedAssetMetadata {
-  const rawKeyIds = (row.authorized_key_ids as string[]) ?? [];
+  const rawKeyIds = parsePostgresArray(row.authorized_key_ids) ?? [];
 
   return {
     id: String(row.id),
@@ -199,7 +200,7 @@ export function rowToEncryptedAssetMetadata(
     asset_id: String(row.asset_id),
     encryption_algorithm: String(row.encryption_algorithm),
     key_derivation_method: String(row.key_derivation_method),
-    authorized_key_ids: rawKeyIds.map(String),
+    authorized_key_ids: rawKeyIds,
     encrypted_by_user_id:
       row.encrypted_by_user_id != null
         ? String(row.encrypted_by_user_id)
@@ -233,7 +234,7 @@ async function validateAuthorizedKeyIds(
 
   const foundRows: Record<string, unknown>[] = await sql`
     SELECT id FROM public.hardware_keys
-    WHERE id = ANY(${authorizedKeyIds})
+    WHERE id = ANY(${toPostgresArrayLiteral(authorizedKeyIds)}::uuid[])
   `;
 
   const foundIds = new Set(foundRows.map((row) => String(row.id)));
@@ -299,7 +300,7 @@ export async function storeEncryptedAsset(
     VALUES (
       ${data.asset_type}, ${data.asset_id}, ${encryptedPayloadBytes},
       ${encryptionAlgorithm}, ${keyDerivationMethod},
-      ${initializationVectorBytes}, ${sql.array(data.authorized_key_ids)},
+      ${initializationVectorBytes}, ${toPostgresArrayLiteral(data.authorized_key_ids)}::uuid[],
       ${userId}
     )
     RETURNING *
@@ -522,9 +523,7 @@ export async function updateAuthorizedKeys(
 
   // Build dynamic SET clause using sql.unsafe() with positional params
   const setClauses: string[] = ["authorized_key_ids = $1"];
-  // sql.unsafe() doesn't support sql.array() — format as Postgres literal
-  const toPostgresArrayLiteral = (values: string[]): string =>
-    `{${values.map((v) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
+  // sql.unsafe() doesn't support sql.array() — use shared helper
   const params: unknown[] = [toPostgresArrayLiteral(update.authorized_key_ids)];
 
   if (hasNewPayload) {

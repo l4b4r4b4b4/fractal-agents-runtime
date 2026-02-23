@@ -76,6 +76,123 @@ export async function closeDb(): Promise<void> {
 }
 
 /**
+ * Parse a PostgreSQL array value returned by Bun.sql.
+ *
+ * Bun.sql ≤1.3.9 returns `text[]` columns as proper JS arrays but returns
+ * `uuid[]` columns as raw Postgres literal strings like
+ * `"{a1b2c3d4-...,e5f6-...}"`. This helper normalises both cases into a
+ * JS `string[]`.
+ *
+ * @param value - The raw column value (may be a JS array, a Postgres literal
+ *   string, `null`, or `undefined`).
+ * @returns A `string[]`, or `null` if the input is nullish.
+ */
+export function parsePostgresArray(value: unknown): string[] | null {
+  if (value == null) {
+    return null;
+  }
+  // Already a JS array (text[] columns in Bun.sql)
+  if (Array.isArray(value)) {
+    return value.map(String);
+  }
+  // Raw Postgres literal string: "{uuid1,uuid2}" or "{}"
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "{}" || trimmed === "") {
+      return [];
+    }
+    // Strip surrounding braces and split on commas.
+    // Values may be double-quoted: {"val with space","simple"}
+    const inner = trimmed.replace(/^\{/, "").replace(/\}$/, "");
+    const elements: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    let escaped = false;
+    for (const character of inner) {
+      if (escaped) {
+        current += character;
+        escaped = false;
+        continue;
+      }
+      if (character === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (character === '"') {
+        inQuotes = !inQuotes;
+        continue;
+      }
+      if (character === "," && !inQuotes) {
+        elements.push(current);
+        current = "";
+        continue;
+      }
+      current += character;
+    }
+    if (current.length > 0) {
+      elements.push(current);
+    }
+    return elements;
+  }
+  return null;
+}
+
+/**
+ * Convert a JavaScript array to a PostgreSQL array literal string.
+ *
+ * Bun.sql's `sql.array()` has a bug in Bun ≤1.3.9 where string values
+ * get double-quoted (e.g. `["usb","nfc"]` becomes `{"\"usb\"","\"nfc\""}` in
+ * the database instead of `{"usb","nfc"}`). This helper produces a correct
+ * Postgres array literal that can be used in tagged templates with an
+ * explicit type cast:
+ *
+ * ```ts
+ * const sql = getDb();
+ * await sql`INSERT INTO t (vals) VALUES (${toPostgresArrayLiteral(arr)}::text[])`;
+ * ```
+ *
+ * For empty arrays, returns `"{}"`.
+ *
+ * Values containing commas, quotes, backslashes, braces, or spaces are
+ * properly escaped with double-quote wrapping per PostgreSQL array syntax.
+ *
+ * @param values - The JavaScript array of strings to convert.
+ * @returns A PostgreSQL array literal string (e.g. `"{usb,nfc}"`).
+ */
+export function toPostgresArrayLiteral(values: string[]): string {
+  if (!values || values.length === 0) {
+    return "{}";
+  }
+  return (
+    "{" +
+    values
+      .map((value) => {
+        const stringValue = String(value);
+        // Values that need quoting: contain special Postgres array chars
+        if (
+          stringValue.includes(",") ||
+          stringValue.includes('"') ||
+          stringValue.includes("\\") ||
+          stringValue.includes("{") ||
+          stringValue.includes("}") ||
+          stringValue.includes(" ")
+        ) {
+          return (
+            '"' +
+            stringValue
+              .replace(/\\/g, "\\\\")
+              .replace(/"/g, '\\"') +
+            '"'
+          );
+        }
+        return stringValue;
+      })
+      .join(",") +
+    "}"
+  );
+}
+
+/**
  * Check whether a database error is a PostgreSQL unique-violation (23505).
  *
  * Bun.sql throws `SQL.PostgresError` on constraint violations. This helper
@@ -86,12 +203,14 @@ export async function closeDb(): Promise<void> {
  * @returns `true` if the error is a unique-violation.
  */
 export function isUniqueViolation(error: unknown): boolean {
-  if (
-    error != null &&
-    typeof error === "object" &&
-    "code" in error &&
-    (error as Record<string, unknown>).code === "23505"
-  ) {
+  if (error == null || typeof error !== "object") {
+    return false;
+  }
+  const record = error as Record<string, unknown>;
+  // Bun.sql puts the PG error code in `errno` (e.g. "23505") and sets
+  // `code` to "ERR_POSTGRES_SERVER_ERROR". Check both properties so
+  // the helper works regardless of driver conventions.
+  if (record.errno === "23505" || record.code === "23505") {
     return true;
   }
   return false;

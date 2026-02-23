@@ -106,6 +106,33 @@ describe("isUniqueViolation", () => {
     };
     expect(isUniqueViolation(error)).toBe(true);
   });
+
+  test("returns true for Bun.sql error format (errno='23505', code='ERR_POSTGRES_SERVER_ERROR')", () => {
+    // Bun.sql ≤1.3.9 puts the PG error code in `errno`, not `code`.
+    // `code` is set to the generic "ERR_POSTGRES_SERVER_ERROR".
+    const error = {
+      code: "ERR_POSTGRES_SERVER_ERROR",
+      errno: "23505",
+      severity: "ERROR",
+      detail: "Key (asset_type, asset_id, protected_action)=(document, abc, decrypt) already exists.",
+      schema: "public",
+      table: "asset_key_policies",
+      constraint: "asset_key_policies_asset_action_unique",
+      file: "nbtinsert.c",
+      routine: "_bt_check_unique",
+    };
+    expect(isUniqueViolation(error)).toBe(true);
+  });
+
+  test("returns false for Bun.sql error format with non-unique errno", () => {
+    const error = {
+      code: "ERR_POSTGRES_SERVER_ERROR",
+      errno: "23503",
+      severity: "ERROR",
+      detail: "Key (user_id)=(abc) is not present in table \"users\".",
+    };
+    expect(isUniqueViolation(error)).toBe(false);
+  });
 });
 
 // ============================================================================

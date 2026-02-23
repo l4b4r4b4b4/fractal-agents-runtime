@@ -419,6 +419,37 @@ Key rotation, revocation, recovery, audit logging, security review.
 | Task-06 | `Task-06-Python-Key-Routes/` | Python API Routes (`/keys/*`) | 🟢 | Task-04, Task-05 | 2 |
 | Task-07 | `Task-07-TS-Key-Service/` | TypeScript Key Service & Routes | 🟢 | Task-06 | 2 |
 
+### Session 28 Progress Summary (2026-02-23)
+
+**Completed this session:**
+- ✅ **Found & fixed 3 more Bun.sql bugs** discovered during real Supabase integration testing:
+  1. **`sql.array()` double-quotes string values** — `sql.array(["usb","nfc"])` stores `{"\"usb\"","\"nfc\""}` instead of `{"usb","nfc"}`. Replaced all 3 `sql.array()` calls with `toPostgresArrayLiteral()` + `::text[]`/`::uuid[]` casts in tagged templates.
+  2. **`isUniqueViolation()` checking wrong property** — Bun.sql puts PG error code in `errno` (e.g. `"23505"`), not `code` (which is `"ERR_POSTGRES_SERVER_ERROR"`). Fixed to check both.
+  3. **`uuid[]` columns returned as raw Postgres strings** — Bun returns `"{uuid1,uuid2}"` instead of JS arrays for `uuid[]` columns. Added `parsePostgresArray()` helper to normalise both formats.
+- ✅ **Added shared helpers to `db.ts`**: `toPostgresArrayLiteral()` (extracted from inline), `parsePostgresArray()` (new)
+- ✅ **Updated row converters** in `hardware-key-service.ts` (`rowToPolicyResponse`) and `encryption-service.ts` (`rowToEncryptedAssetResponse`, `rowToEncryptedAssetMetadata`) to use `parsePostgresArray()`
+- ✅ **2 new tests** in `db.test.ts` for Bun.sql errno format
+- ✅ **958 total tests, 957 pass** (1 known skip from Bun mock.module pollution)
+- ✅ **Integration tested endpoints 1–8** against real Supabase with valid signed JWT:
+  - `POST /keys/register` ✅ 201, transports array correct `["usb","nfc"]`
+  - `GET /keys` ✅ 200, `GET /keys/:id` ✅ 200, `PATCH /keys/:id` ✅ 200
+  - `POST /keys/assertions` ✅ 201, `GET /keys/assertions` ✅ 200
+  - `GET /keys/assertions/status` ✅ 200, `POST /keys/assertions/:id/consume` ✅ 200
+- ✅ **Created Goal 41 design document** — FastMCP Supabase User-Data Tool (435 lines)
+
+**Uncommitted changes (5 files, +169/-19 lines):**
+- `apps/ts/src/lib/db.ts` — `parsePostgresArray()`, `toPostgresArrayLiteral()`, fixed `isUniqueViolation()`
+- `apps/ts/src/services/hardware-key-service.ts` — import + use shared helpers
+- `apps/ts/src/services/encryption-service.ts` — import + use shared helpers
+- `apps/ts/tests/db.test.ts` — 2 new tests for Bun.sql errno format
+- `.agent/goals/scratchpad.md` — Added Goal 41
+
+**What's next (Session 29):**
+1. **Create integration test script** (`tests/integration/hardware-keys-integration.ts`) — NOT inline terminal commands
+2. **Finish endpoints 9–18** integration testing (policies + encrypted data — bugs are fixed but not re-verified)
+3. **Commit** Session 28 fixes (amend or new commit)
+4. **Push branch + open PR + CI + merge**
+
 ### Session 27 Progress Summary (2026-02-23)
 
 **Completed this session:**
