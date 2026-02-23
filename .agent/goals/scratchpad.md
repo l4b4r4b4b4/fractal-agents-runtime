@@ -122,6 +122,33 @@ Goal 02 next priority — commit all, push, PR, Docker build, AKS deploy, tag v0
 
 ## Recent Activity
 
+### 2026-02-20 — Session 42 (Auth + Store Namespace Fix + Benchmarks + Visualization — v0.1.0 Ready)
+
+- **Auth best practice (both runtimes):**
+  - Added `is_auth_enabled()` / `is_local_jwt_enabled()` cached flags, `log_auth_status()` startup logging
+  - `verify_token_local()` HS256 local JWT verification, `verify_token_auto()` strategy selector
+  - Python now matches TS pattern (hmac stdlib); TS refactored to lazy singleton with `resetAuthState()` for tests
+  - 273 new Python auth tests, 61/61 TS auth tests pass
+- **Store namespace normalization (both runtimes):**
+  - Accept `string | string[]` in PUT/GET/DELETE/search — k6 sends arrays per LangGraph SDK convention
+  - **Python bug fix:** Robyn does NOT URL-decode query param values — added `urllib.parse.unquote()` in `_normalise_namespace()` before JSON-parsing. This was causing 802 store_get 404 errors in benchmarks.
+  - 3 new Python store tests (URL-encoded array, plain JSON array, delete with encoded namespace)
+- **k6 benchmark fixes:** `storeList` → `/store/items/search`, `storeDelete` → query params instead of body
+- **Benchmark scripts:**
+  - `benchmarks/scripts/create-mock-jwt.sh` — HS256 JWT generator (no Supabase dependency)
+  - `benchmarks/scripts/get-benchmark-token.sh` — real Supabase user auth token
+  - `benchmarks/scripts/plot-results.py` — 3×3 grid visualization (matplotlib via `uv run --with`)
+- **Benchmark results (v0.1.0, mock LLM, HS256 local JWT, in-memory storage):**
+  - TS: 1,038 iterations, **0.0% errors**, 100% flow success, p50=81ms full flow
+  - Python: 290 iterations, **0.0% errors**, 100% flow success, p50=916ms full flow
+  - Comparison PNG: `benchmarks/results/v0.1.0-comparison.png`
+- **Goal 39 ⚪ Created:** Benchmark Methodology — Long-Duration Runs & Statistical Rigor (P3)
+- **README updated:** Fresh v0.1.0 benchmark tables, hardware specs, auth-enabled quick start
+- **benchmarks/README.md updated:** Auth tiers, hardware table, correct k6 scenario stages, jq extraction examples
+- **Coverage:** Python 74.02% ≥ 73% ✓, TS 2123/2124 pass (1 flaky SSE timeout)
+- **All committed:** `df5efe8` on `release/v0.1.0`, pushed to origin
+- **Next:** Merge release/v0.1.0 → main, tag v0.1.0, release both runtimes
+
 ### 2026-02-20 — Session 41 (Goal 34 E2E ✅ + Goals 35/36/37 Created — RAG Pipeline Verified)
 
 - **Goal 34 🟢 COMPLETE:** Full Docker E2E test passed for ChromaDB RAG retriever
