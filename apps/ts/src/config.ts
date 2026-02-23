@@ -35,6 +35,18 @@ export interface AppConfig {
 
   /** Build date ISO string (set at build/deploy time). */
   buildDate: string;
+
+  /** PostgreSQL connection URL (Supabase pooler or direct). */
+  databaseUrl: string | undefined;
+
+  /** Supabase project URL (e.g. http://localhost:54321). */
+  supabaseUrl: string | undefined;
+
+  /** Supabase anon or service-role key. */
+  supabaseKey: string | undefined;
+
+  /** Supabase JWT secret for token verification. */
+  supabaseJwtSecret: string | undefined;
 }
 
 function parsePort(raw: string | undefined, fallback: number): number {
@@ -64,6 +76,10 @@ export function loadConfig(): AppConfig {
     modelName: process.env.MODEL_NAME || "gpt-4o-mini",
     buildCommit: process.env.BUILD_COMMIT || "dev",
     buildDate: process.env.BUILD_DATE || new Date().toISOString(),
+    databaseUrl: process.env.DATABASE_URL || undefined,
+    supabaseUrl: process.env.SUPABASE_URL || undefined,
+    supabaseKey: process.env.SUPABASE_KEY || undefined,
+    supabaseJwtSecret: process.env.SUPABASE_JWT_SECRET || undefined,
   };
 }
 
@@ -79,11 +95,10 @@ export function isLlmConfigured(): boolean {
 }
 
 /**
- * Check whether Supabase is configured.
- * Always false in v0.0.1 — auth and persistence are deferred to Goal 25.
+ * Check whether Supabase is configured (database URL present).
  */
 export function isSupabaseConfigured(): boolean {
-  return false;
+  return config.databaseUrl !== undefined && config.databaseUrl.length > 0;
 }
 
 /**

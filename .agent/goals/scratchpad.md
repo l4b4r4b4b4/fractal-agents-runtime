@@ -33,7 +33,7 @@
 | 37 | v0.1.0 Auth, Store, Benchmarks & Visualization | 🟢 Complete | Critical | 2026-02-23 |
 | 38 | Store API Namespace Fix | 🟢 Complete | High | 2026-02-23 |
 | 39 | Benchmark Methodology — Long-Duration Runs & Statistical Rigor | ⚪ Not Started | Medium | 2026-02-23 |
-| 40 | Hardware Key Encryption Pipeline — E2E Asset Encryption with Hardware Keys | 🟡 In Progress | High | 2026-02-23 |
+| 40 | Hardware Key Encryption Pipeline — E2E Asset Encryption with Hardware Keys | 🟡 In Progress | High | 2026-02-25 |
 
 ---
 
@@ -137,6 +137,26 @@ All TS runtime parity goals achieved. Both runtimes released as v0.1.0 on 2026-0
 ---
 
 ## Recent Activity
+
+### 2026-02-25 — Session 26 (Goal 40 Task-07 🟢 — TS Key Service & Routes Implemented)
+
+**Goal 40: Hardware Key Encryption Pipeline — Phase 2 Complete (All Server Tasks Done)**
+
+- **Task-07 (TS Key Service & Routes)**: 🟢 Full implementation — 7 new files, 2 modified, ~4500 lines of new code
+  - `apps/ts/src/lib/db.ts` (98 lines) — Bun.sql PostgreSQL wrapper with lazy singleton, localhost SSL auto-disable
+  - `apps/ts/src/lib/auth.ts` (177 lines) — JWT decode + optional HMAC-SHA256 verification via Web Crypto API
+  - `apps/ts/src/models/hardware-keys.ts` (317 lines) — 13 interfaces, 11 error classes, 5 validation constant sets
+  - `apps/ts/src/services/hardware-key-service.ts` (933 lines) — 15 service functions (key CRUD, assertions, policies, access checks)
+  - `apps/ts/src/services/encryption-service.ts` (563 lines) — 7 service functions (encrypted asset CRUD, key-gated retrieval)
+  - `apps/ts/src/routes/hardware-keys.ts` (1055 lines) — 18 route handlers with auth, body parsing, error→status mapping, 428 body
+  - `apps/ts/tests/hardware-keys.test.ts` (1352 lines) — 97 tests covering all 18 endpoints
+  - Modified: `config.ts` (+4 env vars, updated `isSupabaseConfigured()`), `index.ts` (+route registration)
+- **Zero npm packages added** — Bun native only (Bun.sql, crypto.subtle, bun:test)
+- **Tests**: 813 pass, 0 fail across 14 files; `tsc --noEmit` clean
+- **Phase 2 (Server Integration) COMPLETE**: Tasks 04-07 all 🟢
+- **Not yet committed** — changes are local on branch `goal-40-hardware-key-encryption-server`
+
+**Next**: Commit Task-07, then either Task-08 (Client-Side WebAuthn Frontend) or manual integration testing of TS runtime against local Supabase
 
 ### 2026-02-23 — Session 23 (Goal 40 — Services Complete, Protocol Documented, Committed)
 

@@ -417,7 +417,27 @@ Key rotation, revocation, recovery, audit logging, security review.
 | Task-04 | `Task-04-Python-Key-Service/` | Python Hardware Key Service Module | 🟢 | Task-01, Task-02 | 2 |
 | Task-05 | `Task-05-Python-Encryption-Service/` | Python Encryption Service Module | 🟢 | Task-04 | 2 |
 | Task-06 | `Task-06-Python-Key-Routes/` | Python API Routes (`/keys/*`) | 🟢 | Task-04, Task-05 | 2 |
-| Task-07 | `Task-07-TS-Key-Service/` | TypeScript Key Service & Routes | ⚪ | Task-06 | 2 |
+| Task-07 | `Task-07-TS-Key-Service/` | TypeScript Key Service & Routes | 🟢 | Task-06 | 2 |
+
+### Session 26 Progress Summary (2026-02-25)
+
+**Completed this session:**
+- ✅ Task-07 (TS Key Service & Routes): Full implementation — 7 new files, 2 modified, 97 new tests
+  - `apps/ts/src/lib/db.ts` — Bun.sql PostgreSQL wrapper (lazy singleton, localhost SSL auto-disable)
+  - `apps/ts/src/lib/auth.ts` — JWT decode + optional HMAC-SHA256 verification via Web Crypto API
+  - `apps/ts/src/models/hardware-keys.ts` — 13 interfaces, 11 error classes, 5 validation constant sets
+  - `apps/ts/src/services/hardware-key-service.ts` — 15 service functions (key CRUD, assertions, policies, access checks)
+  - `apps/ts/src/services/encryption-service.ts` — 7 service functions (encrypted asset CRUD, key-gated retrieval)
+  - `apps/ts/src/routes/hardware-keys.ts` — 18 route handlers with auth, body parsing, error→status mapping
+  - `apps/ts/tests/hardware-keys.test.ts` — 97 tests (all pass)
+  - Modified: `config.ts` (+4 env vars), `index.ts` (+route registration)
+- ✅ Zero npm packages added — Bun native only (Bun.sql, crypto.subtle, bun:test)
+- ✅ 813 total tests pass across 14 files, `tsc --noEmit` clean
+- ✅ **Phase 2 (Server Integration) is now COMPLETE** — all 4 tasks (04-07) done
+
+**What's next:**
+- Task-08: Client-Side WebAuthn + Encryption (Frontend) — Phase 3
+- Or: manual integration testing of TS runtime against local Supabase dev server
 
 ### Session 22 Progress Summary (2026-02-23)
 

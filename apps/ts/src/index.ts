@@ -20,6 +20,7 @@ import { registerThreadRoutes } from "./routes/threads";
 import { registerRunRoutes } from "./routes/runs";
 import { registerStreamRoutes } from "./routes/streams";
 import { registerStatelessRunRoutes } from "./routes/runs-stateless";
+import { registerHardwareKeyRoutes } from "./routes/hardware-keys";
 
 // ---------------------------------------------------------------------------
 // Router setup
@@ -44,6 +45,9 @@ registerStreamRoutes(router);
 
 // Stateless run routes: POST /runs, /runs/stream, /runs/wait
 registerStatelessRunRoutes(router);
+
+// Hardware key routes: /keys/* (register, assertions, policies, encrypted-data)
+registerHardwareKeyRoutes(router);
 
 // ---------------------------------------------------------------------------
 // Server
