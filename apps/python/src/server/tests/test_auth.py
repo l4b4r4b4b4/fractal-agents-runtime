@@ -250,6 +250,7 @@ class TestVerifyToken:
 # ============================================================================
 
 
+@patch("server.auth._auth_enabled", True)
 class TestAuthMiddleware:
     """Tests for auth middleware."""
 
@@ -369,6 +370,7 @@ class TestAuthMiddleware:
 class TestUserContext:
     """Tests for user context management."""
 
+    @patch("server.auth._auth_enabled", True)
     @pytest.mark.asyncio
     async def test_get_current_user_after_auth(self):
         """Test getting current user after successful authentication."""
