@@ -33,6 +33,7 @@
 | 37 | v0.1.0 Auth, Store, Benchmarks & Visualization | 🟢 Complete | Critical | 2026-02-23 |
 | 38 | Store API Namespace Fix | 🟢 Complete | High | 2026-02-23 |
 | 39 | Benchmark Methodology — Long-Duration Runs & Statistical Rigor | ⚪ Not Started | Medium | 2026-02-23 |
+| 40 | Hardware Key Encryption Pipeline — E2E Asset Encryption with Hardware Keys | 🟡 In Progress | High | 2026-02-23 |
 
 ---
 
@@ -76,6 +77,7 @@
 - [36-Runs-Wait-Non-Streaming-Endpoint](./36-Runs-Wait-Non-Streaming-Endpoint/scratchpad.md)
 - [38-Store-API-Namespace-Fix](./38-Store-API-Namespace-Fix/scratchpad.md)
 - [39-Benchmark-Methodology-Long-Duration](./39-Benchmark-Methodology-Long-Duration/scratchpad.md)
+- [40-Hardware-Key-Encryption-Pipeline](./40-Hardware-Key-Encryption-Pipeline/scratchpad.md)
 
 ---
 
@@ -135,6 +137,41 @@ All TS runtime parity goals achieved. Both runtimes released as v0.1.0 on 2026-0
 ---
 
 ## Recent Activity
+
+### 2026-02-23 — Session 22 (Goal 40 — Schema Verified, Implementation Started)
+
+**Goal 40: Hardware Key Encryption Pipeline — Server-Side Implementation**
+
+- **Branch created**: `goal-40-hardware-key-encryption-server`
+- **Supabase migration verified**: `20260625100000_add_hardware_key_encryption` live on local dev server
+- Queried full schema via local Supabase MCP: 4 tables, 4 functions, 3 triggers, 17 indexes, ~40 CHECK constraints
+- **Task-01 (Protocol Research)**: 🟢 Complete — key hierarchy, threat model, technology choices documented
+- **Task-02 (Supabase Schema)**: 🟢 Complete — migration applied and all constraints verified
+- Created 7 task directories with detailed scratchpads:
+  - `Task-01-Protocol-Research/` — 🟢 Complete
+  - `Task-02-Supabase-Schema/` — 🟢 Complete
+  - `Task-03-DB-Cron-Cleanup/` — pg_cron assertion cleanup scheduling
+  - `Task-04-Python-Key-Service/` — Python hardware key service module
+  - `Task-05-Python-Encryption-Service/` — Python encryption service module
+  - `Task-06-Python-Key-Routes/` — Python API routes (`/keys/*`)
+  - `Task-07-TS-Key-Service/` — TypeScript key service & routes (feature parity)
+- Updated Goal 40 task table: renumbered tasks, restructured 6 phases, marked completions
+- **Next**: Implement Task-03 (pg_cron) → Task-04 (Python Key Service) → Task-05 → Task-06 → Task-07
+
+### 2026-02-23 — Session 21 (Goal 40 Created — Hardware Key Encryption Pipeline)
+
+**Goal 40: Hardware Key Encryption Pipeline — E2E Asset Encryption with Hardware Keys**
+
+Created comprehensive goal for end-to-end asset encryption using FIDO2 hardware keys:
+- **WebAuthn PRF extension** for deriving symmetric encryption keys from hardware authenticators
+- **Multi-party decryption** via Shamir's Secret Sharing — N-of-M hardware key holders must contribute
+- **JWT/JWE-secured key transport** for passing key material from client to server
+- **Server-side decryption pipeline** for message history and live chat
+- **vLLM encryption bridge** — encrypted context all the way to inference boundary (Option A: boundary decryption)
+- **10 tasks planned** across 5 phases: Foundation → Server Integration → Multi-Party & Live Chat → vLLM Bridge → Hardening
+- **Blocked on**: User applying Supabase data model changes and migrations
+- Documented honest complexity assessment, cryptographic architecture (key hierarchy, single-user & multi-party flows), technology choices, and open questions
+- See [Goal 40 scratchpad](./40-Hardware-Key-Encryption-Pipeline/scratchpad.md) for full details
 
 ### 2026-02-23 — Session 20 (v0.1.0 RELEASED 🟢 — Both Runtimes Published)
 
