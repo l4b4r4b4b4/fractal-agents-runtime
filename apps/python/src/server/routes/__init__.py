@@ -2,6 +2,7 @@
 
 from server.routes.assistants import register_assistant_routes
 from server.routes.crons import register_cron_routes
+from server.routes.hardware_keys import register_hardware_key_routes
 from server.routes.helpers import error_response, json_response, parse_json_body
 from server.routes.runs import register_run_routes
 from server.routes.streams import register_stream_routes
@@ -13,6 +14,7 @@ __all__ = [
     "parse_json_body",
     "register_assistant_routes",
     "register_cron_routes",
+    "register_hardware_key_routes",
     "register_run_routes",
     "register_stream_routes",
     "register_thread_routes",

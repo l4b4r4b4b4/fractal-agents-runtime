@@ -416,7 +416,7 @@ Key rotation, revocation, recovery, audit logging, security review.
 | Task-03 | `Task-03-DB-Cron-Cleanup/` | pg_cron Assertion Cleanup Scheduling | 🟢 | Task-02 | 1 |
 | Task-04 | `Task-04-Python-Key-Service/` | Python Hardware Key Service Module | 🟢 | Task-01, Task-02 | 2 |
 | Task-05 | `Task-05-Python-Encryption-Service/` | Python Encryption Service Module | 🟢 | Task-04 | 2 |
-| Task-06 | `Task-06-Python-Key-Routes/` | Python API Routes (`/keys/*`) | ⚪ | Task-04, Task-05 | 2 |
+| Task-06 | `Task-06-Python-Key-Routes/` | Python API Routes (`/keys/*`) | 🟢 | Task-04, Task-05 | 2 |
 | Task-07 | `Task-07-TS-Key-Service/` | TypeScript Key Service & Routes | ⚪ | Task-06 | 2 |
 
 ### Session 22 Progress Summary (2026-02-23)
