@@ -1,13 +1,67 @@
 # Task-07: TypeScript Key Service & Routes
 
-> **Status**: 🟢 Complete (unit tests pass; integration bugfix applied, needs re-test)
+> **Status**: 🟢 Complete (all 18 endpoints verified against real Supabase)
 > **Phase**: 2 — Server Integration
 > **Updated**: 2026-02-23
 > **Completed**: 2026-02-25 (Session 26 — Implementation)
-> **Integration Tested**: 2026-02-23 (Session 27 — Local Docker against Supabase)
+> **Integration Tested**: 2026-02-23 (Sessions 27–29 — Local Docker against Supabase)
 > **Depends On**: Task-04 (Python Key Service) ✅, Task-05 (Python Encryption Service) ✅, Task-06 (Python Routes) ✅
 > **Branch**: `goal-40-hardware-key-encryption-server`
-> **Commits**: `5421ae0` (task-07 implementation), pending (integration bugfix + docker-compose)
+> **Commits**: `5421ae0` (task-07 impl), `30a59bb` (session-27 bugfix), `fcc359b` (session-28+29 bugfixes + integration tests)
+> **PR**: [#54](https://github.com/l4b4r4b4b4/fractal-agents-runtime/pull/54)
+
+---
+
+## Session 29: Encryption Endpoint Bugfixes + Integration Test Script (2026-02-23)
+
+### What Was Done
+
+1. **Found & fixed 3 more Bun.sql `ANY()` bugs** — JS arrays passed to `ANY()` in tagged templates are sent as single strings, not Postgres arrays:
+   - `encryption-service.ts:237` — `validateAuthorizedKeyIds`: `ANY(${authorizedKeyIds})` → `ANY(${toPostgresArrayLiteral(authorizedKeyIds)}::uuid[])`
+   - `hardware-key-service.ts:818` — `checkKeyProtectedAccess` (multi-key): same fix
+   - `hardware-key-service.ts:851` — `checkKeyProtectedAccess` (single-key): same fix
+   - Also fixed `required_key_ids` from DB not being parsed with `parsePostgresArray()` before use
+
+2. **Created integration test script** — `apps/ts/tests/integration/hardware-keys-integration.ts` (909 lines)
+   - 37 tests covering all 18 endpoints + error paths + edge cases
+   - Generates real HMAC-SHA256 signed JWTs via Web Crypto API
+   - Sequential phases: health → key CRUD → assertions → policies → encrypted data → cleanup
+   - Self-cleaning: deletes all test data in Phase 5
+   - Configurable via env vars (`BASE_URL`, `TEST_USER_ID`, `SUPABASE_JWT_SECRET`)
+
+3. **All 37 integration tests pass** against real Supabase (110ms):
+   - Phase 0: Health & auth guard (2/2 ✅)
+   - Phase 1: Key CRUD endpoints 1–5 (6/6 ✅)
+   - Phase 2: Assertion management endpoints 6–9 (7/7 ✅)
+   - Phase 3: Asset key policies endpoints 10–13 (5/5 ✅)
+   - Phase 4: Encrypted data endpoints 14–18 (11/11 ✅) — **these were all 500s before the fix**
+   - Phase 5: Cleanup (6/6 ✅)
+
+4. **Committed** `fcc359b`, **pushed** branch, **opened PR #54**
+
+### Total Bun.sql Bugs Found (Sessions 27–29): 6
+
+| # | Bug | Where Found | Workaround |
+|---|-----|-------------|------------|
+| 1 | JS arrays not serialized in tagged templates | Session 27, `registerHardwareKey` | `sql.array()` (later replaced) |
+| 2 | `sql.array()` double-quotes strings | Session 28, `registerHardwareKey` | `toPostgresArrayLiteral()` + `::text[]` |
+| 3 | `isUniqueViolation` wrong property | Session 28, `createAssetKeyPolicy` | Check both `.errno` and `.code` |
+| 4 | `uuid[]` returned as raw strings | Session 28, `rowToPolicyResponse` | `parsePostgresArray()` normalizer |
+| 5 | `ANY(${jsArray})` sends single string | Session 29, `validateAuthorizedKeyIds` | `toPostgresArrayLiteral()` + `::uuid[]` |
+| 6 | DB `uuid[]` not parsed before `ANY()` | Session 29, `checkKeyProtectedAccess` | `parsePostgresArray()` first |
+
+### Integration Test Results
+
+```
+Phase 0: Health & Auth Guard           2/2  ✅
+Phase 1: Key CRUD (endpoints 1–5)      6/6  ✅
+Phase 2: Assertions (endpoints 6–9)    7/7  ✅
+Phase 3: Policies (endpoints 10–13)    5/5  ✅
+Phase 4: Encrypted Data (endpoints 14–18) 11/11 ✅
+Phase 5: Cleanup                       6/6  ✅
+─────────────────────────────────────────────
+Total: 37 passed, 0 failed (110ms)
+```
 
 ---
 
