@@ -299,7 +299,7 @@ export async function storeEncryptedAsset(
     VALUES (
       ${data.asset_type}, ${data.asset_id}, ${encryptedPayloadBytes},
       ${encryptionAlgorithm}, ${keyDerivationMethod},
-      ${initializationVectorBytes}, ${data.authorized_key_ids},
+      ${initializationVectorBytes}, ${sql.array(data.authorized_key_ids)},
       ${userId}
     )
     RETURNING *
@@ -522,7 +522,10 @@ export async function updateAuthorizedKeys(
 
   // Build dynamic SET clause using sql.unsafe() with positional params
   const setClauses: string[] = ["authorized_key_ids = $1"];
-  const params: unknown[] = [update.authorized_key_ids];
+  // sql.unsafe() doesn't support sql.array() — format as Postgres literal
+  const toPostgresArrayLiteral = (values: string[]): string =>
+    `{${values.map((v) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
+  const params: unknown[] = [toPostgresArrayLiteral(update.authorized_key_ids)];
 
   if (hasNewPayload) {
     const payloadBytes = decodeBase64Field(

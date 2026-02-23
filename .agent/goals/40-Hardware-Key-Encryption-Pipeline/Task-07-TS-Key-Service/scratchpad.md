@@ -1,11 +1,109 @@
 # Task-07: TypeScript Key Service & Routes
 
-> **Status**: 🟢 Complete
+> **Status**: 🟢 Complete (unit tests pass; integration bugfix applied, needs re-test)
 > **Phase**: 2 — Server Integration
-> **Updated**: 2026-02-25
+> **Updated**: 2026-02-23
 > **Completed**: 2026-02-25 (Session 26 — Implementation)
+> **Integration Tested**: 2026-02-23 (Session 27 — Local Docker against Supabase)
 > **Depends On**: Task-04 (Python Key Service) ✅, Task-05 (Python Encryption Service) ✅, Task-06 (Python Routes) ✅
 > **Branch**: `goal-40-hardware-key-encryption-server`
+> **Commits**: `5421ae0` (task-07 implementation), pending (integration bugfix + docker-compose)
+
+---
+
+## Session 27: Integration Testing & Bugfix (2026-02-23)
+
+### What Was Done
+
+1. **Committed Task-07** — `5421ae0 feat(goal-40): TS hardware key service + routes (task-07)`
+   - 12 files changed, +5,615 / -183 lines
+   - All 3 lefthook pre-commit hooks passed (bun-version-check ✔, ts-openapi ✔, ts-lint ✔)
+
+2. **Built local Docker image** — `fractal-agents-runtime-ts:local` (234 MB, Bun 1.3.9-slim)
+   - Build command: `docker build -f .devops/docker/ts.Dockerfile . -t fractal-agents-runtime-ts:local --build-arg BUN_VERSION=$(cat .bun-version)`
+   - Server starts cleanly: 49 routes registered
+
+3. **Added `bun-server` service to `docker-compose.yml`** — TS runtime alongside Python runtime
+   - Port 3000 (container) mapped to host; uses same Supabase network
+   - Healthcheck matches Dockerfile pattern (Bun `-e fetch(...)`)
+
+4. **Integration tested against real Supabase Postgres** — Found and fixed critical bug
+
+5. **Discovered & fixed `Bun.sql` array serialization bug** — 3 tagged-template fixes + 1 `sql.unsafe()` fix
+
+### Bug Found: `Bun.sql` Does NOT Auto-Serialize JS Arrays to Postgres Arrays
+
+**Symptom**: `POST /keys/register` returned 500 with:
+```
+PostgresError: malformed array literal: ""
+detail: "Array value must start with \"{\" or dimension information."
+```
+
+**Root Cause**: `Bun.sql` tagged templates pass bare JS arrays `[]` as empty strings to Postgres,
+not as `'{}'` array literals. The Bun docs explicitly require using `sql.array()` helper for
+PostgreSQL array types.
+
+**Fix Applied** (4 locations):
+
+| File | Line | Before | After |
+|------|------|--------|-------|
+| `hardware-key-service.ts` | 241 | `${registration.transports ?? []}` | `${sql.array(registration.transports ?? [])}` |
+| `hardware-key-service.ts` | 663 | `${policy.required_key_ids ?? null}` | `${policy.required_key_ids ? sql.array(policy.required_key_ids) : null}` |
+| `encryption-service.ts` | 302 | `${data.authorized_key_ids}` | `${sql.array(data.authorized_key_ids)}` |
+| `encryption-service.ts` | 525 | `[update.authorized_key_ids]` | `[toPostgresArrayLiteral(update.authorized_key_ids)]` (for `sql.unsafe()`) |
+
+For `sql.unsafe()`, `sql.array()` is not available — a manual Postgres array literal formatter
+`toPostgresArrayLiteral()` was added that outputs `{"val1","val2"}` format with proper escaping.
+
+**Verification**: After fix, the error changed to `FK constraint violation` (test user UUID not in
+`users` table) — confirming the array serialization is now correct and the query reaches the DB
+properly.
+
+### Integration Test Results
+
+| Endpoint | Result | Notes |
+|----------|--------|-------|
+| `GET /health` | ✅ 200 `{"status":"ok"}` | Basic health |
+| `GET /info` | ✅ 200 | `supabase_configured: true`, 49 routes |
+| `GET /keys` (no auth) | ✅ 401 `{"detail":"Authorization header missing"}` | Auth guard works |
+| `GET /keys` (with JWT) | ✅ 200 `[]` | Empty list, DB query succeeds |
+| `POST /keys/register` | ⚠️ 500 → FK violation | Array fix works; fails on FK (test user not in `users` table) — **expected** |
+
+### What Still Needs Integration Testing
+
+The FK constraint error is expected — the test JWT has a fake user UUID that doesn't exist in
+`auth.users`. To properly test the remaining endpoints:
+
+1. **Option A**: Use a real Supabase user token (sign in via Supabase auth, use that JWT)
+2. **Option B**: Insert a test user directly into `auth.users` for the test UUID
+3. **Option C**: Temporarily disable FK constraint on `hardware_keys.user_id` for testing
+
+All 18 endpoints need verification against real Postgres. The unit tests (97 tests) mock the
+service layer and cover route-level logic thoroughly, but the service→DB boundary has additional
+risks (type coercion, array handling, bytea encoding).
+
+### Endpoints Needing Real-DB Verification
+
+- [ ] `POST /keys/register` — needs real user UUID
+- [ ] `GET /keys` — ✅ works (empty list)
+- [ ] `GET /keys/:key_id` — needs registered key
+- [ ] `PATCH /keys/:key_id` — needs registered key
+- [ ] `DELETE /keys/:key_id` — needs registered key
+- [ ] `POST /keys/assertions` — needs registered key
+- [ ] `GET /keys/assertions` — needs assertion
+- [ ] `GET /keys/assertions/status` — needs assertion
+- [ ] `POST /keys/assertions/:id/consume` — needs assertion
+- [ ] `POST /keys/policies` — needs valid asset type/action
+- [ ] `GET /keys/policies` — needs policy
+- [ ] `GET /keys/policies/:id` — needs policy
+- [ ] `DELETE /keys/policies/:id` — needs policy
+- [ ] `POST /keys/encrypted-data` — needs registered key + assertion
+- [ ] `GET /keys/encrypted-data` — needs encrypted data
+- [ ] `GET /keys/encrypted-data/:type/:id` — needs encrypted data
+- [ ] `DELETE /keys/encrypted-data/:type/:id` — needs encrypted data
+- [ ] `PATCH /keys/encrypted-data/:type/:id/authorized-keys` — needs encrypted data
+
+---
 
 ## Completion Summary
 
@@ -56,6 +154,7 @@ All 4 phases implemented in a single session with zero npm dependencies added:
 - **Tests mock auth + services** (not the DB), allowing full route-level coverage without a running database
 - **Route registration order**: static paths (`/keys/register`, `/keys/assertions/status`) registered before parameterized (`/keys/:key_id`) to avoid mis-matching
 - **`_userId` underscore prefix** on `updateAuthorizedKeys` — parameter kept for API parity with Python but not currently used in the query (Python logs it)
+- **`sql.array()` required for Postgres arrays** — Bun.sql does NOT auto-serialize JS arrays; discovered during Session 27 integration testing (see above)
 
 ## Objective
 

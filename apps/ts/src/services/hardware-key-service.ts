@@ -238,7 +238,7 @@ export async function registerHardwareKey(
       VALUES (
         ${userId}, ${registration.credential_id}, ${publicKeyBytes},
         ${registration.counter ?? 0},
-        ${registration.transports ?? []},
+        ${sql.array(registration.transports ?? [])},
         ${registration.friendly_name ?? null},
         ${registration.device_type ?? null},
         ${registration.attestation_format ?? null},
@@ -659,7 +659,7 @@ export async function createAssetKeyPolicy(
       )
       VALUES (
         ${policy.asset_type}, ${policy.asset_id}, ${policy.protected_action},
-        ${requiredKeyCount}, ${policy.required_key_ids ?? null},
+        ${requiredKeyCount}, ${policy.required_key_ids ? sql.array(policy.required_key_ids) : null},
         ${userId}
       )
       RETURNING *

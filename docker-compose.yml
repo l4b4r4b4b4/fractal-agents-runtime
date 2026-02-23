@@ -1,19 +1,26 @@
 # docker-compose.yml — Local testing for Fractal Agents Runtime
 #
 # Usage:
-#   1. Build the image first (from repo root):
+#   1. Build the image(s) first (from repo root):
 #        docker build -f .devops/docker/python.Dockerfile . -t fractal-agents-runtime-python:local
+#        docker build -f .devops/docker/ts.Dockerfile . -t fractal-agents-runtime-ts:local --build-arg BUN_VERSION=$(cat .bun-version)
 #
 #   2. Copy .env.example to .env and fill in required values:
 #        cp .env.example .env
 #
-#   3. Start the server:
-#        docker compose up robyn-server
+#   3. Start the server(s):
+#        docker compose up robyn-server        # Python runtime on :8081
+#        docker compose up bun-server          # TS/Bun runtime on :3000
+#        docker compose up robyn-server bun-server  # Both
 #
 #   4. Test endpoints:
+#        # Python
 #        curl http://localhost:8081/health
 #        curl http://localhost:8081/info
-#        curl http://localhost:8081/openapi.json
+#        # TypeScript
+#        curl http://localhost:3000/health
+#        curl http://localhost:3000/info
+#        curl http://localhost:3000/keys/list   # (requires auth header)
 #
 # Requires:
 #   - Supabase running on supabase_network_immoflow-platform
@@ -31,6 +38,41 @@ networks:
     name: supabase_network_immoflow-platform
 
 services:
+  # ── TypeScript/Bun Runtime ───────────────────────────────────────────
+  bun-server:
+    build:
+      context: .
+      dockerfile: .devops/docker/ts.Dockerfile
+      args:
+        BUN_VERSION: "1.3.9"
+    image: fractal-agents-runtime-ts:local
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      # Override DATABASE_URL to use Docker-internal hostname
+      - DATABASE_URL=postgresql://postgres:postgres@supabase_db_immoflow-platform:5432/postgres
+      # Override SUPABASE_URL to use Docker-internal Kong gateway
+      - SUPABASE_URL=http://supabase_kong_immoflow-platform:8000
+      - PORT=3000
+    networks:
+      - default
+      - supabase
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://localhost:3000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Python Runtime ──────────────────────────────────────────────────
   robyn-server:
     build:
       context: .
