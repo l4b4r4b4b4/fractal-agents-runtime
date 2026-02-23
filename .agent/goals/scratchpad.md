@@ -9,7 +9,7 @@
 | ID | Goal Name | Status | Priority | Last Updated |
 |----|-----------|--------|----------|--------------|
 | 01 | Monorepo v0.0.0 Setup — Full DevOps Pipeline | 🟢 Complete | Critical | 2026-02-11 |
-| 02 | Python Runtime v0.0.1 — First Real Release | 🟡 In Progress | High | 2026-02-13 |
+| 02 | Python Runtime v0.0.1 — First Real Release | 🟢 Complete | High | 2026-02-23 |
 | 03 | TypeScript Runtime v0.0.1 — Basic ReAct Agent + LangGraph Runtime API Parity | 🟢 Complete | High | 2025-07-16 |
 | 18 | Assistant Config Propagation Fix | 🟢 Complete | High | 2026-02-13 |
 | 19 | Package Structure Refactor — 3-Layer Architecture | 🟢 Complete | Critical | 2026-02-12 |
@@ -18,9 +18,21 @@
 | 22 | Unified Helm Chart | 🟢 Complete | High | 2026-02-13 |
 | 23 | Research Agent Graph (Parallel Research with HIL) | 🟢 Complete | High | 2026-02-14 |
 | 24 | Langfuse Prompt Template Integration | 🟡 In Progress | Medium | 2026-02-13 |
-| 25 | TS Runtime v0.0.2 — Auth, Persistence, Store & Multi-Provider LLM | ⚪ Not Started | High | 2026-02-15 |
-| 26 | TS Runtime v0.0.3 — MCP Tools, Tracing, Crons & Observability | ⚪ Not Started | High | 2026-02-15 |
-| 27 | TS Runtime v0.1.0 — Full Python Feature Parity | ⚪ Not Started | High | 2026-02-15 |
+| 25 | TS Runtime v0.0.2 — Auth, Persistence, Store & Multi-Provider LLM | 🟢 Complete | High | 2026-02-23 |
+| 26 | TS Runtime v0.0.3 — MCP Tools, Tracing, Crons & Observability | 🟢 Complete | High | 2026-02-23 |
+| 27 | TS Runtime v0.1.0 — Full Python Feature Parity | 🟢 Complete | High | 2026-02-23 |
+| 28 | Fix Message History Storage | 🟢 Complete | High | 2026-02-20 |
+| 29 | Python Runtime — Runs Wait Non-Streaming Endpoint | 🟢 Complete | High | 2026-02-20 |
+| 30 | SSE Values History Fix | 🟢 Complete | High | 2026-02-20 |
+| 31 | Local Langfuse V3 Dev Stack | 🟢 Complete | Medium | 2026-02-20 |
+| 32 | Resource Profiled Benchmarks | 🟢 Complete | Medium | 2026-02-20 |
+| 33 | Auth Best Practices — Local JWT + Cached State | 🟢 Complete | High | 2026-02-23 |
+| 34 | RAG ChromaDB Retriever Tool (Python) | 🟢 Complete | High | 2026-02-20 |
+| 35 | TS RAG ChromaDB Retriever | 🟢 Complete | High | 2026-02-20 |
+| 36 | Runs Wait Non-Streaming Endpoint | 🟢 Complete | High | 2026-02-20 |
+| 37 | v0.1.0 Auth, Store, Benchmarks & Visualization | 🟢 Complete | Critical | 2026-02-23 |
+| 38 | Store API Namespace Fix | 🟢 Complete | High | 2026-02-23 |
+| 39 | Benchmark Methodology — Long-Duration Runs & Statistical Rigor | ⚪ Not Started | Medium | 2026-02-23 |
 
 ---
 
@@ -55,6 +67,15 @@
 - [25-TS-Runtime-V0.0.2-Auth-Persistence-Store](./25-TS-Runtime-V0.0.2-Auth-Persistence-Store/scratchpad.md)
 - [26-TS-Runtime-V0.0.3-MCP-Tracing-Crons](./26-TS-Runtime-V0.0.3-MCP-Tracing-Crons/scratchpad.md)
 - [27-TS-Runtime-V0.1.0-Full-Feature-Parity](./27-TS-Runtime-V0.1.0-Full-Feature-Parity/scratchpad.md)
+- [28-Fix-Message-History-Storage](./28-Fix-Message-History-Storage/scratchpad.md)
+- [30-SSE-Values-History-Fix](./30-SSE-Values-History-Fix/scratchpad.md)
+- [31-Local-Langfuse-V3-Dev-Stack](./31-Local-Langfuse-V3-Dev-Stack/scratchpad.md)
+- [32-Resource-Profiled-Benchmarks](./32-Resource-Profiled-Benchmarks/scratchpad.md)
+- [34-RAG-ChromaDB-Retriever-Tool](./34-RAG-ChromaDB-Retriever-Tool/scratchpad.md)
+- [35-TS-RAG-ChromaDB-Retriever](./35-TS-RAG-ChromaDB-Retriever/scratchpad.md)
+- [36-Runs-Wait-Non-Streaming-Endpoint](./36-Runs-Wait-Non-Streaming-Endpoint/scratchpad.md)
+- [38-Store-API-Namespace-Fix](./38-Store-API-Namespace-Fix/scratchpad.md)
+- [39-Benchmark-Methodology-Long-Duration](./39-Benchmark-Methodology-Long-Duration/scratchpad.md)
 
 ---
 
@@ -78,32 +99,81 @@ Goal 01: Monorepo v0.0.0 Setup ✅
         ├── Goal 23: Research Agent Graph ✅ (depends on Goal 22, 24-Task-01)
         ├── Goal 24: Langfuse Prompt Templates 🟡 (Task-01+03 ✅, Task-02 blocked by Goal 23 ✅)
         ├── Goal 18: Assistant Config Propagation Fix ✅
-        ├── Goal 02: Python Runtime v0.0.1 (depends on Goal 18, 21, 23)
-        │     └── Goal 03: TS Runtime v0.0.1 — ReAct Agent + LangGraph API (depends on Goal 02)
-        │           └── Goal 25: TS v0.0.2 — Auth, Persistence, Store, Multi-Provider LLM
-        │                 └── Goal 26: TS v0.0.3 — MCP, Tracing, Crons, Metrics
-        │                       └── Goal 27: TS v0.1.0 — Full Feature Parity (A2A, Research Agent, RAG, Prompts)
-        └── (future) GHCR image build + deploy from development
+        ├── Goal 02: Python Runtime v0.0.1 ✅ (released as 0.1.0)
+        │     └── Goal 03: TS Runtime v0.0.1 ✅
+        │           └── Goal 25: TS v0.0.2 — Auth, Persistence, Store ✅
+        │                 └── Goal 26: TS v0.0.3 — MCP, Tracing, Crons ✅
+        │                       └── Goal 27: TS v0.1.0 — Full Feature Parity ✅
+        ├── Goal 28: Fix Message History Storage ✅
+        ├── Goal 30: SSE Values History Fix ✅
+        ├── Goal 34: RAG ChromaDB Retriever (Python) ✅
+        ├── Goal 35: TS RAG ChromaDB Retriever ✅
+        ├── Goal 36: Runs Wait Non-Streaming Endpoint ✅
+        ├── Goal 38: Store API Namespace Fix ✅
+        ├── Goal 33: Auth Best Practices — Local JWT ✅
+        ├── Goal 37: v0.1.0 Release — Auth, Store, Benchmarks ✅
+        └── Goal 39: Benchmark Methodology — Long-Duration (future)
 ```
 
-### TS Runtime Parity Roadmap (Goals 03 → 25 → 26 → 27)
+### TS Runtime Parity Roadmap (Goals 03 → 25 → 26 → 27) — ✅ COMPLETE
 
-| Goal | Version | Paths | Ops | Key Features |
-|------|---------|-------|-----|--------------|
-| 03 | v0.0.1 | 25 | 37 | ReAct agent (OpenAI), assistants/threads/runs CRUD, SSE streaming, in-memory storage |
-| 25 | v0.0.2 | +3=28 | +5=42 | Supabase JWT auth, Postgres persistence, Store API, multi-provider LLM |
-| 26 | v0.0.3 | +6=34 | +8=50 | MCP tools, Langfuse tracing, Prometheus metrics, agent sync, Crons API |
-| 27 | v0.1.0 | +1=35 | +1=51 | Research agent, A2A protocol, RAG tools, Langfuse prompts, full CI gates |
+| Goal | Version | Paths | Ops | Key Features | Status |
+|------|---------|-------|-----|--------------|--------|
+| 03 | v0.0.1 | 25 | 37 | ReAct agent (OpenAI), assistants/threads/runs CRUD, SSE streaming, in-memory storage | ✅ |
+| 25 | v0.0.2 | +3=28 | +5=42 | Supabase JWT auth, Postgres persistence, Store API, multi-provider LLM | ✅ |
+| 26 | v0.0.3 | +6=34 | +8=50 | MCP tools, Langfuse tracing, Prometheus metrics, agent sync, Crons API | ✅ |
+| 27 | v0.1.0 | +1=35 | +1=51 | Research agent, A2A protocol, RAG tools, Langfuse prompts, full CI gates | ✅ |
 
-Reference: Python runtime OpenAPI spec = 34 paths, 44 operations (+ /openapi.json = 35 paths).
+All TS runtime parity goals achieved. Both runtimes released as v0.1.0 on 2026-02-23.
 
-Goal 23 complete — research agent graph with two-phase parallel workers, HIL review, Langfuse prompts, graph registry.
-Goal 24 mostly complete — `infra/prompts.py` done, react_agent integrated, research_agent integrated. Remaining: docs/Helm.
-Goal 02 next priority — commit all, push, PR, Docker build, AKS deploy, tag v0.0.1.
+### v0.1.0 Release Artifacts (2026-02-23)
+- **PyPI:** `fractal-agents-runtime==0.1.0` (3rd release: 0.0.1 → 0.0.2 → 0.1.0)
+- **npm:** `fractal-agents-runtime-ts@0.1.0` (2nd release: 0.0.0 → 0.1.0)
+- **GHCR:** Docker images for both runtimes (tagged `v0.1.0`, `latest`, `sha-*`)
+- **GitHub:** 3 releases (`v0.1.0` meta, `python-v0.1.0`, `ts-v0.1.0`)
 
 ---
 
 ## Recent Activity
+
+### 2026-02-23 — Session 20 (v0.1.0 RELEASED 🟢 — Both Runtimes Published)
+
+**v0.1.0 Release — Merge, Tag, Publish**
+
+Release branch `release/v0.1.0` merged to `main` via PR #51 (38 commits, 195 files, 214 changed).
+
+**CI fix during merge:**
+- Python `TestAuthMiddleware` tests failed in CI — `_auth_enabled` module-level cache was `False` in CI (no SUPABASE env vars) causing middleware to short-circuit and return mock request unchanged
+- Root cause: tests had implicit dependency on local environment variables ("works on my machine")
+- Fix: `@patch("server.auth._auth_enabled", True)` on `TestAuthMiddleware` class and `TestUserContext.test_get_current_user_after_auth`
+- Lesson: lefthook pre-push hooks inherit the user's shell environment, so env-dependent tests can pass locally but fail in clean CI
+
+**Release process:**
+- PR #51 created, CI failed (Python test), diagnosed via `gh run view --log-failed`, fixed, pushed, all 16 checks green
+- PR #51 merged to main (merge commit `c27125a`)
+- PR #50 (stale duplicate) closed
+- PR #52 created to bump Python `pyproject.toml` 0.0.3 → 0.1.0 (branch protection blocks direct push to main)
+- PR #52 squash-merged, then tagged `python-v0.1.0` + `ts-v0.1.0`
+- Release workflow triggered by component-specific tags (not bare `v0.1.0` — workflow requires `python-v*` / `ts-v*` pattern)
+- Both release workflows succeeded: PyPI publish, npm publish, GHCR Docker images, GitHub releases
+
+**Published artifacts:**
+- PyPI: `fractal-agents-runtime==0.1.0`
+- npm: `fractal-agents-runtime-ts@0.1.0`
+- GHCR: both Docker images tagged `v0.1.0` + `latest`
+- GitHub: `python-v0.1.0`, `ts-v0.1.0`, `v0.1.0` releases
+
+**What's in v0.1.0 (cumulative from development):**
+- Auth: local HS256 JWT verification, cached auth state, startup logging (both runtimes)
+- Store: namespace normalization `string | string[]`, Python URL-decode bug fix
+- Benchmarks: k6 full agent flow, mock JWT, Supabase JWT, matplotlib visualization
+- Results: TS 1038 iters / p50=81ms, Python 290 iters / p50=916ms, both 0% errors
+- Coverage: Python 74.02% (≥73%), TS 2124/2124 pass
+- Plus all Goals 25-38 features (auth, persistence, MCP, crons, RAG, A2A, research agent, etc.)
+
+**Remaining:**
+- Goal 24 (Langfuse Prompt Templates) — Task-02 still in progress
+- Goal 39 (Benchmark Methodology) — future: long-duration runs, statistical rigor
 
 ### 2025-07-16 — Session 19 (Goal 03 Task-06 🟢 Complete — OpenAPI Spec, Docker & Pipeline — Goal 03 🟢 COMPLETE)
 
