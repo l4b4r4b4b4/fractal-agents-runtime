@@ -1082,13 +1082,17 @@ async def execute_run_stream(
                         )
                         yield format_messages_tuple_event(final_delta, current_metadata)
 
-                # Handle chain/graph end - emit updates event
-                elif event_kind == "on_chain_end" and event_name == "model":
+                        # Reset so the next LLM call in a later node can also stream
+                        current_ai_message_id = None
+                        accumulated_content = ""
+
+                # Handle chain/graph end - emit updates event for any
+                # node whose output contains messages (not just "model").
+                elif event_kind == "on_chain_end":
                     output = event_data.get("output", {})
                     if isinstance(output, dict):
                         output_messages = output.get("messages", [])
                         if output_messages:
-                            # Convert messages to dicts
                             update_messages = []
                             for msg in output_messages:
                                 if isinstance(msg, BaseMessage):
@@ -1098,9 +1102,8 @@ async def execute_run_stream(
 
                             if update_messages:
                                 yield format_updates_event(
-                                    "model", {"messages": update_messages}
+                                    event_name, {"messages": update_messages}
                                 )
-                                # Use the last AI message for final values
                                 for msg in reversed(update_messages):
                                     if msg.get("type") == "ai":
                                         final_ai_message_dict = msg
