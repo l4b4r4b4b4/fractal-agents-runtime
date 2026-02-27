@@ -23,22 +23,23 @@ from pydantic import ValidationError
 from robyn import Request, Response, Robyn
 from robyn.responses import SSEResponse
 
+from graphs.registry import resolve_graph_factory
+from infra.tracing import inject_tracing
 from server.auth import AuthenticationError, require_user
+from server.database import checkpointer as create_checkpointer
+from server.database import store as create_store
 from server.models import RunCreate
 from server.routes.helpers import error_response, json_response, parse_json_body
 from server.routes.sse import (
     create_ai_message,
     format_error_event,
-    format_metadata_event,
     format_messages_tuple_event,
+    format_metadata_event,
     format_updates_event,
     format_values_event,
     sse_headers,
 )
 from server.storage import get_storage
-from graphs.registry import resolve_graph_factory
-from infra.tracing import inject_tracing
-from server.database import checkpointer as create_checkpointer, store as create_store
 
 logger = logging.getLogger(__name__)
 
@@ -1103,7 +1104,6 @@ async def execute_run_stream(
                     if isinstance(output, dict):
                         output_messages = output.get("messages", [])
                         if output_messages:
-                            # Convert messages to dicts
                             update_messages = []
                             for msg in output_messages:
                                 if isinstance(msg, BaseMessage):
@@ -1115,7 +1115,6 @@ async def execute_run_stream(
                                 yield format_updates_event(
                                     node_name, {"messages": update_messages}
                                 )
-                                # Use the last AI message for final values
                                 for msg in reversed(update_messages):
                                     if msg.get("type") == "ai":
                                         final_ai_message_dict = msg
