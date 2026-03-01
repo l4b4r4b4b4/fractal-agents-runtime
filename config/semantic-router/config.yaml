@@ -1,0 +1,274 @@
+# Semantic Router — Phase B: Cloud + Local vLLM + Cluster Models
+#
+# Format: UserConfig (new format with version + providers + listeners)
+# Backend: OpenAI cloud API + local vLLM (DeepSeek OCR) + cluster vLLM (Ministral 3B)
+# Envoy proxy: port 8801 (matches upstream docs convention)
+#
+# Usage:
+#   docker compose -f docker-compose.semantic-router.yml up -d
+#   curl http://localhost:8801/v1/chat/completions \
+#     -H "Content-Type: application/json" \
+#     -H "Authorization: Bearer $OPENAI_API_KEY" \
+#     -d '{"model": "gpt-4.1", "messages": [{"role": "user", "content": "Hello!"}]}'
+#
+# The OPENAI_API_KEY env var must be set on the container (passed via compose).
+# BERT classifier models (~1.5GB) are auto-downloaded on first boot.
+#
+# Prerequisites for cluster models:
+#   kubectl port-forward -n testing svc/ministral-vllm 7375:80
+#   (host.docker.internal maps to host gateway via extra_hosts in compose)
+#
+# Model tiers:
+#   gpt-5.2 / gpt-5.2-mini  → Newest OpenAI models for agentic tasks (non-image)
+#   gpt-4.1                  → Mid-tier agentic model, chat & fallback default
+#   gpt-4o / gpt-4o-mini    → Vision-capable models — ONLY for image inputs in chat
+#   ais-ocr                  → Local DeepSeek OCR vLLM for document scanning
+#   ministral-3b-instruct    → Cluster vLLM for structured extraction & classification
+#
+# Image routing note:
+#   The BERT classifier operates on text embeddings and cannot auto-detect
+#   image_url blocks in messages. For image inputs in chat, the webapp must
+#   explicitly set model_name_override: "gpt-4o" (or "gpt-4o-mini") in the
+#   configurable. Auto-detection would require modality signal config (Phase C).
+
+version: "v1"
+
+# ─── Listener ────────────────────────────────────────────────────
+# Envoy proxy port — the port our runtime calls via SEMANTIC_ROUTER_URL
+listeners:
+  - name: "openai_listener"
+    address: "0.0.0.0"
+    port: 8801
+    timeout: "300s"
+
+# ─── Providers ───────────────────────────────────────────────────
+# Models and their backend endpoints.
+#
+# Topology:
+#   gpt-5.2 / gpt-5.2-mini  → OpenAI cloud API (api.openai.com) — agentic default
+#   gpt-4.1                  → OpenAI cloud API (api.openai.com) — agentic mid-tier
+#   gpt-4o / gpt-4o-mini    → OpenAI cloud API (api.openai.com) — vision/image only
+#   ais-ocr                  → local Docker vLLM (vllm-ocr:80 via docproc network)
+#   ministral-3b-instruct    → cluster vLLM (host.docker.internal:7375 via kubectl port-forward)
+providers:
+  models:
+    # ── Agentic models (non-image LangGraph chats) ──────────────
+    - name: "gpt-5.2"
+      endpoints:
+        - name: "openai-gpt52"
+          weight: 1
+          endpoint: "api.openai.com:443"
+          protocol: "https"
+      description: >-
+        GPT-5.2 — OpenAI's newest and most capable model. Best for complex
+        multi-step analysis, deep reasoning, summarization, legal interpretation,
+        financial modeling, and architectural review. Default for analysis tasks.
+
+    - name: "gpt-5.2-mini"
+      endpoints:
+        - name: "openai-gpt52-mini"
+          weight: 1
+          endpoint: "api.openai.com:443"
+          protocol: "https"
+      description: >-
+        GPT-5.2 Mini — smaller, faster variant of GPT-5.2. If this model
+        does not exist yet at the OpenAI API, requests will fail and the
+        router will fall back to the next available model. Remove this
+        entry if confirmed unavailable.
+
+    - name: "gpt-4.1"
+      endpoints:
+        - name: "openai-gpt41"
+          weight: 1
+          endpoint: "api.openai.com:443"
+          protocol: "https"
+      description: >-
+        GPT-4.1 — strong agentic mid-tier model. Default for conversational
+        chat, general Q&A, follow-up questions, and fallback routing.
+        Good balance of capability, speed, and cost for non-image tasks.
+
+    # ── Vision models (image inputs only) ───────────────────────
+    # These are NOT used in default routing decisions. They are available
+    # for explicit model pinning via model_name_override when the webapp
+    # detects image content in the user's message.
+    - name: "gpt-4o"
+      endpoints:
+        - name: "openai-gpt4o"
+          weight: 1
+          endpoint: "api.openai.com:443"
+          protocol: "https"
+      description: >-
+        GPT-4o — vision-capable model for image inputs in chat. Use via
+        model_name_override when messages contain image_url content blocks.
+        NOT used in default routing — reserved for explicit vision pinning.
+
+    - name: "gpt-4o-mini"
+      endpoints:
+        - name: "openai-gpt4o-mini"
+          weight: 1
+          endpoint: "api.openai.com:443"
+          protocol: "https"
+      description: >-
+        GPT-4o Mini — cheaper vision-capable model for image inputs in chat.
+        Use via model_name_override for lower-cost vision tasks. NOT used
+        in default routing — reserved for explicit vision pinning.
+
+    # ── Specialized self-hosted models ──────────────────────────
+    - name: "ais-ocr"
+      endpoints:
+        - name: "local-vllm-ocr"
+          weight: 1
+          endpoint: "vllm-ocr:80"
+          protocol: "http"
+      description: >-
+        DeepSeek OCR 2 — local vLLM for document OCR and vision tasks.
+        Handles image-to-text with specific system prompts: OCR full-page
+        transcription, structured field extraction from scanned documents,
+        table detection and serialization, invoice/receipt parsing, and
+        handwriting recognition. Expects image_url content blocks alongside
+        task-specific system prompts.
+
+    - name: "ministral-3b-instruct"
+      endpoints:
+        - name: "cluster-ministral"
+          weight: 1
+          endpoint: "host.docker.internal:7375"
+          protocol: "http"
+      description: >-
+        Ministral 3B Instruct — self-hosted on AKS cluster GPU node.
+        Fast, small model ideal for structured extraction (JSON output),
+        document classification, categorization, and labeling tasks.
+        Not suitable for complex reasoning or multi-step analysis.
+
+  default_model: "gpt-4.1"
+
+  reasoning_families:
+    gpt:
+      type: "reasoning_effort"
+      parameter: "reasoning_effort"
+
+  default_reasoning_effort: "high"
+
+# ─── Signals ─────────────────────────────────────────────────────
+# Domain categories for the BERT classifier to map incoming queries.
+#
+# The classifier evaluates the full messages array (system + user + history)
+# and assigns a domain. Priority in decisions determines which rule fires.
+#
+# Note: The BERT classifier works on text embeddings only. It cannot detect
+# image_url blocks in messages. For image routing, the webapp must explicitly
+# pin gpt-4o or gpt-4o-mini via model_name_override in the configurable.
+signals:
+  domains:
+    - name: ocr
+      description: >-
+        OCR and document image-to-text tasks — reading scanned documents,
+        invoices, receipts, handwritten notes. Typically includes image_url
+        content blocks with system prompts like: "Transkribiere das Dokument",
+        "Extrahiere die Felder", "Lies die Tabelle", "Parse die Rechnung",
+        "Erkenne die Handschrift", or English equivalents.
+    - name: extraction
+      description: >-
+        Structured data extraction from text — pulling fields, values, dates,
+        amounts from already-OCR'd or digital documents. Produces JSON output.
+        Distinct from OCR: input is text (not images).
+    - name: classification
+      description: >-
+        Document classification and categorization — assigning labels, types,
+        categories (e.g. DIN 276 Kostengruppe, HOAI Leistungsphase, Dokumentart).
+        Short output, high throughput.
+    - name: chat
+      description: "Conversational queries, general Q&A, follow-up questions, brainstorming"
+    - name: analysis
+      description: >-
+        Complex multi-step analysis requiring deeper reasoning — summarization,
+        comparison, legal interpretation, financial modeling, architectural review.
+    - name: other
+      description: "General knowledge, miscellaneous topics, uncategorized queries"
+
+# ─── Routing Decisions ───────────────────────────────────────────
+# Priority-based routing: higher priority = checked first.
+#
+# Routing strategy:
+#   OCR (images)        → ais-ocr              (local GPU, specialized vision model)
+#   Extraction (text)   → ministral-3b         (cluster GPU, fast structured output)
+#   Classification      → ministral-3b         (cluster GPU, fast labeling)
+#   Analysis            → gpt-5.2             (cloud, newest + most capable)
+#   Chat                → gpt-4.1             (cloud, agentic mid-tier)
+#   Fallback            → gpt-4.1             (cloud, safe default)
+#
+# NOT in default routing (available via model_name_override only):
+#   Image chat          → gpt-4o / gpt-4o-mini (vision-capable, webapp pins explicitly)
+#   Fast agentic        → gpt-5.2-mini         (if available, webapp pins explicitly)
+decisions:
+  - name: "ocr_query"
+    description: "OCR / document image reading → ais-ocr (local DeepSeek OCR vLLM)"
+    priority: 300
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "ocr"
+    modelRefs:
+      - model: "ais-ocr"
+        use_reasoning: false
+
+  - name: "extraction_query"
+    description: "Structured data extraction from text → ministral-3b (cluster vLLM, fast JSON output)"
+    priority: 200
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "extraction"
+    modelRefs:
+      - model: "ministral-3b-instruct"
+        use_reasoning: false
+
+  - name: "classification_query"
+    description: "Document classification/labeling → ministral-3b (cluster vLLM, fast categorization)"
+    priority: 200
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "classification"
+    modelRefs:
+      - model: "ministral-3b-instruct"
+        use_reasoning: false
+
+  - name: "analysis_query"
+    description: "Complex analysis requiring deep reasoning → gpt-5.2 (newest, most capable)"
+    priority: 150
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "analysis"
+    modelRefs:
+      - model: "gpt-5.2"
+        use_reasoning: false
+
+  - name: "chat_query"
+    description: "Conversational queries → gpt-4.1 (agentic mid-tier, good balance)"
+    priority: 100
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "chat"
+    modelRefs:
+      - model: "gpt-4.1"
+        use_reasoning: false
+
+  - name: "general_fallback"
+    description: "Everything else → gpt-4.1 (safe agentic default)"
+    priority: 50
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "other"
+    modelRefs:
+      - model: "gpt-4.1"
+        use_reasoning: false

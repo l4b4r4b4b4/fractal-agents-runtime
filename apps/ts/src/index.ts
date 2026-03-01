@@ -20,6 +20,7 @@ import { registerThreadRoutes } from "./routes/threads";
 import { registerRunRoutes } from "./routes/runs";
 import { registerStreamRoutes } from "./routes/streams";
 import { registerStatelessRunRoutes } from "./routes/runs-stateless";
+import { registerHardwareKeyRoutes } from "./routes/hardware-keys";
 import { registerStoreRoutes } from "./routes/store";
 import { registerMcpRoutes } from "./routes/mcp";
 import { registerCronRoutes } from "./routes/crons";
@@ -64,6 +65,9 @@ registerStreamRoutes(router);
 
 // Stateless run routes: POST /runs, /runs/stream, /runs/wait
 registerStatelessRunRoutes(router);
+
+// Hardware key routes: /keys/* (register, assertions, policies, encrypted-data)
+registerHardwareKeyRoutes(router);
 
 // Store routes: PUT/GET/DELETE /store/items, POST /store/items/search, GET /store/namespaces
 registerStoreRoutes(router);
@@ -130,7 +134,6 @@ registerA2ARoutes(router, {
     },
   },
 });
-
 // ---------------------------------------------------------------------------
 // Server
 // ---------------------------------------------------------------------------

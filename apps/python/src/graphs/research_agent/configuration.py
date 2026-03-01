@@ -1,9 +1,8 @@
 """Configuration for the research agent graph.
 
-Mirrors the configuration patterns established in
-:pymod:`graphs.react_agent.agent` (``GraphConfigPydantic``) so that the
-server can treat both graphs identically when resolving LLM, MCP tools,
-and RAG collections from the assistant's ``configurable`` dict.
+Provides :class:`ResearchAgentConfig` with research-agent-specific
+fields (worker iterations, auto-approve flags) on top of the shared
+config models from :mod:`graphs.configuration`.
 
 The research-agent-specific additions are:
 
@@ -20,32 +19,18 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from graphs.configuration import MCPConfig, MCPServerConfig, RagConfig
 
-# ---------------------------------------------------------------------------
-# Nested config models (same shapes as react_agent)
-# ---------------------------------------------------------------------------
-
-
-class RagConfig(BaseModel):
-    """RAG (Retrieval-Augmented Generation) tool configuration."""
-
-    rag_url: str | None = None
-    collections: list[str] = Field(default_factory=list)
-
-
-class MCPServerConfig(BaseModel):
-    """A single MCP server connection."""
-
-    name: str = "default"
-    url: str = ""
-    auth_required: bool = False
-    tools: list[str] | None = None
-
-
-class MCPConfig(BaseModel):
-    """MCP tool configuration — one or more remote servers."""
-
-    servers: list[MCPServerConfig] = Field(default_factory=list)
+# Re-export so existing imports like
+#   from graphs.research_agent.configuration import RagConfig
+# continue to work without changes.
+__all__ = [
+    "MCPConfig",
+    "MCPServerConfig",
+    "RagConfig",
+    "ResearchAgentConfig",
+    "parse_config",
+]
 
 
 # ---------------------------------------------------------------------------

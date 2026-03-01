@@ -71,6 +71,8 @@ Both runtimes implement the full LangGraph API contract:
 - **Crons** — Scheduled recurring agent invocations
 - **Prometheus Metrics** — `/metrics` endpoint with request counts, durations, error rates
 - **Multi-Provider LLM** — OpenAI, Anthropic, Google, custom endpoints (vLLM, Ollama)
+- **Semantic Router** — Optional transparent proxy for dynamic per-request model routing via [vLLM Semantic Router](https://github.com/vllm-project/semantic-router). See [docs/semantic-router.md](docs/semantic-router.md)
+- **Hardware Key Encryption** — WebAuthn-based hardware key management, assertion challenges, asset encryption policies
 - **Supabase Auth** — JWT-based authentication with per-user/org scoping
 - **Postgres Persistence** — Durable state via LangGraph checkpoint + store
 - **Agent Sync** — Startup synchronisation of assistants from Supabase
@@ -102,9 +104,14 @@ All 6 Langfuse prompt names are identical across runtimes, enabling shared promp
 
 ### Python Runtime (Robyn)
 
-- **Robyn HTTP Server** — Multi-worker async server (34 paths, 44 operations)
-- **1261 Tests, 74% Coverage** — Three-tier enforcement (global floor, per-file floor, diff-cover)
+- **Robyn HTTP Server** — Multi-worker async server (34 paths, 44 operations, 28 schemas)
+- **Shared LLM Factory** — Single `create_chat_model()` entry point with call-time model override, routing metadata headers, and semantic router env var support
+- **Supabase RAG** — LangConnect-based retrieval-augmented generation
+- **Agent Sync** — Startup synchronisation of assistants from Supabase (`AGENT_SYNC_SCOPE`)
+- **Langfuse Tracing** — Optional observability with per-invocation trace attribution
+- **Prometheus Metrics** — `/metrics` endpoint for monitoring
 - **APScheduler** — Cron scheduling with persistent job store
+- **1555 Tests, 78% Coverage** — Three-tier enforcement (global floor, per-file floor, diff-cover)
 
 ### TypeScript Runtime (Bun)
 
@@ -287,6 +294,10 @@ Both runtimes read configuration from environment variables. The same variables 
 | `LANGFUSE_PROMPT_CACHE_TTL_SECONDS` | No | Prompt template cache TTL (default: 300) |
 | `LANGCHAIN_TRACING_V2` | No | Enable LangSmith tracing (`true`/`false`) |
 | `LANGCHAIN_API_KEY` | No | LangSmith API key |
+| `LANGCHAIN_PROJECT` | No | LangSmith project name |
+| `SEMANTIC_ROUTER_ENABLED` | No | Route all LLM calls through semantic router (`true`/`false`) |
+| `SEMANTIC_ROUTER_URL` | No | Semantic router Envoy proxy URL (e.g. `http://localhost:8801/v1`) |
+| `SEMANTIC_ROUTER_MODEL` | No | Model name for router-managed selection (default: `MoM`) |
 | `PORT` | No | Server port (Python: 8081, TS: 3000) |
 | `DOCPROC_CHROMADB_URL` | No | ChromaDB server URL (default: `http://chromadb:8000`) |
 | `DOCPROC_TEI_EMBEDDINGS_URL` | No | TEI embedding endpoint (default: `http://tei-embeddings:8080`) |

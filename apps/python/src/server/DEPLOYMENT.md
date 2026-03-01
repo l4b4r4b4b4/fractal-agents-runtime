@@ -381,7 +381,7 @@ GIT_COMMIT="abc123"            # Git commit hash
 ```bash
 SUPABASE_URL="http://127.0.0.1:54321"
 SUPABASE_KEY="eyJhbGciOiJFUzI1NiIsImtpZCI6ImI4MTI2OWYxLTIxZDgtNGYyZS1iNzE5LWMyMjQwYTg0MGQ5MCIsInR5cCI6IkpXVCJ9..."
-OPENAI_API_BASE="http://localhost:8001/v1"
+OPENAI_API_BASE="http://localhost:9541/v1"
 ROBYN_DEV="true"
 ROBYN_WORKERS="1"
 ```

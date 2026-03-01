@@ -51,6 +51,7 @@ from server.openapi_spec import (
 from server.routes import (
     register_assistant_routes,
     register_cron_routes,
+    register_hardware_key_routes,
     register_run_routes,
     register_stream_routes,
     register_thread_routes,
@@ -309,6 +310,7 @@ register_metrics_routes(app)
 register_store_routes(app)
 register_mcp_routes(app)
 register_cron_routes(app)
+register_hardware_key_routes(app)
 register_a2a_routes(app)
 
 

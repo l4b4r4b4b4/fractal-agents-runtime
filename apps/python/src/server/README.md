@@ -48,7 +48,7 @@ SUPABASE_KEY="your-supabase-anon-or-service-key"
 # LLM Configuration
 OPENAI_API_KEY="your-api-key"
 # OR for vLLM/OpenAI-compatible endpoints:
-OPENAI_API_BASE="http://localhost:8001/v1"
+OPENAI_API_BASE="http://localhost:9541/v1"
 
 # Optional: Server Configuration
 ROBYN_HOST="0.0.0.0"
@@ -414,10 +414,10 @@ For local testing with vLLM on AKS:
 
 ```bash
 # Port-forward vLLM service
-kubectl port-forward svc/ministral-vllm 8001:80 -n testing
+kubectl port-forward svc/ministral-vllm 9541:80 -n testing
 
 # Configure in .env
-OPENAI_API_BASE=http://localhost:8001/v1
+OPENAI_API_BASE=http://localhost:9541/v1
 ```
 
 ## Deployment

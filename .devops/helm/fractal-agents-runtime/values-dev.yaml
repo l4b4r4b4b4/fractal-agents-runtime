@@ -23,7 +23,7 @@ python:
   workers: 1
   devMode: true
   database:
-    url: ""  # provide via --set or existingSecret
+    url: "" # provide via --set or existingSecret
     poolMinSize: 1
     poolMaxSize: 5
     poolTimeout: 30
@@ -34,7 +34,7 @@ config:
   supabase:
     url: "http://127.0.0.1:54321"
   llm:
-    openaiApiBase: "http://localhost:8001/v1"
+    openaiApiBase: "http://localhost:9541/v1"
     modelName: ""
   tracing:
     langchainTracingV2: "false"

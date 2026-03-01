@@ -32,15 +32,13 @@ Usage::
 from __future__ import annotations
 
 import logging
-import os
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from langchain.chat_models import init_chat_model
 from langchain_core.runnables import RunnableConfig
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_openai import ChatOpenAI
 
+from graphs.llm import create_chat_model
 from graphs.research_agent.configuration import parse_config
 from graphs.research_agent.graph import build_research_graph
 
@@ -58,8 +56,7 @@ except PackageNotFoundError:
 
 
 # ---------------------------------------------------------------------------
-# Helpers shared with react_agent (duplicated here to avoid cross-graph
-# imports — a future refactor will extract these into infra/).
+# Helpers
 # ---------------------------------------------------------------------------
 
 
@@ -76,31 +73,6 @@ def _safe_present_configurable_keys(config: RunnableConfig) -> list[str]:
     if isinstance(configurable, dict):
         return sorted(configurable.keys())
     return []
-
-
-def _get_api_key_for_model(model_name: str, config: RunnableConfig) -> str | None:
-    """Resolve an API key from environment for the given model provider."""
-    configurable = config.get("configurable", {}) or {}
-
-    # Custom endpoint API key
-    if model_name.startswith("custom:"):
-        return configurable.get("custom_api_key") or os.environ.get("OPENAI_API_KEY")
-
-    provider = model_name.split(":")[0] if ":" in model_name else model_name
-
-    key_map = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "google": "GOOGLE_API_KEY",
-        "mistral": "MISTRAL_API_KEY",
-        "groq": "GROQ_API_KEY",
-        "fireworks": "FIREWORKS_API_KEY",
-    }
-
-    env_var = key_map.get(provider)
-    if env_var:
-        return os.environ.get(env_var)
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -287,39 +259,30 @@ async def graph(
                     "research_agent: failed to fetch MCP tools: %s", str(mcp_error)
                 )
 
-    # --- Resolve LLM — same pattern as react_agent ------------------------
+    # --- Resolve LLM via shared factory -----------------------------------
 
-    if cfg.base_url:
-        masked_base_url = _safe_mask_url(cfg.base_url)
-        logger.info("research_agent LLM: custom endpoint; base_url=%s", masked_base_url)
+    configurable = config.get("configurable", {}) or {}
 
-        api_key = _get_api_key_for_model("custom:", config)
-        if not api_key:
-            api_key = "EMPTY"
-            logger.info("research_agent LLM auth: no custom API key; using EMPTY")
+    # Build routing metadata for the semantic router (or any proxy).
+    # These headers help the router make better routing decisions.
+    routing_metadata: dict[str, str] = {"x-sr-graph-id": "research_agent"}
+    org_id = configurable.get("x-org-id")
+    if org_id:
+        routing_metadata["x-sr-org-id"] = org_id
+    user_tier = configurable.get("x-user-tier")
+    if user_tier:
+        routing_metadata["x-sr-user-tier"] = user_tier
 
-        model_name = cfg.custom_model_name or cfg.model_name
-        logger.info("research_agent LLM model: %s", model_name)
-
-        model = ChatOpenAI(
-            openai_api_base=cfg.base_url,
-            openai_api_key=api_key,
-            model=model_name,
-            temperature=cfg.temperature,
-            max_tokens=cfg.max_tokens,
-        )
-    else:
-        logger.info(
-            "research_agent LLM: standard provider; model_name=%s", cfg.model_name
-        )
-        api_key = _get_api_key_for_model(cfg.model_name, config)
-
-        model = init_chat_model(
-            cfg.model_name,
-            temperature=cfg.temperature,
-            max_tokens=cfg.max_tokens,
-            api_key=api_key or "No token found",
-        )
+    model = create_chat_model(
+        config,
+        model_name=cfg.model_name,
+        temperature=cfg.temperature,
+        max_tokens=cfg.max_tokens,
+        base_url=cfg.base_url,
+        custom_model_name=cfg.custom_model_name,
+        model_name_override=configurable.get("model_name_override"),
+        routing_metadata=routing_metadata,
+    )
 
     # --- Log persistence ---------------------------------------------------
 
