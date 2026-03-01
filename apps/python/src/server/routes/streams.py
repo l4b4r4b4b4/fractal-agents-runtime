@@ -1082,8 +1082,23 @@ async def execute_run_stream(
                         )
                         yield format_messages_tuple_event(final_delta, current_metadata)
 
-                # Handle chain/graph end - emit updates event
-                elif event_kind == "on_chain_end" and event_name == "model":
+                        # Reset so the next LLM call in a later node gets
+                        # its own streaming session with a fresh message ID.
+                        current_ai_message_id = None
+                        accumulated_content = ""
+
+                # Handle chain/graph end - emit updates event.
+                # Only match node-level completions: LangGraph sets
+                # langgraph_node in metadata for all events within a node,
+                # but only the node's own on_chain_end has event_name equal
+                # to the langgraph_node value.  Internal chains (e.g.
+                # ChatOpenAI) have event_name set to the chain class name.
+                elif (
+                    event_kind == "on_chain_end"
+                    and event_metadata.get("langgraph_node")
+                    and event_name == event_metadata.get("langgraph_node")
+                ):
+                    node_name = event_metadata["langgraph_node"]
                     output = event_data.get("output", {})
                     if isinstance(output, dict):
                         output_messages = output.get("messages", [])
@@ -1098,7 +1113,7 @@ async def execute_run_stream(
 
                             if update_messages:
                                 yield format_updates_event(
-                                    "model", {"messages": update_messages}
+                                    node_name, {"messages": update_messages}
                                 )
                                 # Use the last AI message for final values
                                 for msg in reversed(update_messages):

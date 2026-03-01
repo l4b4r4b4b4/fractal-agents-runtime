@@ -929,3 +929,336 @@ class TestExecuteRunStreamIntegration:
                 thread.thread_id, mock_user_identity
             )
             assert state is not None
+
+    @pytest.mark.asyncio
+    async def test_multi_llm_streaming_second_node_gets_own_session(
+        self, storage, mock_user_identity, assistant, thread
+    ):
+        """Bug repro: when a graph has multiple LLM nodes, the second
+        on_chat_model_start is silently ignored because current_ai_message_id
+        is never reset after on_chat_model_end. Tokens from the second LLM
+        call either leak into the first message or are dropped.
+
+        Expected: each LLM node gets its own streaming session with a
+        unique message ID and its own initial empty delta.
+        """
+        from server.routes.streams import execute_run_stream
+
+        mock_agent = AsyncMock()
+
+        async def mock_stream_events(*args, **kwargs):
+            # ── Node A: first LLM call ──
+            yield {
+                "event": "on_chat_model_start",
+                "name": "ChatOpenAI",
+                "run_id": "run-aaa",
+                "data": {},
+                "metadata": {"langgraph_node": "intake"},
+            }
+            yield {
+                "event": "on_chat_model_stream",
+                "name": "ChatOpenAI",
+                "run_id": "run-aaa",
+                "data": {"chunk": AIMessageChunk(content="First")},
+                "metadata": {"langgraph_node": "intake"},
+            }
+            yield {
+                "event": "on_chat_model_end",
+                "name": "ChatOpenAI",
+                "run_id": "run-aaa",
+                "data": {"output": AIMessage(content="First", id="msg-a")},
+                "metadata": {"langgraph_node": "intake"},
+            }
+            # ── Node B: second LLM call ──
+            yield {
+                "event": "on_chat_model_start",
+                "name": "ChatOpenAI",
+                "run_id": "run-bbb",
+                "data": {},
+                "metadata": {"langgraph_node": "analyzer"},
+            }
+            yield {
+                "event": "on_chat_model_stream",
+                "name": "ChatOpenAI",
+                "run_id": "run-bbb",
+                "data": {"chunk": AIMessageChunk(content="Second")},
+                "metadata": {"langgraph_node": "analyzer"},
+            }
+            yield {
+                "event": "on_chat_model_end",
+                "name": "ChatOpenAI",
+                "run_id": "run-bbb",
+                "data": {"output": AIMessage(content="Second", id="msg-b")},
+                "metadata": {"langgraph_node": "analyzer"},
+            }
+
+        mock_agent.astream_events = mock_stream_events
+
+        mock_factory = AsyncMock(return_value=mock_agent)
+        with patch(
+            "server.routes.streams.resolve_graph_factory",
+            return_value=mock_factory,
+        ):
+            events = []
+            async for event in execute_run_stream(
+                run_id="run-multi",
+                thread_id=thread.thread_id,
+                assistant_id=assistant.assistant_id,
+                input_data={"messages": [{"role": "user", "content": "Hi"}]},
+                config=None,
+                owner_id=mock_user_identity,
+                assistant_config=assistant.config,
+            ):
+                events.append(event)
+
+            # Collect all messages-tuple events
+            messages_events = [e for e in events if e.startswith("event: messages\n")]
+
+            # Extract (content, message_id) from each messages event
+            deltas = []
+            for msg_event in messages_events:
+                data_line = msg_event.split("data: ", 1)[1].strip()
+                parsed = json.loads(data_line)
+                deltas.append((parsed[0]["content"], parsed[0].get("id")))
+
+            # We must see two distinct message IDs
+            message_ids = {mid for _, mid in deltas if mid is not None}
+            assert len(message_ids) == 2, (
+                f"Expected 2 distinct message IDs (one per LLM node), "
+                f"got {len(message_ids)}: {message_ids}"
+            )
+
+            # The "Second" content must appear as a delta
+            delta_contents = [content for content, _ in deltas]
+            assert "Second" in delta_contents, (
+                f"Second LLM node's tokens missing from deltas: {delta_contents}"
+            )
+
+            # Both IDs should appear in content-bearing deltas
+            ids_with_content = {
+                mid for content, mid in deltas if content and mid is not None
+            }
+            assert len(ids_with_content) == 2, (
+                f"Expected content-bearing deltas from 2 message IDs, "
+                f"got {len(ids_with_content)}: {ids_with_content}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_custom_node_name_emits_updates_event(
+        self, storage, mock_user_identity, assistant, thread
+    ):
+        """Bug repro: on_chain_end only emits 'event: updates' when the
+        event_name is exactly "model". Graphs with custom node names
+        (e.g. "analyzer") never trigger update events — their AIMessages
+        only appear in the final 'event: values'.
+
+        Expected: any LangGraph node whose output contains messages should
+        emit 'event: updates' with the actual node name.
+        """
+        from server.routes.streams import execute_run_stream
+
+        mock_agent = AsyncMock()
+
+        async def mock_stream_events(*args, **kwargs):
+            yield {
+                "event": "on_chat_model_start",
+                "name": "ChatOpenAI",
+                "run_id": "test-run-123",
+                "data": {},
+                "metadata": {"langgraph_node": "analyzer"},
+            }
+            yield {
+                "event": "on_chat_model_stream",
+                "name": "ChatOpenAI",
+                "run_id": "test-run-123",
+                "data": {"chunk": AIMessageChunk(content="Analysis result")},
+                "metadata": {"langgraph_node": "analyzer"},
+            }
+            yield {
+                "event": "on_chat_model_end",
+                "name": "ChatOpenAI",
+                "run_id": "test-run-123",
+                "data": {"output": AIMessage(content="Analysis result", id="msg-1")},
+                "metadata": {"langgraph_node": "analyzer"},
+            }
+            # Node-level on_chain_end for "analyzer" node
+            yield {
+                "event": "on_chain_end",
+                "name": "analyzer",
+                "run_id": "test-run-123",
+                "data": {
+                    "output": {
+                        "messages": [AIMessage(content="Analysis result", id="msg-1")]
+                    }
+                },
+                "metadata": {"langgraph_node": "analyzer"},
+            }
+
+        mock_agent.astream_events = mock_stream_events
+
+        mock_factory = AsyncMock(return_value=mock_agent)
+        with patch(
+            "server.routes.streams.resolve_graph_factory",
+            return_value=mock_factory,
+        ):
+            events = []
+            async for event in execute_run_stream(
+                run_id="run-custom-node",
+                thread_id=thread.thread_id,
+                assistant_id=assistant.assistant_id,
+                input_data={"messages": [{"role": "user", "content": "Analyze"}]},
+                config=None,
+                owner_id=mock_user_identity,
+                assistant_config=assistant.config,
+            ):
+                events.append(event)
+
+            # Find updates events
+            updates_events = [e for e in events if e.startswith("event: updates\n")]
+            assert len(updates_events) >= 1, (
+                f"Expected at least 1 updates event for custom node 'analyzer', "
+                f"got {len(updates_events)}. All event types: "
+                f"{[e.split(chr(10))[0] for e in events]}"
+            )
+
+            # The updates event should use the actual node name, not "model"
+            updates_data = updates_events[0].split("data: ", 1)[1].strip()
+            parsed = json.loads(updates_data)
+            assert "analyzer" in parsed, (
+                f"Updates event should be keyed by node name 'analyzer', "
+                f"got keys: {list(parsed.keys())}"
+            )
+            assert "model" not in parsed, (
+                "Updates event should NOT use hard-coded 'model' key"
+            )
+
+    @pytest.mark.asyncio
+    async def test_hardcoded_model_node_still_emits_updates(
+        self, storage, mock_user_identity, assistant, thread
+    ):
+        """Regression guard: a node named exactly "model" must still emit
+        updates events after the node-name filter is generalized."""
+        from server.routes.streams import execute_run_stream
+
+        mock_agent = AsyncMock()
+
+        async def mock_stream_events(*args, **kwargs):
+            yield {
+                "event": "on_chat_model_start",
+                "name": "ChatOpenAI",
+                "run_id": "test-run-123",
+                "data": {},
+                "metadata": {"langgraph_node": "model"},
+            }
+            yield {
+                "event": "on_chat_model_end",
+                "name": "ChatOpenAI",
+                "run_id": "test-run-123",
+                "data": {"output": AIMessage(content="Reply", id="msg-1")},
+                "metadata": {"langgraph_node": "model"},
+            }
+            # Node-level on_chain_end for "model" node
+            yield {
+                "event": "on_chain_end",
+                "name": "model",
+                "run_id": "test-run-123",
+                "data": {
+                    "output": {"messages": [AIMessage(content="Reply", id="msg-1")]}
+                },
+                "metadata": {"langgraph_node": "model"},
+            }
+
+        mock_agent.astream_events = mock_stream_events
+
+        mock_factory = AsyncMock(return_value=mock_agent)
+        with patch(
+            "server.routes.streams.resolve_graph_factory",
+            return_value=mock_factory,
+        ):
+            events = []
+            async for event in execute_run_stream(
+                run_id="run-model-node",
+                thread_id=thread.thread_id,
+                assistant_id=assistant.assistant_id,
+                input_data={"messages": [{"role": "user", "content": "Hi"}]},
+                config=None,
+                owner_id=mock_user_identity,
+                assistant_config=assistant.config,
+            ):
+                events.append(event)
+
+            updates_events = [e for e in events if e.startswith("event: updates\n")]
+            assert len(updates_events) >= 1, (
+                "Node named 'model' must still emit updates events"
+            )
+            updates_data = updates_events[0].split("data: ", 1)[1].strip()
+            parsed = json.loads(updates_data)
+            assert "model" in parsed
+
+    @pytest.mark.asyncio
+    async def test_internal_chain_end_does_not_emit_spurious_updates(
+        self, storage, mock_user_identity, assistant, thread
+    ):
+        """Guard against spurious updates: an internal chain completion
+        (e.g. ChatOpenAI finishing inside a node) should NOT emit an
+        'event: updates' even if its output happens to contain messages.
+
+        Internal chains have event_name != langgraph_node (e.g.
+        event_name="ChatOpenAI" while langgraph_node="analyzer").
+        """
+        from server.routes.streams import execute_run_stream
+
+        mock_agent = AsyncMock()
+
+        async def mock_stream_events(*args, **kwargs):
+            yield {
+                "event": "on_chat_model_start",
+                "name": "ChatOpenAI",
+                "run_id": "test-run-123",
+                "data": {},
+                "metadata": {"langgraph_node": "analyzer"},
+            }
+            yield {
+                "event": "on_chat_model_end",
+                "name": "ChatOpenAI",
+                "run_id": "test-run-123",
+                "data": {"output": AIMessage(content="Done", id="msg-1")},
+                "metadata": {"langgraph_node": "analyzer"},
+            }
+            # Internal chain end — ChatOpenAI completing inside "analyzer"
+            # event_name is "ChatOpenAI", NOT the node name "analyzer"
+            yield {
+                "event": "on_chain_end",
+                "name": "ChatOpenAI",
+                "run_id": "test-run-123",
+                "data": {
+                    "output": {"messages": [AIMessage(content="Done", id="msg-1")]}
+                },
+                "metadata": {"langgraph_node": "analyzer"},
+            }
+
+        mock_agent.astream_events = mock_stream_events
+
+        mock_factory = AsyncMock(return_value=mock_agent)
+        with patch(
+            "server.routes.streams.resolve_graph_factory",
+            return_value=mock_factory,
+        ):
+            events = []
+            async for event in execute_run_stream(
+                run_id="run-internal",
+                thread_id=thread.thread_id,
+                assistant_id=assistant.assistant_id,
+                input_data={"messages": [{"role": "user", "content": "Hi"}]},
+                config=None,
+                owner_id=mock_user_identity,
+                assistant_config=assistant.config,
+            ):
+                events.append(event)
+
+            # No updates events should be emitted for internal chain ends
+            updates_events = [e for e in events if e.startswith("event: updates\n")]
+            assert len(updates_events) == 0, (
+                f"Internal chain end (ChatOpenAI inside analyzer) should NOT "
+                f"emit updates events, but got {len(updates_events)}"
+            )
