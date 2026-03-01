@@ -419,6 +419,57 @@ Key rotation, revocation, recovery, audit logging, security review.
 | Task-06 | `Task-06-Python-Key-Routes/` | Python API Routes (`/keys/*`) | 🟢 | Task-04, Task-05 | 2 |
 | Task-07 | `Task-07-TS-Key-Service/` | TypeScript Key Service & Routes | 🟢 | Task-06 | 2 |
 
+### Session 30 Progress Summary (2026-03-02)
+
+**Completed this session:**
+- ✅ **130 new async DB function tests** closing the coverage gap on both services:
+  - `test_hardware_key_service_async.py` — **58 tests** covering all 14 async functions:
+    register, list, get, update, deactivate keys; record, get, consume, list assertions;
+    create, list, get, delete policies; check_key_protected_access
+  - `test_encryption_service_async.py` — **72 tests** covering all 8 async functions:
+    _validate_authorized_key_ids, store, get, get_with_key_check, list, delete,
+    update_authorized_keys, _consume_matching_assertions
+  - All tests use `unittest.mock.AsyncMock` to simulate psycopg `AsyncConnection` — no real DB required
+- ✅ **Bug fix: Robyn `QueryParams.get()` requires explicit default argument**
+  - 8 calls in `routes/hardware_keys.py` were missing the default (`None`) argument
+  - Caused HTTP 500 on all endpoints using query parameters: list keys, list assertions,
+    assertion status check, list policies, list encrypted data, get encrypted data
+  - **Found during live integration testing** — would NOT have been caught by unit tests alone
+- ✅ **Coverage improvements:**
+  - `hardware_key_service.py`: 52% → **100%** (282 stmts, 0 missing)
+  - `encryption_service.py`: 59% → **100%** (188 stmts, 0 missing)
+  - Global coverage: 74.59% → **77.85%** | Diff-cover: **89%**
+- ✅ **Live deployment verification** — rebuilt Docker image, restarted container, tested all 18
+  `/keys/*` endpoints against running Supabase + Python runtime with authenticated JWT:
+  - Phase 1 — Key CRUD (5 endpoints): list ✅, register ✅, get ✅, update ✅, deactivate ✅
+  - Phase 2 — Assertions (4 endpoints): record ✅, list ✅, status ✅, consume ✅ (+ 410 re-consume ✅)
+  - Phase 3 — Policies (4 endpoints): create ✅, list ✅, get ✅, delete ✅ (+ 404 re-delete ✅)
+  - Phase 4 — Encrypted Data (5 endpoints): store ✅, list metadata ✅, key-gated get (428 → assertion → 200) ✅, key rotation ✅, delete ✅
+- ✅ **Committed**: `3152730` — all lefthook pre-commit + pre-push hooks pass
+- ✅ **Pushed** branch `goal-40-hardware-key-encryption-server`
+
+**Files changed (Session 30):**
+- `apps/python/tests/test_hardware_key_service_async.py` — **NEW** (1228 lines, 58 tests)
+- `apps/python/tests/test_encryption_service_async.py` — **NEW** (970 lines, 72 tests)
+- `apps/python/src/server/routes/hardware_keys.py` — QueryParams.get() fix (8 calls, +12/-12)
+
+**Test results:**
+- Python: 1554 passed, 35 skipped (was 1424)
+- Global coverage: 77.85% (was 74.59%)
+- Diff-cover: 89% (threshold: 73%)
+- Ruff lint: clean
+- OpenAPI spec: valid (34 paths, 44 operations)
+
+**Coverage debt status (resolved):**
+- `hardware_key_service.py` async functions: ~~52.5%~~ → **100%** ✅
+- `encryption_service.py` async functions: ~~58.5%~~ → **100%** ✅
+- Remaining uncovered: `routes/hardware_keys.py` at 72.9% (HTTP handler layer, needs Robyn test client)
+
+**What's next:**
+1. Continue Goal 40 — Task-08 (Client-Side WebAuthn Frontend) or manual integration testing
+2. Goal 24 (Langfuse Prompt Templates) — continue remaining tasks
+3. Goal 41 (FastMCP Supabase User-Data Tool) — begin implementation
+
 ### Session 29 Progress Summary (2026-02-23)
 
 **Completed this session:**

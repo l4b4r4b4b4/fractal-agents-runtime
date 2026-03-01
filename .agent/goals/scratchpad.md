@@ -141,6 +141,33 @@ All TS runtime parity goals achieved. Both runtimes released as v0.1.0 on 2026-0
 
 ## Recent Activity
 
+### 2026-03-02 — Session 29 (Goal 40 — Async DB Tests + QueryParams Fix + Live Verification)
+
+**Goal 40: Hardware Key Encryption — Coverage Gap Closed**
+
+- ✅ **130 new async DB function tests** with `AsyncMock` psycopg connection mocks:
+  - `test_hardware_key_service_async.py` — 58 tests covering all 14 async functions
+    (register, list, get, update, deactivate keys; record, get, consume, list assertions;
+    create, list, get, delete policies; check_key_protected_access)
+  - `test_encryption_service_async.py` — 72 tests covering all 8 async functions
+    (_validate_authorized_key_ids, store, get, get_with_key_check, list, delete,
+    update_authorized_keys, _consume_matching_assertions)
+- ✅ **Bug fix**: Robyn `QueryParams.get()` requires explicit default argument — 8 calls
+  fixed across `routes/hardware_keys.py`. Caused 500 on all endpoints using query params
+  (list keys, list assertions, status check, list policies, list encrypted data, get encrypted data).
+  **Found during live integration testing** — would not have been caught by unit tests alone.
+- ✅ **Coverage improvements**:
+  - `hardware_key_service.py`: 52% → **100%** (282 stmts, 0 missing)
+  - `encryption_service.py`: 59% → **100%** (188 stmts, 0 missing)
+  - Global coverage: 74.59% → **77.85%** | Diff-cover: **89%**
+- ✅ **Live deployment verification** — all 18 `/keys/*` endpoints tested against running
+  Supabase + Python runtime with authenticated JWT:
+  - Key CRUD (5 endpoints) ✅ | Assertions + 410 re-consume (4 endpoints) ✅
+  - Policies + 404 re-delete (4 endpoints) ✅
+  - Encrypted data + 428 key-gated flow + key rotation + cleanup (5 endpoints) ✅
+- **1554 total tests**, 35 skipped, all CI gates pass, lint clean
+- **Branch**: `goal-40-hardware-key-encryption-server` @ `3152730`
+
 ### 2026-03-02 — Session 28 (Goal 42 🟢 COMPLETE — Semantic Router Integration)
 
 **Goal 42: Semantic Router Integration — All 5 Tasks Complete**
