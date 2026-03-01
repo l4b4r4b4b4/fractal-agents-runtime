@@ -267,13 +267,39 @@ listeners:
 
 providers:
   models:
+    # Agentic models (non-image LangGraph chats)
+    - name: "gpt-5.2"
+      endpoints:
+        - name: "openai-gpt52"
+          weight: 1
+          endpoint: "api.openai.com:443"
+          protocol: "https"
+      description: "GPT-5.2 — newest, most capable. Analysis, deep reasoning, multi-step tasks"
+
+    - name: "gpt-5.2-mini"
+      endpoints:
+        - name: "openai-gpt52-mini"
+          weight: 1
+          endpoint: "api.openai.com:443"
+          protocol: "https"
+      description: "GPT-5.2 Mini — fast agentic variant (remove if unavailable at OpenAI API)"
+
+    - name: "gpt-4.1"
+      endpoints:
+        - name: "openai-gpt41"
+          weight: 1
+          endpoint: "api.openai.com:443"
+          protocol: "https"
+      description: "GPT-4.1 — agentic mid-tier. Chat, general Q&A, fallback default"
+
+    # Vision models (image inputs only — NOT in default routing)
     - name: "gpt-4o"
       endpoints:
         - name: "openai-gpt4o"
           weight: 1
           endpoint: "api.openai.com:443"
           protocol: "https"
-      description: "GPT-4o — complex tasks"
+      description: "GPT-4o — vision-capable, for image inputs (pin via model_name_override)"
 
     - name: "gpt-4o-mini"
       endpoints:
@@ -281,9 +307,26 @@ providers:
           weight: 1
           endpoint: "api.openai.com:443"
           protocol: "https"
-      description: "GPT-4o Mini — simple tasks (cheaper)"
+      description: "GPT-4o Mini — cheaper vision model (pin via model_name_override)"
 
-  default_model: "gpt-4o-mini"
+    # Specialized self-hosted models
+    - name: "ais-ocr"
+      endpoints:
+        - name: "local-vllm-ocr"
+          weight: 1
+          endpoint: "vllm-ocr:80"
+          protocol: "http"
+      description: "DeepSeek OCR 2 — local vLLM for document OCR and vision tasks"
+
+    - name: "ministral-3b-instruct"
+      endpoints:
+        - name: "cluster-ministral"
+          weight: 1
+          endpoint: "host.docker.internal:7375"
+          protocol: "http"
+      description: "Ministral 3B Instruct — cluster vLLM for structured extraction and classification"
+
+  default_model: "gpt-4.1"
 ```
 
 > **Important:** The old flat config format (without `version`, `providers`,
@@ -297,26 +340,45 @@ The BERT classifier maps incoming queries to domain categories:
 ```yaml
 signals:
   domains:
+    - name: ocr
+      description: "OCR and document image-to-text tasks — scanned documents, invoices, receipts, handwritten notes"
     - name: extraction
-      description: "Document data extraction tasks"
+      description: "Structured data extraction from text — pulling fields, values, dates from digital documents (JSON output)"
     - name: classification
-      description: "Document classification and categorization"
+      description: "Document classification and categorization — assigning labels, types, categories"
     - name: chat
       description: "Conversational queries and general Q&A"
     - name: analysis
-      description: "Complex document analysis requiring deeper reasoning"
+      description: "Complex multi-step analysis requiring deeper reasoning — summarization, comparison, legal interpretation"
     - name: other
       description: "General knowledge and miscellaneous topics"
 ```
 
 ### Routing Decisions
 
-Priority-based rules map signals to models. Higher priority = checked first:
+Priority-based rules map signals to models. Higher priority = checked first.
+
+> **Image inputs:** `gpt-4o` and `gpt-4o-mini` are available as providers but
+> are **not** in default routing. The BERT classifier works on text embeddings
+> and cannot auto-detect `image_url` blocks. For image inputs, the webapp must
+> explicitly set `model_name_override: "gpt-4o"` in the configurable.
 
 ```yaml
 decisions:
+  - name: "ocr_query"
+    description: "OCR / document image reading → ais-ocr (local DeepSeek OCR vLLM)"
+    priority: 300
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "ocr"
+    modelRefs:
+      - model: "ais-ocr"
+        use_reasoning: false
+
   - name: "extraction_query"
-    description: "Data extraction → gpt-4o (structured output quality)"
+    description: "Structured data extraction → ministral-3b (cluster vLLM, fast JSON output)"
     priority: 200
     rules:
       operator: "AND"
@@ -324,11 +386,35 @@ decisions:
         - type: "domain"
           name: "extraction"
     modelRefs:
-      - model: "gpt-4o"
+      - model: "ministral-3b-instruct"
+        use_reasoning: false
+
+  - name: "classification_query"
+    description: "Document classification/labeling → ministral-3b (cluster vLLM, fast categorization)"
+    priority: 200
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "classification"
+    modelRefs:
+      - model: "ministral-3b-instruct"
+        use_reasoning: false
+
+  - name: "analysis_query"
+    description: "Complex analysis requiring deep reasoning → gpt-5.2 (newest, most capable)"
+    priority: 150
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "analysis"
+    modelRefs:
+      - model: "gpt-5.2"
         use_reasoning: false
 
   - name: "chat_query"
-    description: "Conversational queries → gpt-4o-mini (fast, cheap)"
+    description: "Conversational queries → gpt-4.1 (agentic mid-tier)"
     priority: 100
     rules:
       operator: "AND"
@@ -336,7 +422,19 @@ decisions:
         - type: "domain"
           name: "chat"
     modelRefs:
-      - model: "gpt-4o-mini"
+      - model: "gpt-4.1"
+        use_reasoning: false
+
+  - name: "general_fallback"
+    description: "Everything else → gpt-4.1 (safe agentic default)"
+    priority: 50
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "other"
+    modelRefs:
+      - model: "gpt-4.1"
         use_reasoning: false
 ```
 
@@ -384,7 +482,7 @@ backends are available.
 
 ## Phases
 
-### Phase A — Cloud-Only (Current)
+### Phase A — Cloud-Only (Complete)
 
 All models served by OpenAI cloud API. No local GPU or vLLM required.
 
@@ -392,14 +490,15 @@ All models served by OpenAI cloud API. No local GPU or vLLM required.
 - **Routing:** Domain-based (extraction/analysis → gpt-4o, chat/classification → gpt-4o-mini)
 - **Use case:** Cost optimisation by routing simple queries to cheaper models
 
-### Phase B — Local vLLM + Cloud Failover (Future)
+### Phase B — Cloud + Local vLLM + Cluster vLLM (Current)
 
-Local vLLM backends for latency-sensitive or private workloads, with cloud
-failover for capacity:
+Cloud models plus local and cluster-hosted vLLM backends for specialized
+workloads (OCR, structured extraction, classification):
 
-- **Models:** `ministral-3b-instruct` (local), `gpt-4o` (cloud failover)
-- **Routing:** Domain + language-based (German extraction → gpt-4o, simple chat → ministral)
-- **Use case:** Data sovereignty, latency, cost reduction with local inference
+- **Models:** `gpt-5.2`, `gpt-5.2-mini`, `gpt-4.1` (cloud agentic), `gpt-4o`, `gpt-4o-mini` (cloud vision), `ais-ocr` (local vLLM), `ministral-3b-instruct` (cluster vLLM)
+- **Routing:** Domain-based — OCR → ais-ocr, extraction/classification → ministral-3b, analysis → gpt-5.2, chat/fallback → gpt-4.1; vision models (gpt-4o/4o-mini) available via explicit `model_name_override` only
+- **Use case:** Newest agentic models for reasoning and chat, specialized vision OCR on local GPU, fast structured extraction on cluster GPU, vision models pinned for image inputs
+- **Networking:** Docker `docproc-platform_default` network for local vLLM; `host.docker.internal` + kubectl port-forward for cluster vLLM
 
 ### Phase C — Multi-Provider Production (Future)
 
@@ -503,7 +602,7 @@ the platform (which run in a separate TEI container).
 | `docker-compose.semantic-router.yml` | Standalone compose for the router dev stack |
 | `config/semantic-router/config.yaml` | Router configuration (UserConfig v1 format) |
 | `apps/python/src/graphs/llm.py` | Shared LLM factory with router env var support |
-| `apps/python/tests/test_llm_factory.py` | 70 tests, 100% coverage on `graphs/llm.py` |
+| `apps/python/tests/test_llm_factory.py` | 71 tests, 100% coverage on `graphs/llm.py` |
 
 ## References
 

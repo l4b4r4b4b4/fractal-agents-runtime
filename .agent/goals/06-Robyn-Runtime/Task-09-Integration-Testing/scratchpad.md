@@ -16,7 +16,7 @@ Validate that the Robyn runtime server achieves full parity with `langgraph dev`
 
 | Component | URL | Status |
 |-----------|-----|--------|
-| vLLM | `localhost:8001` (port-forward from AKS) | ✅ Running |
+| vLLM | `localhost:9541` (port-forward from AKS) | ✅ Running |
 | Supabase | `localhost:54321` | ✅ Running |
 | Robyn Server | `localhost:8081` | ✅ Running |
 | LangGraph Dev | `localhost:2024` | ⚪ Optional (for comparison) |
@@ -26,7 +26,7 @@ Validate that the Robyn runtime server achieves full parity with `langgraph dev`
 ## Implementation Plan
 
 ### Step 1: Start Infrastructure
-- [x] Start vLLM via port-forward from AKS: `kubectl port-forward svc/ministral-vllm 8001:80 -n testing`
+- [x] Start vLLM via port-forward from AKS: `kubectl port-forward svc/ministral-vllm 9541:80 -n testing`
 - [x] Robyn server already running: `uv run python -m robyn_server` (port 8081)
 - [x] Supabase already running on `localhost:54321`
 
@@ -38,7 +38,7 @@ Validate that the Robyn runtime server achieves full parity with `langgraph dev`
 ### Step 3: Adapt test_with_auth_vllm.py for Robyn
 - [x] Create `test_robyn_auth_vllm.py` (copy of `test_with_auth_vllm.py`)
 - [x] Change `LANGRAPH_SERVER_URL` default to `http://localhost:8081`
-- [x] Change `VLLM_BASE_URL` default to `http://localhost:8001/v1`
+- [x] Change `VLLM_BASE_URL` default to `http://localhost:9541/v1`
 - [x] Rewrite to use streaming endpoint (polling not implemented in Robyn)
 - [x] Run against Robyn and verify all assertions pass ✅
 
@@ -123,7 +123,7 @@ Validate that the Robyn runtime server achieves full parity with `langgraph dev`
 - Connection errors in SSE stream indicate vLLM not running (expected when vLLM offline)
 - Robyn port is 8081 (FastAPI reference on 8080, LangGraph dev on 2024)
 - Thread-local storage fix required for auth in Robyn's Rust/Python boundary
-- vLLM now accessed via AKS port-forward (`localhost:8001`) instead of local Docker (`localhost:7374`)
+- vLLM now accessed via AKS port-forward (`localhost:9541`) instead of local Docker (`localhost:7374`)
 - Non-streaming `/runs` endpoint stays "pending" because background execution not implemented
   - Workaround: Use streaming endpoint `/runs/stream` which executes inline
   - This matches how OAP and real clients interact with the API
@@ -134,7 +134,7 @@ Validate that the Robyn runtime server achieves full parity with `langgraph dev`
 
 ### Run 1: 2026-02-05 04:24
 **Configuration:**
-- vLLM: `localhost:8001` (AKS port-forward, ministral-3b-instruct)
+- vLLM: `localhost:9541` (AKS port-forward, ministral-3b-instruct)
 - Robyn: `localhost:8081` (running)
 - Supabase: `localhost:54321` (running)
 
@@ -213,7 +213,7 @@ Validate that the Robyn runtime server achieves full parity with `langgraph dev`
 
 | File | Change |
 |------|--------|
-| `test_robyn_manual.py` | Added `VLLM_BASE_URL` and `VLLM_MODEL_NAME` env vars, updated default to port 8001 |
+| `test_robyn_manual.py` | Added `VLLM_BASE_URL` and `VLLM_MODEL_NAME` env vars, updated default to port 9541 |
 | `test_robyn_auth_vllm.py` | Created from `test_with_auth_vllm.py`, uses streaming endpoint, defaults to Robyn (8081) |
 
 ---

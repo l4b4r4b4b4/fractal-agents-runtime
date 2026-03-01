@@ -205,24 +205,64 @@ def create_chat_model(
         instance ready for use in agent graphs.
     """
     # --- Semantic router env-var override ----------------------------------
-    # When SEMANTIC_ROUTER_ENABLED=true, transparently route ALL LLM calls
-    # through the semantic router proxy, regardless of assistant config.
-    # This is a deployment-level concern, not per-assistant.
+    # When SEMANTIC_ROUTER_ENABLED=true, route LLM calls through the
+    # semantic router proxy — unless the agent explicitly pins a model
+    # or a custom endpoint.
+    #
+    # Override rules:
+    #   - If the agent already has a ``base_url`` (custom vLLM, Ollama,
+    #     etc.), the router does NOT hijack it.  The agent talks to its
+    #     own backend directly.
+    #   - If ``model_name_override`` is set by the caller (call-time
+    #     pin), it is sent to the router as-is (explicit model, not
+    #     "MoM").  The router passes it through without reclassifying.
+    #   - If ``custom_model_name`` is set on the assistant (creation-time
+    #     pin), same treatment: explicit model through the router.
+    #   - Only when NO pin exists does the router inject "MoM" for
+    #     dynamic classification.
     router_enabled = os.getenv("SEMANTIC_ROUTER_ENABLED", "false").lower() == "true"
     if router_enabled:
         router_url = os.getenv("SEMANTIC_ROUTER_URL")
         router_model = os.getenv("SEMANTIC_ROUTER_MODEL", "MoM")
         if router_url:
-            logger.info(
-                "Semantic router mode: routing all LLM calls through %s (model=%s)",
-                _safe_mask_url(router_url),
-                router_model,
-            )
-            base_url = router_url
-            # Router model takes precedence, but only if no explicit
-            # model_name_override was already set by the caller.
-            if not model_name_override:
-                model_name_override = router_model
+            if base_url:
+                # Agent already has a custom endpoint — don't override.
+                # The agent talks directly to its own backend (vLLM,
+                # Ollama, LiteLLM, etc.) and skips the router entirely.
+                logger.info(
+                    "Semantic router: SKIPPING — agent has custom base_url=%s",
+                    _safe_mask_url(base_url),
+                )
+            else:
+                # No custom endpoint — route through the semantic router.
+                base_url = router_url
+
+                if model_name_override:
+                    # Caller pinned a model at call time — send it to the
+                    # router as an explicit model (router passes through).
+                    logger.info(
+                        "Semantic router: using caller override model=%s "
+                        "through %s (passthrough, no reclassification)",
+                        model_name_override,
+                        _safe_mask_url(router_url),
+                    )
+                elif custom_model_name:
+                    # Agent has a pinned model at creation time — same
+                    # treatment: explicit model through the router.
+                    logger.info(
+                        "Semantic router: using agent-pinned model=%s "
+                        "through %s (passthrough, no reclassification)",
+                        custom_model_name,
+                        _safe_mask_url(router_url),
+                    )
+                else:
+                    # No pin — let the router classify dynamically.
+                    model_name_override = router_model
+                    logger.info(
+                        "Semantic router: dynamic routing through %s (model=%s)",
+                        _safe_mask_url(router_url),
+                        router_model,
+                    )
         else:
             logger.warning(
                 "SEMANTIC_ROUTER_ENABLED=true but SEMANTIC_ROUTER_URL is not set; "

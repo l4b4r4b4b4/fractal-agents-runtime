@@ -57,6 +57,11 @@ volumes:
   sr_models:
     name: semantic-router-models
 
+networks:
+  docproc:
+    name: docproc-platform_default
+    external: true
+
 services:
   semantic-router:
     image: ghcr.io/vllm-project/semantic-router/vllm-sr:latest
@@ -95,6 +100,14 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    extra_hosts:
+      # Linux doesn't have host.docker.internal by default.
+      # This lets the router reach kubectl port-forwards on the host
+      # (e.g. ministral-vllm on localhost:7375).
+      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - docproc
     logging:
       driver: json-file
       options:

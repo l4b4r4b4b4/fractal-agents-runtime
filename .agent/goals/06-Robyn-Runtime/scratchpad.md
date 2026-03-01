@@ -123,7 +123,7 @@ Goal: Optional capabilities that exist in the LangGraph API surface but are not 
 - [x] `GET /threads/{thread_id}/state` returns final messages compatible with existing tests
 - [x] Existing `test_with_auth_vllm.py` (URL switched to Robyn) passes
       - Created `test_robyn_auth_vllm.py` with streaming endpoint (polling not implemented)
-      - Uses AKS vLLM via port-forward (`localhost:8001`)
+      - Uses AKS vLLM via port-forward (`localhost:9541`)
 
 ### Tier 2 (Should Have)
 - [x] Search/count/list endpoints used by SDK/UI flows
@@ -280,7 +280,7 @@ Note: Each frame ends with a blank line (two newlines after `data:`).
 ## Key Context for Next Session
 
 ### Infrastructure Currently Running
-- **vLLM**: `http://localhost:8001/v1` (AKS port-forward: `kubectl port-forward svc/ministral-vllm 8001:80 -n testing`)
+- **vLLM**: `http://localhost:9541/v1` (AKS port-forward: `kubectl port-forward svc/ministral-vllm 9541:80 -n testing`)
 - **LangGraph Runtime**: `langgraph dev` on `localhost:2024` (optional, for comparison)
 - **Supabase**: `localhost:54321` (auth keys in `.env`)
 - **Robyn Server**: `localhost:8081` (Tier 1 complete ✅)

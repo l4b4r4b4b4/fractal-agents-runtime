@@ -1061,7 +1061,7 @@ class TestSemanticRouterEnvVars:
             )
 
         assert any(
-            "Semantic router mode" in msg and "router:8888" in msg
+            "Semantic router: dynamic routing" in msg and "router:8888" in msg
             for msg in caplog.messages
         )
 
@@ -1146,14 +1146,14 @@ class TestCombinedOverrideAndMetadata:
             assert call_kwargs["model"] == "MoM"
             assert call_kwargs["default_headers"] == {"x-sr-graph-id": "agent"}
 
-    def test_router_overrides_existing_base_url(
+    def test_router_skips_when_agent_has_custom_base_url(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Router replaces a caller-provided base_url (e.g. custom vLLM endpoint).
+        """Router does NOT override a caller-provided base_url.
 
-        When an assistant is configured with its own custom endpoint but the
-        deployment enables the semantic router, the router URL must take
-        precedence — the whole point is system-level routing control.
+        When an agent has ``base_url="http://vllm-ministral:8000/v1"`` pointing
+        at its own backend, the router must NOT hijack it.  The agent talks
+        directly to its own endpoint and skips the router entirely.
         """
         from graphs.llm import create_chat_model
 
@@ -1169,25 +1169,25 @@ class TestCombinedOverrideAndMetadata:
             create_chat_model(
                 {"configurable": {}},
                 model_name="custom:",
-                # Caller had a custom vLLM endpoint configured
+                # Agent has its own vLLM endpoint — router must not hijack it
                 base_url="http://vllm-ministral:8000/v1",
                 custom_model_name="ministral-3b-instruct",
             )
 
             call_kwargs = mock_cls.call_args.kwargs
-            # Router URL replaces the original base_url
-            assert call_kwargs["openai_api_base"] == "http://router:8801/v1"
-            # Router model replaces custom_model_name (no explicit override)
-            assert call_kwargs["model"] == "MoM"
+            # Agent's base_url is preserved (NOT overridden by router)
+            assert call_kwargs["openai_api_base"] == "http://vllm-ministral:8000/v1"
+            # Agent's custom_model_name is preserved (NOT overridden by MoM)
+            assert call_kwargs["model"] == "ministral-3b-instruct"
 
-    def test_router_model_wins_over_custom_model_name(
+    def test_router_respects_agent_pinned_custom_model_name(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Router model beats custom_model_name when no explicit override is set.
+        """Agent-pinned custom_model_name is respected — router does NOT override it with MoM.
 
-        The router sets ``model_name_override`` internally, which has higher
-        precedence than ``custom_model_name`` in the resolution chain:
-        override > custom_model_name > model_name.
+        When an agent has ``custom_model_name`` set at creation time, the router
+        routes the call through the proxy but uses the pinned model as-is
+        (passthrough, no reclassification).
         """
         from graphs.llm import create_chat_model
 
@@ -1207,18 +1207,20 @@ class TestCombinedOverrideAndMetadata:
             )
 
             call_kwargs = mock_cls.call_args.kwargs
-            # Router model (MoM) wins over custom_model_name
-            assert call_kwargs["model"] == "MoM"
+            # Agent's pinned model is preserved (NOT overridden by MoM)
+            assert call_kwargs["model"] == "ministral-3b-instruct"
+            # Call still goes through the router URL
+            assert call_kwargs["openai_api_base"] == "http://router:8801/v1"
 
-    def test_full_integration_router_with_all_params(
+    def test_full_integration_agent_with_custom_base_url_skips_router(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Full integration: router + existing base_url + custom_model_name + metadata + API key.
+        """Full integration: agent with custom base_url skips router entirely.
 
         Verifies correct behaviour when ALL parameters interact simultaneously:
-        - Router overrides caller base_url
-        - Router model overrides custom_model_name (no explicit override)
-        - Routing metadata headers are forwarded
+        - Agent's base_url is preserved (router does NOT hijack)
+        - Agent's custom_model_name is preserved (NOT overridden by MoM)
+        - Routing metadata headers are still forwarded (useful for logging)
         - API key from configurable is used (custom endpoint path)
         """
         from graphs.llm import create_chat_model
@@ -1248,18 +1250,62 @@ class TestCombinedOverrideAndMetadata:
             )
 
             call_kwargs = mock_cls.call_args.kwargs
-            # Router URL overrides caller's base_url
-            assert call_kwargs["openai_api_base"] == "http://router:8801/v1"
-            # Router model overrides custom_model_name
-            assert call_kwargs["model"] == "MoM"
+            # Agent's base_url is preserved (router skipped)
+            assert call_kwargs["openai_api_base"] == "http://vllm:8000/v1"
+            # Agent's custom_model_name is preserved (NOT MoM)
+            assert call_kwargs["model"] == "ministral-3b-instruct"
             # API key from configurable flows through
             assert call_kwargs["openai_api_key"] == "sk-secret-key"
             # Temperature and max_tokens preserved
             assert call_kwargs["temperature"] == 0.2
             assert call_kwargs["max_tokens"] == 4096
-            # All metadata headers forwarded
+            # Metadata headers are still forwarded (for logging/tracing)
             assert call_kwargs["default_headers"] == {
                 "x-sr-graph-id": "react-agent",
                 "x-sr-org-id": "org-42",
                 "x-sr-task-type": "extraction",
+            }
+
+    def test_full_integration_router_dynamic_no_pins(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Full integration: no agent-level pins → router uses MoM for dynamic routing.
+
+        When no base_url, custom_model_name, or model_name_override is set,
+        the router takes full control: base_url is set to the router URL and
+        model is set to MoM for dynamic classification.
+        """
+        from graphs.llm import create_chat_model
+
+        monkeypatch.setenv("SEMANTIC_ROUTER_ENABLED", "true")
+        monkeypatch.setenv("SEMANTIC_ROUTER_URL", "http://router:8801/v1")
+        monkeypatch.setenv("SEMANTIC_ROUTER_MODEL", "MoM")
+        monkeypatch.delenv("CUSTOM_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+        mock_model = MagicMock()
+        metadata = {
+            "x-sr-graph-id": "react-agent",
+            "x-sr-org-id": "org-42",
+        }
+
+        with patch("graphs.llm.ChatOpenAI", return_value=mock_model) as mock_cls:
+            create_chat_model(
+                {"configurable": {}},
+                model_name="openai:gpt-4o",
+                temperature=0.2,
+                max_tokens=4096,
+                routing_metadata=metadata,
+            )
+
+            call_kwargs = mock_cls.call_args.kwargs
+            # Router URL is used (no agent base_url to preserve)
+            assert call_kwargs["openai_api_base"] == "http://router:8801/v1"
+            # MoM for dynamic classification (no pins)
+            assert call_kwargs["model"] == "MoM"
+            assert call_kwargs["temperature"] == 0.2
+            assert call_kwargs["max_tokens"] == 4096
+            assert call_kwargs["default_headers"] == {
+                "x-sr-graph-id": "react-agent",
+                "x-sr-org-id": "org-42",
             }
