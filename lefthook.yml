@@ -47,13 +47,12 @@ pre-push:
         fi
     python-test:
       root: apps/python/
+      # diff-cover MUST run after pytest generates fresh coverage.xml,
+      # so both are chained in a single command (not parallel).
       run: >
         uv run pytest -q --cov --cov-report=json --cov-report=xml --cov-report=term:skip-covered
         && uv run coverage-threshold
-
-    python-diff-cover:
-      root: apps/python/
-      run: uv run diff-cover coverage.xml --fail-under=73 --compare-branch=origin/development
+        && uv run diff-cover coverage.xml --fail-under=73 --compare-branch=origin/development
 
     ts-test:
       root: apps/ts/
