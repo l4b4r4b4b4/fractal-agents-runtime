@@ -137,7 +137,7 @@ def register_hardware_key_routes(app: Robyn) -> None:
             return error_response(authentication_error.message, 401)
 
         query_params = request.query_params
-        raw_include_inactive = query_params.get("include_inactive")
+        raw_include_inactive = query_params.get("include_inactive", None)
         if raw_include_inactive is not None:
             include_inactive = raw_include_inactive.lower() in ("true", "1", "yes")
         else:
@@ -321,8 +321,8 @@ def register_hardware_key_routes(app: Robyn) -> None:
             return error_response(authentication_error.message, 401)
 
         query_params = request.query_params
-        asset_type = query_params.get("asset_type")
-        asset_id = query_params.get("asset_id")
+        asset_type = query_params.get("asset_type", None)
+        asset_id = query_params.get("asset_id", None)
 
         try:
             async with get_connection() as connection:
@@ -360,9 +360,9 @@ def register_hardware_key_routes(app: Robyn) -> None:
             return error_response(authentication_error.message, 401)
 
         query_params = request.query_params
-        asset_type = query_params.get("asset_type")
-        asset_id = query_params.get("asset_id")
-        raw_action = query_params.get("action")
+        asset_type = query_params.get("asset_type", None)
+        asset_id = query_params.get("asset_id", None)
+        raw_action = query_params.get("action", None)
         if raw_action is not None:
             action = raw_action
         else:
@@ -483,8 +483,8 @@ def register_hardware_key_routes(app: Robyn) -> None:
             return error_response(authentication_error.message, 401)
 
         query_params = request.query_params
-        asset_type = query_params.get("asset_type")
-        asset_id = query_params.get("asset_id")
+        asset_type = query_params.get("asset_type", None)
+        asset_id = query_params.get("asset_id", None)
 
         if not asset_type:
             return error_response("asset_type query parameter is required", 422)
@@ -621,7 +621,7 @@ def register_hardware_key_routes(app: Robyn) -> None:
             return error_response(authentication_error.message, 401)
 
         query_params = request.query_params
-        asset_type = query_params.get("asset_type")
+        asset_type = query_params.get("asset_type", None)
 
         try:
             async with get_connection() as connection:
@@ -671,17 +671,17 @@ def register_hardware_key_routes(app: Robyn) -> None:
             return error_response("asset_id is required", 422)
 
         query_params = request.query_params
-        raw_require_key_check = query_params.get("require_key_check")
+        raw_require_key_check = query_params.get("require_key_check", None)
         if raw_require_key_check is not None:
             require_key_check = raw_require_key_check.lower() in ("true", "1", "yes")
         else:
             require_key_check = True
-        raw_action = query_params.get("action")
+        raw_action = query_params.get("action", None)
         if raw_action is not None:
             action = raw_action
         else:
             action = "decrypt"
-        raw_auto_consume = query_params.get("auto_consume")
+        raw_auto_consume = query_params.get("auto_consume", None)
         if raw_auto_consume is not None:
             auto_consume = raw_auto_consume.lower() in ("true", "1", "yes")
         else:
