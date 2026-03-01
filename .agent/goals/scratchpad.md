@@ -34,7 +34,7 @@
 | 38 | Store API Namespace Fix | 🟢 Complete | High | 2026-02-23 |
 | 42 | Semantic Router Integration — Dynamic Model Routing (Python) | 🟢 Complete | High | 2026-03-02 |
 | 39 | Benchmark Methodology — Long-Duration Runs & Statistical Rigor | ⚪ Not Started | Medium | 2026-02-23 |
-| 40 | Hardware Key Encryption Pipeline — E2E Asset Encryption with Hardware Keys | 🟡 In Progress | High | 2026-02-25 |
+| 40 | Hardware Key Encryption Pipeline — E2E Asset Encryption with Hardware Keys | 🟡 In Progress | High | 2026-03-02 |
 | 41 | FastMCP Supabase User-Data Tool — JWT-Scoped DB & File Storage Access | ⚪ Not Started | High | 2026-02-23 |
 
 ---
