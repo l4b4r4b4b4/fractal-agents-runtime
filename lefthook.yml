@@ -31,9 +31,13 @@ pre-commit:
       stage_fixed: true
 
 pre-push:
-  parallel: true
+  # Sequential, fail-fast: cheap checks run first, expensive tests last.
+  # If lint fails, tests never run — saves ~40s of wasted compute.
+  piped: true
   commands:
+    # ── Stage 1: Instant checks (~0s) ──────────────────────────────
     no-merge-commits:
+      priority: 1
       run: |
         # Reject merge commits — enforce rebase workflow for linear history.
         # Checks all commits being pushed that aren't on the remote yet.
@@ -45,7 +49,34 @@ pre-push:
           echo "Fix: git rebase --onto <target> <merge-base> <branch>"
           exit 1
         fi
+
+    # ── Stage 2: Lint & format (~2s) ──────────────────────────────
+    python-lint-check:
+      priority: 2
+      root: apps/python/
+      run: uv run ruff check . && uv run ruff format --check .
+
+    # ── Stage 3: Type checking (~3s) ──────────────────────────────
+    ts-type-check:
+      priority: 3
+      root: apps/ts/
+      run: bunx tsc --noEmit
+
+    # ── Stage 4: OpenAPI spec validation (~1s) ────────────────────
+    python-openapi-validate:
+      priority: 4
+      root: apps/python/
+      run: uv run python scripts/generate_openapi.py --validate
+
+    ts-openapi-validate:
+      priority: 4
+      root: apps/ts/
+      run: bun run scripts/generate-openapi.ts --validate
+
+    # ── Stage 5: Tests (~20s each) ────────────────────────────────
+    # Only reached if all fast checks above pass.
     python-test:
+      priority: 5
       root: apps/python/
       # diff-cover MUST run after pytest generates fresh coverage.xml,
       # so both are chained in a single command (not parallel).
@@ -55,21 +86,6 @@ pre-push:
         && uv run diff-cover coverage.xml --fail-under=73 --compare-branch=origin/development
 
     ts-test:
+      priority: 6
       root: apps/ts/
       run: bun test
-
-    python-lint-check:
-      root: apps/python/
-      run: uv run ruff check . && uv run ruff format --check .
-
-    ts-type-check:
-      root: apps/ts/
-      run: bunx tsc --noEmit
-
-    python-openapi-validate:
-      root: apps/python/
-      run: uv run python scripts/generate_openapi.py --validate
-
-    ts-openapi-validate:
-      root: apps/ts/
-      run: bun run scripts/generate-openapi.ts --validate

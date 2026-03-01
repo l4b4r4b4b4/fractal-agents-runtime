@@ -77,10 +77,11 @@ mock.module("../src/lib/db", () => ({
   getDb: () => MOCK_SQL,
   closeDb: async () => {},
   isUniqueViolation: (error: unknown) => {
-    if (error != null && typeof error === "object" && "code" in error) {
-      return (error as Record<string, unknown>).code === "23505";
+    if (error == null || typeof error !== "object") {
+      return false;
     }
-    return false;
+    const record = error as Record<string, unknown>;
+    return record.errno === "23505" || record.code === "23505";
   },
 }));
 
