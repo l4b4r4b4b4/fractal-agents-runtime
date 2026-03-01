@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from graphs.configuration import MCPConfig, RagConfig
 from graphs.llm import create_chat_model
+from graphs.react_agent.rag import create_archive_search_tool, extract_rag_config
 from graphs.react_agent.utils.mcp_interceptors import (
     handle_interaction_required,
 )
@@ -211,6 +212,15 @@ class GraphConfigPydantic(BaseModel):
             }
         },
     )
+    # ChromaDB archive RAG — new config shape from platform (coexists with
+    # the LangConnect ``rag`` field above).
+    rag_config: dict | None = Field(
+        default=None,
+        description=(
+            "ChromaDB archive RAG configuration.  Passed as a raw dict "
+            "from config.configurable and validated via ChromaRagConfig."
+        ),
+    )
     # Custom endpoint configuration
     base_url: str | None = Field(
         default=None,
@@ -280,6 +290,18 @@ async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
                 cfg.rag.rag_url, collection, supabase_token
             )
             tools.append(rag_tool)
+
+    # ChromaDB archive RAG — dynamically register search_archives tool
+    # when the platform provides rag_config with archive definitions.
+    chroma_rag_config = extract_rag_config(config)
+    if chroma_rag_config and chroma_rag_config.archives:
+        archive_tool = create_archive_search_tool(chroma_rag_config)
+        if archive_tool:
+            tools.append(archive_tool)
+            logger.info(
+                "ChromaDB RAG tool registered: archives=%d",
+                len(chroma_rag_config.archives),
+            )
 
     if cfg.mcp_config and cfg.mcp_config.servers:
         mcp_server_entries: dict[str, dict] = {}

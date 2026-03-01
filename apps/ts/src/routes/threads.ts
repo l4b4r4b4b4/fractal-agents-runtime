@@ -9,6 +9,7 @@
  *   DELETE /threads/:thread_id           — Delete a thread
  *   GET    /threads/:thread_id/state     — Get current thread state
  *   GET    /threads/:thread_id/history   — Get state history (query: limit, before)
+ *   POST   /threads/:thread_id/history   — Get state history (body: limit, before)
  *   POST   /threads/search               — Search/list threads
  *   POST   /threads/count                — Count threads
  *
@@ -21,7 +22,11 @@
  *   - History returns 200 with a JSON array of ThreadState objects.
  *   - Errors use `{"detail": "..."}` shape (ErrorResponse).
  *
- * No authentication in v0.0.1 — `owner_id` deferred to Goal 25.
+ * Owner isolation (v0.0.2):
+ *   - All operations pass `ownerId` from the authenticated user context.
+ *   - When auth is disabled, `ownerId` is `undefined` — no filtering.
+ *   - On create, `metadata.owner` is set to the user's identity.
+ *   - On update/delete, only the actual owner can mutate.
  *
  * Reference: apps/python/src/server/routes/threads.py
  */
@@ -41,6 +46,7 @@ import {
   requireBody,
 } from "./helpers";
 import { getStorage } from "../storage/index";
+import { getUserIdentity } from "../middleware/context";
 
 // ---------------------------------------------------------------------------
 // Route registration
@@ -64,6 +70,7 @@ export function registerThreadRoutes(router: Router): void {
   router.delete("/threads/:thread_id", handleDeleteThread);
   router.get("/threads/:thread_id/state", handleGetThreadState);
   router.get("/threads/:thread_id/history", handleGetThreadHistory);
+  router.post("/threads/:thread_id/history", handlePostThreadHistory);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,11 +108,12 @@ async function handleCreateThread(request: Request): Promise<Response> {
   }
 
   const storage = getStorage();
+  const ownerId = getUserIdentity();
 
   // Pre-check for duplicates if thread_id is explicitly provided
   // (matching Python route-level logic)
   if (body.thread_id) {
-    const existing = await storage.threads.get(body.thread_id);
+    const existing = await storage.threads.get(body.thread_id, ownerId);
     if (existing) {
       const strategy = body.if_exists ?? "raise";
       if (strategy === "do_nothing") {
@@ -119,7 +127,7 @@ async function handleCreateThread(request: Request): Promise<Response> {
   }
 
   try {
-    const thread = await storage.threads.create(body);
+    const thread = await storage.threads.create(body, ownerId);
     return jsonResponse(thread);
   } catch (error: unknown) {
     const message =
@@ -147,7 +155,8 @@ async function handleGetThread(
   }
 
   const storage = getStorage();
-  const thread = await storage.threads.get(threadId);
+  const ownerId = getUserIdentity();
+  const thread = await storage.threads.get(threadId, ownerId);
 
   if (thread === null) {
     return errorResponse(`Thread ${threadId} not found`, 404);
@@ -179,14 +188,15 @@ async function handlePatchThread(
   if (errorResp) return errorResp;
 
   const storage = getStorage();
+  const ownerId = getUserIdentity();
 
   // Check existence first (matching Python which returns 404 before attempting update)
-  const existing = await storage.threads.get(threadId);
+  const existing = await storage.threads.get(threadId, ownerId);
   if (existing === null) {
     return errorResponse(`Thread ${threadId} not found`, 404);
   }
 
-  const updated = await storage.threads.update(threadId, body);
+  const updated = await storage.threads.update(threadId, body, ownerId);
 
   if (updated === null) {
     return errorResponse(`Thread ${threadId} not found`, 404);
@@ -217,7 +227,8 @@ async function handleDeleteThread(
   }
 
   const storage = getStorage();
-  const deleted = await storage.threads.delete(threadId);
+  const ownerId = getUserIdentity();
+  const deleted = await storage.threads.delete(threadId, ownerId);
 
   if (!deleted) {
     return errorResponse(`Thread ${threadId} not found`, 404);
@@ -249,7 +260,8 @@ async function handleGetThreadState(
   }
 
   const storage = getStorage();
-  const state = await storage.threads.getState(threadId);
+  const ownerId = getUserIdentity();
+  const state = await storage.threads.getState(threadId, ownerId);
 
   if (state === null) {
     return errorResponse(`Thread ${threadId} not found`, 404);
@@ -296,7 +308,66 @@ async function handleGetThreadHistory(
   const before = query.get("before") ?? undefined;
 
   const storage = getStorage();
-  const history = await storage.threads.getHistory(threadId, limit, before);
+  const ownerId = getUserIdentity();
+  const history = await storage.threads.getHistory(threadId, limit, before, ownerId);
+
+  if (history === null) {
+    return errorResponse(`Thread ${threadId} not found`, 404);
+  }
+
+  return jsonResponse(history);
+}
+
+// ---------------------------------------------------------------------------
+// POST /threads/:thread_id/history — Get History (POST variant)
+// ---------------------------------------------------------------------------
+
+/**
+ * Get state history for a thread (POST variant).
+ *
+ * The `@langchain/langgraph-sdk` client (and the `useStream` hook with
+ * `fetchStateHistory: true`) sends POST requests to this endpoint with
+ * an optional JSON body for filtering. The official LangGraph Server API
+ * supports POST here — our GET-only registration caused 404s for the SDK.
+ *
+ * Request body (all fields optional):
+ *   - limit (number): Maximum number of states to return (default 10, clamped 1–1000)
+ *   - before (string): Return states before this checkpoint ID
+ *   - metadata (object): Filter by metadata (reserved for future use)
+ *   - checkpoint (object): Filter by specific checkpoint (reserved)
+ *
+ * Response: ThreadState[] (200) or error (404)
+ */
+async function handlePostThreadHistory(
+  request: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  const threadId = params.thread_id;
+  if (!threadId) {
+    return validationError("thread_id is required");
+  }
+
+  // Parse filter parameters from JSON body
+  let limit = 10;
+  let before: string | undefined;
+
+  const body = await parseBody<Record<string, unknown>>(request);
+  if (body) {
+    const limitParam = body.limit;
+    if (limitParam !== undefined && limitParam !== null) {
+      const parsed = typeof limitParam === "number" ? limitParam : parseInt(String(limitParam), 10);
+      if (!isNaN(parsed)) {
+        limit = Math.max(1, Math.min(parsed, 1000));
+      }
+    }
+    if (typeof body.before === "string") {
+      before = body.before;
+    }
+  }
+
+  const storage = getStorage();
+  const ownerId = getUserIdentity();
+  const history = await storage.threads.getHistory(threadId, limit, before, ownerId);
 
   if (history === null) {
     return errorResponse(`Thread ${threadId} not found`, 404);
@@ -324,7 +395,8 @@ async function handleSearchThreads(request: Request): Promise<Response> {
   const searchRequest: ThreadSearchRequest = body ?? {};
 
   const storage = getStorage();
-  const threads = await storage.threads.search(searchRequest);
+  const ownerId = getUserIdentity();
+  const threads = await storage.threads.search(searchRequest, ownerId);
 
   return jsonResponse(threads);
 }
@@ -347,7 +419,8 @@ async function handleCountThreads(request: Request): Promise<Response> {
   const countRequest: ThreadCountRequest = body ?? {};
 
   const storage = getStorage();
-  const count = await storage.threads.count(countRequest);
+  const ownerId = getUserIdentity();
+  const count = await storage.threads.count(countRequest, ownerId);
 
   // Bare integer response (matches Python / LangGraph API)
   return jsonResponse(count);

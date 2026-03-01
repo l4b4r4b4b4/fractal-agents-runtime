@@ -7,6 +7,7 @@
  *   - Error boundary (uncaught handler exceptions → 500 JSON error)
  *   - Query parameter parsing (passed to handlers)
  *   - Trailing-slash normalization
+ *   - Prometheus metrics instrumentation (request counts, durations, errors)
  *
  * Design: Routes are stored as segment arrays. On each request, the URL
  * path is split into segments and matched against registered routes.
@@ -19,6 +20,25 @@
  */
 
 import { errorResponse, notFound, methodNotAllowed } from "./routes/helpers";
+import {
+  incrementRequestCount,
+  incrementRequestError,
+  recordRequestDuration,
+} from "./infra/metrics";
+
+// ---------------------------------------------------------------------------
+// Middleware type
+// ---------------------------------------------------------------------------
+
+/**
+ * A middleware function that runs before route dispatch.
+ *
+ * Returning a `Response` short-circuits the request (e.g., 401 from auth).
+ * Returning `null` means "continue to the next middleware or route handler".
+ */
+export type Middleware = (
+  request: Request,
+) => Response | Promise<Response | null> | null;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -80,6 +100,28 @@ interface MatchResult {
  */
 export class Router {
   private routes: Route[] = [];
+  private middlewares: Middleware[] = [];
+
+  // -------------------------------------------------------------------------
+  // Middleware registration
+  // -------------------------------------------------------------------------
+
+  /**
+   * Register a middleware function that runs before route dispatch.
+   *
+   * Middlewares run in registration order. If any middleware returns a
+   * Response, subsequent middlewares and the route handler are skipped.
+   *
+   * @param middleware - Function to run on every request.
+   *
+   * @example
+   *   router.use(authMiddleware);
+   *   router.use(loggingMiddleware);
+   */
+  use(middleware: Middleware): this {
+    this.middlewares.push(middleware);
+    return this;
+  }
 
   // -------------------------------------------------------------------------
   // Route registration — convenience methods
@@ -144,21 +186,48 @@ export class Router {
    * @returns A Response (possibly async).
    */
   async handle(request: Request): Promise<Response> {
+    // Run middlewares before route dispatch.
+    // If any middleware returns a Response, short-circuit immediately.
+    for (const middleware of this.middlewares) {
+      try {
+        const result = middleware(request);
+        const response = result instanceof Promise ? await result : result;
+        if (response !== null) {
+          return response;
+        }
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "Middleware error";
+        console.error("[router] Middleware error:", error);
+        return errorResponse(message, 500);
+      }
+    }
+
     const url = new URL(request.url);
     const pathSegments = splitPath(url.pathname);
     const method = request.method.toUpperCase() as HttpMethod;
     const query = url.searchParams;
+    const startTime = performance.now();
 
     const match = this.matchRoute(method, pathSegments);
 
     if (match.route) {
+      const routePattern = match.route.pattern;
       // Error boundary: catch any exception thrown by the handler and
       // return a clean 500 JSON error instead of crashing the server.
       try {
         const response = match.route.handler(request, match.params, query);
         // Support both sync and async handlers.
-        return response instanceof Promise ? await response : response;
+        const resolvedResponse = response instanceof Promise ? await response : response;
+        const durationSeconds = (performance.now() - startTime) / 1000;
+        incrementRequestCount(routePattern, method, resolvedResponse.status);
+        recordRequestDuration(routePattern, durationSeconds);
+        return resolvedResponse;
       } catch (error: unknown) {
+        const durationSeconds = (performance.now() - startTime) / 1000;
+        incrementRequestCount(routePattern, method, 500);
+        incrementRequestError("handler_error");
+        recordRequestDuration(routePattern, durationSeconds);
         const message =
           error instanceof Error ? error.message : "Internal server error";
         console.error(
@@ -170,9 +239,11 @@ export class Router {
     }
 
     if (match.methodNotAllowed) {
+      incrementRequestCount(url.pathname, method, 405);
       return methodNotAllowed();
     }
 
+    incrementRequestCount(url.pathname, method, 404);
     return notFound();
   }
 

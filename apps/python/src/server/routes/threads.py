@@ -7,6 +7,7 @@ Implements LangGraph-compatible endpoints:
 - DELETE /threads/{thread_id} — Delete a thread
 - GET /threads/{thread_id}/state — Get thread state
 - GET /threads/{thread_id}/history — Get thread history
+- POST /threads/{thread_id}/history — Get thread history (body: limit, before)
 - POST /threads/search — Search/list threads (Tier 2)
 - POST /threads/count — Count threads (Tier 2)
 """
@@ -235,6 +236,61 @@ def register_thread_routes(app: Robyn) -> None:
                 except ValueError:
                     pass
             before = request.query_params.get("before", None)
+
+        storage = get_storage()
+        history = await storage.threads.get_history(
+            thread_id, user.identity, limit, before
+        )
+
+        if history is None:
+            return error_response(f"Thread {thread_id} not found", 404)
+
+        return json_response(history)
+
+    @app.post("/threads/:thread_id/history")
+    async def post_thread_history(request: Request) -> Response:
+        """Get state history for a thread (POST variant).
+
+        The ``@langchain/langgraph-sdk`` client (and the ``useStream`` hook
+        with ``fetchStateHistory: true``) sends POST requests to this
+        endpoint with an optional JSON body for filtering.  The official
+        LangGraph Server API supports POST here — our GET-only registration
+        caused 404s for the SDK.
+
+        Request body (all fields optional):
+            - limit (int): Maximum number of states to return (default: 10)
+            - before (str): Return states before this checkpoint ID
+            - metadata (dict): Filter by metadata (reserved for future use)
+            - checkpoint (dict): Filter by specific checkpoint (reserved)
+
+        Response: list[ThreadState] (200) or error (4xx)
+        """
+        try:
+            user = require_user()
+        except AuthenticationError as e:
+            return error_response(e.message, 401)
+
+        thread_id = request.path_params.get("thread_id")
+        if not thread_id:
+            return error_response("thread_id is required", 422)
+
+        # Parse filter parameters from JSON body
+        limit = 10
+        before = None
+        try:
+            body = parse_json_body(request)
+        except json.JSONDecodeError:
+            body = {}
+
+        if body:
+            limit_param = body.get("limit", None)
+            if limit_param is not None:
+                try:
+                    limit = int(limit_param)
+                    limit = max(1, min(limit, 1000))  # Clamp to 1-1000
+                except (ValueError, TypeError):
+                    pass
+            before = body.get("before", None)
 
         storage = get_storage()
         history = await storage.threads.get_history(

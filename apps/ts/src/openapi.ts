@@ -1,22 +1,25 @@
 /**
  * OpenAPI 3.1 specification for the Fractal Agents Runtime — TypeScript/Bun.
  *
- * This spec covers all v0.0.1 endpoints (25 paths, 31 operations) and matches
+ * This spec covers all v0.0.2 endpoints (28 paths, 36 operations) and matches
  * the Python runtime's OpenAPI spec (`apps/python/openapi-spec.json`)
  * field-for-field for all shared paths, schemas, and tags.
  *
- * Tags implemented in v0.0.1:
+ * Tags implemented in v0.0.2:
  *   - System (5 ops): /, /health, /ok, /info, /openapi.json
  *   - Assistants (6 ops): CRUD + search + count
  *   - Threads (8 ops): CRUD + search + count + state + history
  *   - Thread Runs (9 ops): CRUD + stream + wait + cancel + join + reconnect
  *   - Stateless Runs (3 ops): create + stream + wait
+ *   - Store (5 ops): put + get + delete + search + list namespaces
  *
- * Tags NOT in v0.0.1 (deferred to later goals):
- *   - Store, Crons, MCP, A2A, Metrics
+ * Tags NOT in v0.0.2 (deferred to later goals):
+ *   - Crons, MCP, A2A, Metrics
  *
  * Reference: apps/python/openapi-spec.json (canonical spec)
  */
+
+import { VERSION } from "./config";
 
 // ---------------------------------------------------------------------------
 // Spec type (kept simple — no full OpenAPI TS type library needed)
@@ -132,11 +135,11 @@ export const OPENAPI_SPEC: OpenAPISpec = {
   openapi: "3.1.0",
   info: {
     title: "Fractal Agents Runtime — TypeScript",
-    version: "0.0.1",
+    version: VERSION,
     description:
       "Free, self-hostable LangGraph-compatible agent runtime. " +
-      "TypeScript/Bun implementation — v0.0.1 with assistants, threads, " +
-      "stateful/stateless runs, and SSE streaming.",
+      `TypeScript/Bun implementation — v${VERSION} with auth, persistence, ` +
+      "store API, multi-provider LLM, and SSE streaming.",
     license: {
       name: "MIT",
       url: "https://opensource.org/licenses/MIT",
@@ -164,6 +167,11 @@ export const OPENAPI_SPEC: OpenAPISpec = {
         "A run is an invocation of a graph / assistant, with no state or memory persistence.",
     },
     {
+      name: "Store",
+      description:
+        "Cross-thread key-value storage for long-term memory. Items are scoped by namespace, key, and authenticated user.",
+    },
+    {
       name: "System",
       description:
         "System endpoints for health checks, metrics, and server information.",
@@ -171,7 +179,7 @@ export const OPENAPI_SPEC: OpenAPISpec = {
   ],
 
   // =========================================================================
-  // PATHS — 25 paths, 31 operations
+  // PATHS — 28 paths, 36 operations
   // =========================================================================
   paths: {
     // ── Assistants ────────────────────────────────────────────────────────
@@ -621,6 +629,120 @@ export const OPENAPI_SPEC: OpenAPISpec = {
       },
     },
 
+    // ── Store ─────────────────────────────────────────────────────────────
+
+    "/store/items": {
+      put: {
+        tags: ["Store"],
+        summary: "Put Store Item",
+        description:
+          "Store or update (upsert) an item by namespace and key. " +
+          "If an item with the same namespace and key already exists for " +
+          "the authenticated user, its value and updated_at are overwritten.",
+        operationId: "put_store_item",
+        requestBody: jsonRequestBody("#/components/schemas/StorePutRequest"),
+        responses: {
+          "200": jsonResponse200("Stored item", {
+            $ref: "#/components/schemas/StoreItem",
+          }),
+          ...errorResponses(),
+        },
+      },
+      get: {
+        tags: ["Store"],
+        summary: "Get Store Item",
+        description:
+          "Retrieve a store item by namespace and key (provided as query parameters).",
+        operationId: "get_store_item",
+        parameters: [
+          {
+            name: "namespace",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "Namespace of the item.",
+          },
+          {
+            name: "key",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "Key of the item within the namespace.",
+          },
+        ],
+        responses: {
+          "200": jsonResponse200("Stored item", {
+            $ref: "#/components/schemas/StoreItem",
+          }),
+          ...errorResponses(),
+        },
+      },
+      delete: {
+        tags: ["Store"],
+        summary: "Delete Store Item",
+        description:
+          "Delete a store item by namespace and key (provided as query parameters).",
+        operationId: "delete_store_item",
+        parameters: [
+          {
+            name: "namespace",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "Namespace of the item.",
+          },
+          {
+            name: "key",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "Key of the item within the namespace.",
+          },
+        ],
+        responses: {
+          "200": jsonResponse200("Item deleted", { type: "object" }),
+          ...errorResponses(),
+        },
+      },
+    },
+
+    "/store/items/search": {
+      post: {
+        tags: ["Store"],
+        summary: "Search Store Items",
+        description:
+          "Search items within a namespace, optionally filtering by key prefix. " +
+          "Results are sorted by key and paginated.",
+        operationId: "search_store_items",
+        requestBody: jsonRequestBody(
+          "#/components/schemas/StoreSearchRequest",
+        ),
+        responses: {
+          "200": jsonResponse200("Matching items", {
+            type: "array",
+            items: { $ref: "#/components/schemas/StoreItem" },
+          }),
+          ...errorResponses(),
+        },
+      },
+    },
+
+    "/store/namespaces": {
+      get: {
+        tags: ["Store"],
+        summary: "List Store Namespaces",
+        description:
+          "List all namespace strings that contain at least one item for the authenticated user.",
+        operationId: "list_store_namespaces",
+        responses: {
+          "200": jsonResponse200("Namespace list", {
+            type: "array",
+            items: { type: "string" },
+          }),
+        },
+      },
+    },
+
     // ── System ────────────────────────────────────────────────────────────
 
     "/": {
@@ -712,6 +834,7 @@ export const OPENAPI_SPEC: OpenAPISpec = {
                 properties: {
                   supabase_configured: { type: "boolean" },
                   llm_configured: { type: "boolean" },
+                  database_configured: { type: "boolean" },
                 },
               },
               tiers: {
@@ -745,7 +868,7 @@ export const OPENAPI_SPEC: OpenAPISpec = {
   },
 
   // =========================================================================
-  // COMPONENT SCHEMAS — 18 schemas matching Python field-for-field
+  // COMPONENT SCHEMAS — 21 schemas matching Python field-for-field
   // =========================================================================
   components: {
     schemas: {
@@ -1598,6 +1721,113 @@ export const OPENAPI_SPEC: OpenAPISpec = {
         },
         title: "RunCreateStateless",
         description: "Payload for creating a stateless run.",
+      },
+
+      // ── Store ─────────────────────────────────────────────────────────
+
+      StoreItem: {
+        type: "object",
+        required: ["namespace", "key", "value", "metadata", "created_at", "updated_at"],
+        properties: {
+          namespace: {
+            type: "string",
+            title: "Namespace",
+            description: "Namespace string for logical grouping.",
+          },
+          key: {
+            type: "string",
+            title: "Key",
+            description: "Unique key within the namespace.",
+          },
+          value: {
+            type: "object",
+            title: "Value",
+            description: "Arbitrary JSON-serializable value.",
+          },
+          metadata: {
+            type: "object",
+            title: "Metadata",
+            description: "Optional metadata associated with the item.",
+          },
+          created_at: {
+            type: "string",
+            format: "date-time",
+            title: "Created At",
+            description: "ISO 8601 creation timestamp.",
+          },
+          updated_at: {
+            type: "string",
+            format: "date-time",
+            title: "Updated At",
+            description: "ISO 8601 last-update timestamp.",
+          },
+        },
+        title: "StoreItem",
+        description: "A stored item in the cross-thread key-value store.",
+      },
+
+      StorePutRequest: {
+        type: "object",
+        required: ["namespace", "key", "value"],
+        properties: {
+          namespace: {
+            type: "string",
+            title: "Namespace",
+            description: "Namespace for the item.",
+          },
+          key: {
+            type: "string",
+            title: "Key",
+            description: "Key within the namespace.",
+          },
+          value: {
+            type: "object",
+            title: "Value",
+            description: "Value to store (JSON-serializable object).",
+          },
+          metadata: {
+            type: "object",
+            title: "Metadata",
+            description: "Optional metadata to associate with the item.",
+          },
+        },
+        title: "StorePutRequest",
+        description: "Payload for creating or updating a store item.",
+      },
+
+      StoreSearchRequest: {
+        type: "object",
+        required: ["namespace"],
+        properties: {
+          namespace: {
+            type: "string",
+            title: "Namespace",
+            description: "Namespace to search within (required).",
+          },
+          prefix: {
+            type: "string",
+            title: "Prefix",
+            description:
+              'Optional key prefix filter (e.g., "user-" matches "user-123").',
+          },
+          limit: {
+            type: "integer",
+            title: "Limit",
+            description: "Maximum number of results to return.",
+            default: 10,
+            minimum: 1,
+            maximum: 100,
+          },
+          offset: {
+            type: "integer",
+            title: "Offset",
+            description: "Number of results to skip for pagination.",
+            default: 0,
+            minimum: 0,
+          },
+        },
+        title: "StoreSearchRequest",
+        description: "Payload for searching store items within a namespace.",
       },
 
       // ── System ────────────────────────────────────────────────────────

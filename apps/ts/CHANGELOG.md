@@ -1,10 +1,323 @@
 # Changelog
 
-All notable changes to the **Fractal Agents Runtime — TypeScript/Bun** will be
-documented in this file.
+All notable changes to the **Fractal Agents Runtime** (both Python and
+TypeScript runtimes) will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] — 2026-02-20
+
+First minor release. Full feature parity between Python and TypeScript runtimes.
+Adds ChromaDB archive RAG to both runtimes, implements Python `/runs/wait`
+non-streaming endpoints, fixes store namespace handling, upgrades TS Postgres
+driver to Bun.sql, adds graph caching and local JWT verification, and resolves
+all TypeScript type errors.
+
+**Breaking change:** Version jump from 0.0.3 → 0.1.0 reflects accumulated
+feature breadth (RAG, A2A, MCP, multi-provider LLM, persistence, auth, metrics,
+research agent) and confirmed feature parity across both runtimes.
+
+### Added
+
+#### ChromaDB Archive RAG — TypeScript (94 tests)
+- `src/graphs/react-agent/utils/chromadb-rag.ts` — Config types, TEI embedding
+  client, ChromaDB v2 HTTP client, German result formatting, tool factory
+- Direct HTTP via native `fetch()` — no `chromadb` npm dependency
+- ChromaDB v2 REST API: GET collection by name → POST query by UUID
+- TEI `/v1/embeddings` for query vectorisation (OpenAI-compatible)
+- Cross-archive search with distance-based ranking
+- Graceful degradation: unreachable archives silently skipped
+- Coexists with LangConnect RAG (different config keys: `rag` vs `rag_config`)
+- `rag_config` field added to `GraphConfigValues` + `parseGraphConfig()`
+- Wired into `agent.ts` alongside existing LangConnect RAG block
+- 94 unit tests covering config extraction, embedding, collection lookup,
+  query, formatting, archive init, tool creation, and env var resolution
+
+#### ChromaDB Archive RAG — Python
+- `src/graphs/react_agent/rag/` package — config, embeddings, retriever modules
+- `chromadb-client` (HTTP-only) for ChromaDB v2 collection access
+- TEI embedding via `httpx` to `/v1/embeddings` endpoint
+- `search_archives` structured tool with cross-archive distance ranking
+- German-formatted results identical to TypeScript output
+- Docker Compose services for ChromaDB + TEI added
+- Seed script for test data population
+
+#### Python `/runs/wait` Non-Streaming Endpoints
+- `execute_run_wait()` function in `streams.py` — mirrors streaming pipeline
+  but uses `agent.ainvoke()` and returns dict
+- Shared `_parse_input_messages()` helper extracted for DRYness
+- `POST /threads/{id}/runs/wait` — stateful non-streaming run
+- `POST /runs/wait` — stateless non-streaming run (ephemeral thread)
+- `POST /runs` — background run (returns immediately, runs async)
+- All endpoints E2E verified (stateful + stateless + background)
+
+#### TypeScript Performance & Infrastructure
+- `Bun.sql` native Postgres driver replacing `postgres.js` and `pg` — zero-copy
+  binary protocol, ~2x faster for checkpoint operations
+- Graph cache with `Map<string, CompiledGraph>` — avoids re-creating agent
+  graphs on every request
+- Local JWT verification via `crypto.subtle` — eliminates Supabase round-trip
+  for token validation
+- Performance instrumentation logging for graph creation and model init
+
+### Changed
+- `configuration.ts` — `GraphConfigValues` now has 10 fields (added `rag_config`)
+- `agent.ts` — ChromaDB RAG block added after LangConnect RAG block
+- Existing config tests updated for 9→10 field count
+- Python `pyproject.toml` version: 0.0.2 → 0.0.3
+- TypeScript `package.json` version: 0.0.3 → 0.1.0
+
+### Fixed
+- **Python store namespace** — GET/DELETE 404 on valid keys due to namespace
+  normalisation mismatch; aligned with OpenAPI spec
+- **Python agent_sync SQL** — Aligned with DocProc schema, pass `name` field
+  to assistant creation
+- **TypeScript type errors** — Resolved all 24 TypeScript strict-mode errors
+  for clean CI (`tsc --noEmit`)
+- **JSONB storage** — Pass raw objects (not `JSON.stringify`) for Postgres
+  JSONB columns in TS runtime
+- **checkpoint_ns** — Removed from configurable dict to fix LangGraph
+  subgraph namespace conflict
+
+### Technical Details
+- **Python tests:** 1261 passed, 74% coverage (73% floor enforced)
+- **TypeScript tests:** 2124 passed, 3971 assertions across 31 files
+- **New TS test file:** `tests/chromadb-rag.test.ts` (94 tests)
+- **Pre-commit hooks:** Bun version check, TS OpenAPI spec, TS lint — all green
+- **Zero new dependencies** in TypeScript (ChromaDB RAG uses native `fetch()`)
+- **Python new dependency:** `chromadb-client` (HTTP-only ChromaDB wrapper)
+
+### Environment Variables Added
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DOCPROC_CHROMADB_URL` | `http://chromadb:8000` | Fallback ChromaDB URL |
+| `DOCPROC_TEI_EMBEDDINGS_URL` | `http://tei-embeddings:8080` | TEI embedding endpoint |
+| `RAG_DEFAULT_TOP_K` | `5` | Default results per archive |
+| `RAG_DEFAULT_LAYER` | `chunk` | Default metadata layer filter |
+| `RAG_QUERY_TIMEOUT_SECONDS` | `5` | ChromaDB query timeout |
+| `RAG_EMBED_TIMEOUT_SECONDS` | `10` | TEI embedding timeout |
+
+---
+
+## [0.0.3] — 2026-02-15
+
+Third release. Adds agent sync from Supabase, Prometheus metrics, Langfuse
+prompt templates, RAG tool integration, A2A protocol endpoint, research agent
+graph, multi-agent checkpoint namespace isolation, and benchmark infrastructure.
+Full feature parity with the Python runtime for v0.0.3 scope.
+
+### Added
+
+#### Agent Sync from Supabase (109 tests)
+- `src/agent-sync/types.ts` — `AgentSyncMcpTool`, `AgentSyncData`, `AgentSyncScope`,
+  `AgentSyncResult` types and factory functions.
+- `src/agent-sync/scope.ts` — `parseAgentSyncScope()` with UUID validation for
+  `none`, `all`, `org:<uuid>`, and multi-org scopes.
+- `src/agent-sync/queries.ts` — SQL builders, `coerceUuid`, `toBoolOrNull`,
+  `agentFromRow`, `groupAgentRows`, `fetchActiveAgents`, `fetchActiveAgentById`.
+- `src/agent-sync/config-mapping.ts` — `buildAssistantConfigurable`,
+  `assistantPayloadForAgent`, `extractAssistantConfigurable`, `safeMaskUrl`.
+- `src/agent-sync/sync.ts` — `syncSingleAgent`, `startupAgentSync`,
+  `lazySyncAgent`, `writeBackLanggraphAssistantId`.
+- Startup sync runs after storage init when `AGENT_SYNC_SCOPE` is set.
+- Lazy sync on assistant GET when `supabase_agent_id` is in metadata.
+
+#### Prometheus Metrics (56 tests)
+- `src/infra/metrics.ts` — Full metrics collector: counters (requests, errors),
+  gauges (active streams, agent invocations/errors), duration summary
+  (p50/p90/p99), storage counts callback, Prometheus exposition format, JSON format.
+- `src/routes/metrics.ts` — `GET /metrics` (Prometheus), `GET /metrics/json` (JSON).
+- Automatic request counting and duration recording in `Router.handle()`.
+
+#### Langfuse Prompt Templates (77 tests)
+- `src/infra/prompts.ts` — `getPrompt` (sync), `getPromptAsync`,
+  `registerDefaultPrompt`, `seedDefaultPrompts`, `substituteVariablesText`,
+  `substituteVariablesChat`, `extractOverrides`, variable pattern matching,
+  cache TTL from `LANGFUSE_PROMPT_CACHE_TTL_SECONDS` env var.
+- Supports text and chat prompt types with variable substitution.
+- Graceful fallback to defaults when Langfuse is unavailable.
+
+#### RAG Tool Integration (52 tests)
+- `src/graphs/react-agent/utils/rag-tools.ts` — `sanitizeToolName`,
+  `buildToolDescription`, `formatDocuments`, `parseRagConfig`, `createRagTool`,
+  `createRagTools`.
+- `RagConfig` type and `rag` field added to `GraphConfigValues`.
+- RAG tools created before MCP tools in agent factory; integrated with
+  Supabase auth token for authenticated collection access.
+- XML-like `<all-documents>` formatting matching Python runtime.
+
+#### A2A Protocol Endpoint (111 tests)
+- `src/a2a/schemas.ts` — JSON-RPC 2.0 types, A2A message/task/artifact types,
+  error codes, parse/validation helpers.
+- `src/a2a/handlers.ts` — `A2AMethodHandler` class with `message/send`,
+  `tasks/get`, `tasks/cancel` method routing.
+- `src/routes/a2a.ts` — `POST /a2a/:assistantId` with JSON-RPC validation,
+  SSE stub for `message/stream`.
+- Injectable `A2AStorage` interface for testability.
+
+#### Research Agent Graph (138 tests)
+- `src/graphs/research-agent/configuration.ts` — `ResearchAgentConfig` with
+  all fields matching Python's Pydantic model, snake_case/camelCase parsing.
+- `src/graphs/research-agent/prompts.ts` — All 6 Langfuse prompt names
+  identical to Python: `research-agent-analyzer-phase1/phase2`,
+  `research-agent-worker-phase1/phase2`, `research-agent-aggregator-phase1/phase2`.
+- `src/graphs/research-agent/worker.ts` — `extractWorkerOutput()` with lenient
+  JSON extraction from ReAct agent output (code blocks, bare JSON, plain-text fallback).
+- `src/graphs/research-agent/agent.ts` — Two-phase `StateGraph` with parallel
+  fan-out via `Send`, HIL via `interrupt()` and `Command`, auto-approve flags,
+  prompt resolution with Langfuse lookup + variable substitution + fallback.
+- Registered as `graph_id = "research_agent"` in graph registry.
+- Exact prompt and config parity with Python runtime.
+
+#### Multi-Agent Checkpoint Namespace Isolation
+- `checkpoint_ns = "assistant:<assistant_id>"` in both TS and Python runtimes.
+- Prevents state collisions when multiple agents run in the same chat thread.
+- Applied in `buildRunnableConfig()` (runs), `buildMcpRunnableConfig()` (MCP),
+  and SSE metadata (`langgraph_checkpoint_ns`).
+- Architecture document: `docs/MULTI_AGENT_CHECKPOINT_ARCHITECTURE.md`.
+
+#### Benchmark Infrastructure
+- `benchmarks/mock-llm/server.ts` — Mock OpenAI `/v1/chat/completions` server
+  with configurable delay and streaming (Bun, ~350 lines).
+- `benchmarks/k6/agent-flow.js` — Full agent lifecycle benchmark: create
+  assistant → thread → run/wait → run/stream → get state → cleanup.
+- Ramp-up scenario (1→5→10 VUs over 90s) with per-operation thresholds.
+- Smoke test mode (`-e SMOKE=1`) for quick verification.
+- `benchmarks/README.md` — Setup instructions and result interpretation guide.
+
+### Changed
+
+- `src/router.ts` — Request metrics (count, duration, errors) recorded
+  automatically on every request.
+- `src/config.ts` — Added `agentSyncScope` config field, updated capabilities
+  to `metrics: true`, `a2a: true`.
+- `src/index.ts` — Wired agent sync, metrics routes, A2A routes, storage
+  counts callback, cron scheduler startup.
+- `src/graphs/react-agent/configuration.ts` — Added `rag` field to
+  `GraphConfigValues` (field count 8→9).
+- `src/graphs/react-agent/agent.ts` — Supabase token extracted once and shared
+  between RAG and MCP tool creation.
+- `src/graphs/registry.ts` — Added `research_agent` graph registration.
+
+### Technical Details
+- **Runtime:** Bun 1.3.9
+- **New Dependencies:** `@langfuse/core`, `@langfuse/langchain`, `cron-parser`, `zod`
+- **Tests:** 1923 passing, 0 failures, 3648 assertions, 28 files
+- **Routes:** 47 registered
+- **Graphs:** 2 (`agent`, `research_agent`)
+
+### Environment Variables Added
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `AGENT_SYNC_SCOPE` | No | Agent sync scope (`none`, `all`, `org:<uuid>`) |
+| `LANGFUSE_SECRET_KEY` | No | Langfuse secret key (enables tracing) |
+| `LANGFUSE_PUBLIC_KEY` | No | Langfuse public key (enables tracing) |
+| `LANGFUSE_BASE_URL` | No | Langfuse server URL (default: cloud) |
+| `LANGFUSE_PROMPT_CACHE_TTL_SECONDS` | No | Prompt cache TTL (default: 300) |
+
+## [0.0.2] — 2026-02-14
+
+Second release. Adds Supabase JWT authentication, Postgres persistence,
+cross-thread Store API, multi-provider LLM support (OpenAI, Anthropic, Google,
+custom endpoints), and store namespace conventions. Full feature parity with
+the Python runtime for v0.0.2 scope.
+
+### Added
+
+#### Authentication (Task-01)
+- Supabase JWT verification middleware (`src/middleware/auth.ts`).
+- `AuthUser` type with `identity`, `email`, and `metadata` fields.
+- Public path bypass set: `/`, `/health`, `/ok`, `/info`, `/openapi.json`, `/metrics`.
+- Request-scoped user context (`getCurrentUser()`, `requireUser()`, `getUserIdentity()`).
+- Graceful degradation when Supabase is not configured (no auth enforcement).
+- Error responses match Python format: `{"detail": "Authorization header missing"}`.
+
+#### Postgres Persistence (Task-02)
+- `src/storage/database.ts` — Connection pool management via `postgres` (Postgres.js).
+- `src/storage/postgres.ts` — `PostgresAssistantStore`, `PostgresThreadStore`,
+  `PostgresRunStore`, `PostgresStoreStorage` with full CRUD + search + count.
+- Idempotent DDL migrations on startup (`langgraph_server` schema).
+- Schema compatible with Python runtime — both runtimes can share a single
+  Postgres database deployment.
+- Owner-scoped queries (`metadata->>'owner'`) for per-user isolation.
+- Automatic fallback to in-memory storage when `DATABASE_URL` not set.
+- Graceful connection pool shutdown on `SIGTERM`/`SIGINT`.
+
+#### Store API (Task-03) — 5 endpoints
+- `PUT /store/items` — Store/update (upsert) an item by namespace + key.
+- `GET /store/items` — Retrieve an item by namespace + key (query params).
+- `DELETE /store/items` — Delete an item by namespace + key (query params).
+- `POST /store/items/search` — Search items within a namespace (prefix, pagination).
+- `GET /store/namespaces` — List namespaces for the authenticated user.
+- `StoreStorage` interface with `InMemoryStoreStorage` and `PostgresStoreStorage`.
+- All operations scoped by authenticated user (`owner_id`), defaulting to
+  `"anonymous"` when auth is disabled.
+
+#### Multi-Provider LLM (Task-04)
+- `src/graphs/react-agent/providers.ts` — `createChatModel()` factory with
+  provider prefix parsing (`"provider:model"` convention).
+- `openai:*` → `ChatOpenAI`, `anthropic:*` → `ChatAnthropic`,
+  `google:*` → `ChatGoogleGenerativeAI`, `custom:` → `ChatOpenAI` with
+  custom `baseURL`.
+- API key routing per provider (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+  `GOOGLE_API_KEY`).
+- Extended graph config: `base_url`, `custom_model_name`, `custom_api_key`.
+- `x_oap_ui_config` metadata for OAP UI provider dropdown compatibility.
+
+#### Store Namespace Conventions (Task-05)
+- `src/infra/store-namespace.ts` — `buildNamespace()`, `extractNamespaceComponents()`.
+- Category constants: `CATEGORY_TOKENS`, `CATEGORY_CONTEXT`, `CATEGORY_MEMORIES`,
+  `CATEGORY_PREFERENCES`.
+- Special pseudo-IDs: `SHARED_USER_ID`, `GLOBAL_AGENT_ID`.
+- `/info` endpoint updated: `capabilities.store: true`, `tiers.tier2: true`,
+  `config.database_configured` reflects `DATABASE_URL` presence.
+
+#### OpenAPI Specification
+- Store tag and 5 store operations added (3 paths).
+- 4 new component schemas: `StoreItem`, `StorePutRequest`, `StoreSearchRequest`.
+- `/info` response schema updated with `database_configured` field.
+- Spec now covers 28 paths, 36 operations, 22 component schemas.
+
+#### Version Management
+- TypeScript runtime reads version from `package.json` (single source of truth).
+- Python runtime reads version from `pyproject.toml` via `importlib.metadata`.
+- Eliminates version drift between config, OpenAPI spec, and package metadata.
+
+### Changed
+
+- Agent factory uses `createChatModel()` instead of direct `ChatOpenAI`
+  instantiation, enabling multi-provider support.
+- Storage factory checks `DATABASE_URL` and creates Postgres stores when
+  available, falling back to in-memory stores.
+
+### Fixed
+
+- Python `API_VERSION` was hardcoded to `"0.1.0"` — now reads from
+  `pyproject.toml` via `importlib.metadata.version()`.
+- Python `package.json` version was `"0.0.0"` — corrected to match release.
+
+### Technical Details
+- **Runtime:** Bun 1.3.8+
+- **New Dependencies:** `@langchain/anthropic`, `@langchain/google-genai`,
+  `@langchain/langgraph-checkpoint-postgres`, `@supabase/supabase-js`, `postgres`
+- **Tests:** 1039 passing (TS), 1123 passing (Python)
+- **Routes:** 36 registered (28 unique paths, 36 operations)
+- **TypeScript:** Compiles clean (`tsc --noEmit`)
+
+### Environment Variables Added
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SUPABASE_URL` | No | Supabase project URL (enables auth) |
+| `SUPABASE_KEY` | No | Supabase anon key |
+| `SUPABASE_SECRET` | No | Supabase service role key |
+| `SUPABASE_JWT_SECRET` | No | JWT verification secret |
+| `DATABASE_URL` | No | PostgreSQL connection string (enables persistence) |
+| `DATABASE_POOL_MAX_SIZE` | No | Max pool connections (default: 10) |
+| `ANTHROPIC_API_KEY` | No | Anthropic API key (enables `anthropic:*` models) |
+| `GOOGLE_API_KEY` | No | Google API key (enables `google:*` models) |
 
 ## [0.0.1] — 2025-07-16
 
@@ -102,4 +415,6 @@ for assistants, threads, stateful/stateless runs, and SSE streaming.
 - **Tests:** 716 passing, 0 failures, 0 TypeScript errors
 - **Routes:** 31 registered (25 unique paths, 31 operations)
 
+[0.0.3]: https://github.com/l4b4r4b4b4/fractal-agents-runtime/releases/tag/ts-v0.0.3
+[0.0.2]: https://github.com/l4b4r4b4b4/fractal-agents-runtime/releases/tag/ts-v0.0.2
 [0.0.1]: https://github.com/l4b4r4b4b4/fractal-agents-runtime/releases/tag/ts-v0.0.1

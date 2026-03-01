@@ -240,6 +240,7 @@ export function resetRegistry(): void {
  */
 function _registerBuiltins(): void {
   registerGraphLazy("agent", "./react-agent/index", "graph");
+  registerGraphLazy("research_agent", "./research-agent/index", "graph");
 }
 
 // Auto-register built-ins at module load time.
