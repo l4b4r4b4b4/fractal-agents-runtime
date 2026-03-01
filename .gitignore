@@ -39,6 +39,8 @@ htmlcov/
 
 # === Agent staging (never commit) ===
 .agent/tmp/
+.agent/research/
+.agent/antonputra-tutorials/
 
 # === Archive (local only) ===
 archive/

@@ -32,6 +32,7 @@
 | 36 | Runs Wait Non-Streaming Endpoint | 🟢 Complete | High | 2026-02-20 |
 | 37 | v0.1.0 Auth, Store, Benchmarks & Visualization | 🟢 Complete | Critical | 2026-02-23 |
 | 38 | Store API Namespace Fix | 🟢 Complete | High | 2026-02-23 |
+| 42 | Semantic Router Integration — Dynamic Model Routing (Python) | 🟢 Complete | High | 2026-03-02 |
 | 39 | Benchmark Methodology — Long-Duration Runs & Statistical Rigor | ⚪ Not Started | Medium | 2026-02-23 |
 | 40 | Hardware Key Encryption Pipeline — E2E Asset Encryption with Hardware Keys | 🟡 In Progress | High | 2026-02-25 |
 | 41 | FastMCP Supabase User-Data Tool — JWT-Scoped DB & File Storage Access | ⚪ Not Started | High | 2026-02-23 |
@@ -79,6 +80,7 @@
 - [38-Store-API-Namespace-Fix](./38-Store-API-Namespace-Fix/scratchpad.md)
 - [39-Benchmark-Methodology-Long-Duration](./39-Benchmark-Methodology-Long-Duration/scratchpad.md)
 - [40-Hardware-Key-Encryption-Pipeline](./40-Hardware-Key-Encryption-Pipeline/scratchpad.md)
+- [42-Semantic-Router-Integration](./42-Semantic-Router-Integration/scratchpad.md)
 
 ---
 
@@ -138,6 +140,25 @@ All TS runtime parity goals achieved. Both runtimes released as v0.1.0 on 2026-0
 ---
 
 ## Recent Activity
+
+### 2026-03-02 — Session 28 (Goal 42 🟢 COMPLETE — Semantic Router Integration)
+
+**Goal 42: Semantic Router Integration — All 5 Tasks Complete**
+
+- **Task-05 (Testing & Documentation)**: 🟢 Final task completed
+  - Added 3 edge-case integration tests: router overrides existing `base_url`, router model wins over `custom_model_name`, full integration with all params (router + base_url + custom_model_name + metadata + API key)
+  - **70 tests** in `test_llm_factory.py`, **100% coverage** on `graphs/llm.py` (76 statements, 0 missing)
+  - Created `docs/semantic-router.md` — 514-line integration guide (architecture diagram, quick start, config reference, env vars, language routing Phase B, ports reference, phases roadmap, troubleshooting)
+  - Updated `README.md` — Semantic Router feature bullet, Shared LLM Factory feature, 3 new env vars (`SEMANTIC_ROUTER_ENABLED/URL/MODEL`)
+  - **1211 tests** pass (up from 1208), 35 skipped, lint clean
+- **Goal 42 deliverables summary** (Tasks 01–05):
+  - `graphs/llm.py` — shared LLM factory with `model_name_override`, `routing_metadata`, semantic router env vars
+  - `graphs/configuration.py` — shared config models (`RagConfig`, `MCPConfig`, `MCPServerConfig`)
+  - `docker-compose.semantic-router.yml` — standalone compose, port 8801, health checks, model volume
+  - `config/semantic-router/config.yaml` — UserConfig v1 format, 5 domain signals, 5 routing decisions, cloud-only Phase A
+  - `docs/semantic-router.md` — comprehensive integration guide
+- **Branch**: `goal-40-hardware-key-encryption-server` (all changes stacked)
+- **Future (Phase B)**: Language-based routing (German doc processing), modality routing (OCR via vision LLMs), local vLLM backends — all researched and documented
 
 ### 2026-02-25 — Session 26 (Goal 40 Task-07 🟢 — TS Key Service & Routes Implemented)
 
@@ -218,6 +239,7 @@ Created comprehensive goal for end-to-end asset encryption using FIDO2 hardware 
 - **Blocked on**: User applying Supabase data model changes and migrations
 - Documented honest complexity assessment, cryptographic architecture (key hierarchy, single-user & multi-party flows), technology choices, and open questions
 - See [Goal 40 scratchpad](./40-Hardware-Key-Encryption-Pipeline/scratchpad.md) for full details
+- [42-Semantic-Router-Integration](./42-Semantic-Router-Integration/scratchpad.md)
 
 ### 2026-02-23 — Session 20 (v0.1.0 RELEASED 🟢 — Both Runtimes Published)
 

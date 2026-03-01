@@ -55,6 +55,7 @@ These features are part of the LangGraph API contract — both the Python and Ty
 - **Full LangGraph API** — Threads, runs, assistants, store, SSE streaming
 - **MCP Tool Integration** — Dynamically load tools from remote MCP servers with OAuth token exchange
 - **Multi-Provider LLM** — OpenAI, Anthropic, Google, and custom OpenAI-compatible endpoints (vLLM, Ollama, etc.)
+- **Semantic Router** — Optional transparent proxy for dynamic per-request model routing via [vLLM Semantic Router](https://github.com/vllm-project/semantic-router). See [docs/semantic-router.md](docs/semantic-router.md)
 - **Supabase Auth** — JWT-based authentication and per-user/org scoping
 - **Postgres Persistence** — Durable conversation state via LangGraph checkpoint + store
 - **A2A Protocol** — Agent-to-Agent communication endpoints
@@ -74,6 +75,7 @@ The `graphs/` directory is a catalog — additional agent architectures (plan-an
 ### Python Runtime (Robyn) — v0.0.1
 
 - **Robyn HTTP Server** — Multi-worker async server (34 paths, 44 operations, 28 schemas)
+- **Shared LLM Factory** — Single `create_chat_model()` entry point with call-time model override, routing metadata headers, and semantic router env var support
 - **Supabase RAG** — LangConnect-based retrieval-augmented generation
 - **Agent Sync** — Startup synchronisation of assistants from Supabase (`AGENT_SYNC_SCOPE`)
 - **Cron Scheduling** — APScheduler-based recurring agent invocations
@@ -171,6 +173,9 @@ The Python runtime reads configuration from environment variables. See `apps/pyt
 | `LANGCHAIN_TRACING_V2` | No | Enable LangSmith tracing (`true`/`false`) |
 | `LANGCHAIN_API_KEY` | No | LangSmith API key |
 | `LANGCHAIN_PROJECT` | No | LangSmith project name |
+| `SEMANTIC_ROUTER_ENABLED` | No | Route all LLM calls through semantic router (`true`/`false`) |
+| `SEMANTIC_ROUTER_URL` | No | Semantic router Envoy proxy URL (e.g. `http://localhost:8801/v1`) |
+| `SEMANTIC_ROUTER_MODEL` | No | Model name for router-managed selection (default: `MoM`) |
 
 \* At least one LLM provider key is required.
 

@@ -1,0 +1,134 @@
+# Semantic Router — Phase A: Cloud-only (OpenAI API)
+#
+# Format: UserConfig (new format with version + providers + listeners)
+# Backend: OpenAI API only — no local vLLM required
+# Envoy proxy: port 8801 (matches upstream docs convention)
+#
+# Usage:
+#   docker compose -f docker-compose.semantic-router.yml up -d
+#   curl http://localhost:8801/v1/chat/completions \
+#     -H "Content-Type: application/json" \
+#     -H "Authorization: Bearer $OPENAI_API_KEY" \
+#     -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello!"}]}'
+#
+# The OPENAI_API_KEY env var must be set on the container (passed via compose).
+# BERT classifier models (~1.5GB) are auto-downloaded on first boot.
+
+version: "v1"
+
+# ─── Listener ────────────────────────────────────────────────────
+# Envoy proxy port — the port our runtime calls via SEMANTIC_ROUTER_URL
+listeners:
+  - name: "openai_listener"
+    address: "0.0.0.0"
+    port: 8801
+    timeout: "300s"
+
+# ─── Providers ───────────────────────────────────────────────────
+# Models and their backend endpoints.
+# Phase A: all models served by OpenAI cloud API.
+providers:
+  models:
+    - name: "gpt-4o"
+      endpoints:
+        - name: "openai-gpt4o"
+          weight: 1
+          endpoint: "api.openai.com:443"
+          protocol: "https"
+      description: "GPT-4o — complex tasks, extraction, analysis"
+
+    - name: "gpt-4o-mini"
+      endpoints:
+        - name: "openai-gpt4o-mini"
+          weight: 1
+          endpoint: "api.openai.com:443"
+          protocol: "https"
+      description: "GPT-4o Mini — simple chat, general queries (cheaper)"
+
+  default_model: "gpt-4o-mini"
+
+  reasoning_families:
+    gpt:
+      type: "reasoning_effort"
+      parameter: "reasoning_effort"
+
+  default_reasoning_effort: "high"
+
+# ─── Signals ─────────────────────────────────────────────────────
+# Domain categories for the BERT classifier to map incoming queries.
+signals:
+  domains:
+    - name: extraction
+      description: "Document data extraction tasks — structured output from unstructured text"
+    - name: classification
+      description: "Document classification and categorization"
+    - name: chat
+      description: "Conversational queries and general Q&A"
+    - name: analysis
+      description: "Complex document analysis requiring deeper reasoning"
+    - name: other
+      description: "General knowledge and miscellaneous topics"
+
+# ─── Routing Decisions ───────────────────────────────────────────
+# Priority-based routing: higher priority = checked first.
+# Simple queries → gpt-4o-mini (cheaper), complex → gpt-4o (more capable).
+decisions:
+  - name: "extraction_query"
+    description: "Data extraction from documents → gpt-4o (structured output quality)"
+    priority: 200
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "extraction"
+    modelRefs:
+      - model: "gpt-4o"
+        use_reasoning: false
+
+  - name: "analysis_query"
+    description: "Complex analysis → gpt-4o (deeper reasoning)"
+    priority: 200
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "analysis"
+    modelRefs:
+      - model: "gpt-4o"
+        use_reasoning: false
+
+  - name: "classification_query"
+    description: "Document classification → gpt-4o-mini (sufficient quality, cheaper)"
+    priority: 150
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "classification"
+    modelRefs:
+      - model: "gpt-4o-mini"
+        use_reasoning: false
+
+  - name: "chat_query"
+    description: "Conversational queries → gpt-4o-mini (fast, cheap)"
+    priority: 100
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "chat"
+    modelRefs:
+      - model: "gpt-4o-mini"
+        use_reasoning: false
+
+  - name: "general_fallback"
+    description: "Everything else → gpt-4o-mini (default)"
+    priority: 50
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "other"
+    modelRefs:
+      - model: "gpt-4o-mini"
+        use_reasoning: false

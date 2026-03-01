@@ -1,0 +1,102 @@
+# docker-compose.semantic-router.yml — Semantic Router Dev Stack
+#
+# Runs the vLLM Semantic Router as a transparent proxy in front of cloud
+# LLM APIs (Phase A: OpenAI only, no local vLLM required).
+#
+# Architecture:
+#   Python Runtime → Envoy proxy (:8801) → Go Router (ExtProc) → OpenAI API
+#
+# First-time setup:
+#   1. Ensure OPENAI_API_KEY is set in .env (or exported in your shell)
+#   2. docker compose -f docker-compose.semantic-router.yml up -d
+#   3. Wait for health check — first boot downloads ~1.5GB of BERT models
+#      (can take 5-30 min depending on network speed)
+#   4. Watch progress: docker compose -f docker-compose.semantic-router.yml logs -f
+#
+# Subsequent starts (models cached in named volume):
+#   docker compose -f docker-compose.semantic-router.yml up -d
+#   # Ready in ~30 seconds
+#
+# Verify:
+#   # Health check (inside container — Go router API on port 8080)
+#   docker compose -f docker-compose.semantic-router.yml exec semantic-router \
+#     curl -f http://localhost:8080/health
+#
+#   # Smoke test (Envoy proxy on host port 8801)
+#   curl http://localhost:8801/v1/chat/completions \
+#     -H "Content-Type: application/json" \
+#     -H "Authorization: Bearer $OPENAI_API_KEY" \
+#     -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello!"}]}'
+#
+# Connect the Python runtime:
+#   export SEMANTIC_ROUTER_ENABLED=true
+#   export SEMANTIC_ROUTER_URL=http://localhost:8801/v1
+#   export SEMANTIC_ROUTER_MODEL=MoM
+#   cd apps/python && uv run python -m server.main
+#
+# Dashboard:
+#   http://localhost:8700
+#
+# Stop:
+#   docker compose -f docker-compose.semantic-router.yml down
+#   # Models volume is preserved — next start will be fast
+#   # To delete models too: docker volume rm semantic-router-models
+#
+# Ports:
+#   8801  — Envoy proxy (OpenAI-compatible API) — configured in config.yaml
+#   8700  — Dashboard UI (routing decisions, metrics)
+#   9190  — Prometheus metrics endpoint
+#
+# Requires:
+#   - Docker Compose v2 (docker compose, not docker-compose)
+#   - OPENAI_API_KEY in .env or environment
+#   - ~2GB disk for BERT classifier models (first boot only)
+#   - No GPU required (BERT classifiers run on CPU)
+
+volumes:
+  sr_models:
+    name: semantic-router-models
+
+services:
+  semantic-router:
+    image: ghcr.io/vllm-project/semantic-router/vllm-sr:latest
+    container_name: semantic-router
+    volumes:
+      # Router config — read-only mount
+      - ./config/semantic-router/config.yaml:/app/config.yaml:ro
+      # Persistent model cache — survives container restarts
+      - sr_models:/app/models
+    ports:
+      # Envoy proxy — OpenAI-compatible API (listener port from config.yaml)
+      - "8801:8801"
+      # Dashboard UI — routing decisions, request history, metrics
+      - "8700:8700"
+      # Prometheus metrics — scrape with your monitoring stack
+      - "9190:9190"
+    environment:
+      # API keys — passed through to cloud LLM providers
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # HuggingFace mirror — uncomment if HF downloads are slow
+      # - HF_ENDPOINT=https://hf-mirror.com
+    restart: unless-stopped
+    healthcheck:
+      # Health endpoint is on the Go router's API port (8080 inside container),
+      # NOT the Envoy proxy port. Confirmed from start-router.sh: -api-port=8080
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      # First boot downloads ~1.5GB of BERT models from HuggingFace.
+      # 60 retries × 30s interval = 30 min max wait for first-boot downloads.
+      retries: 60
+      # Give supervisord 2 min to start all processes before first health check.
+      start_period: 120s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"

@@ -9,7 +9,7 @@ Covers:
 - Graph registry (dispatch, fallback, available IDs)
 - Review node routing (approve/adjust patterns)
 - Analyzer/aggregator response parsing
-- Factory helpers (_safe_mask_url, _get_api_key_for_model, etc.)
+- Factory helpers (_safe_mask_url, get_api_key_for_model, etc.)
 - graph() factory with mocked LLM + MCP
 - Server startup prompt seeding
 """
@@ -1103,7 +1103,7 @@ class TestGraphFactory:
             }
         }
 
-        with patch("graphs.research_agent.init_chat_model", return_value=mock_model):
+        with patch("graphs.llm.init_chat_model", return_value=mock_model):
             from graphs.research_agent import graph
 
             compiled = await graph(config)
@@ -1323,12 +1323,12 @@ class TestSafeMaskUrl:
     """Tests for _safe_mask_url helper."""
 
     def test_short_url_unchanged(self):
-        from graphs.research_agent import _safe_mask_url
+        from graphs.research_agent import _safe_mask_url  # noqa: PLC0415
 
         assert _safe_mask_url("http://a.b") == "http://a.b"
 
     def test_long_url_masked(self):
-        from graphs.research_agent import _safe_mask_url
+        from graphs.research_agent import _safe_mask_url  # noqa: PLC0415
 
         url = "https://mcp.example.com/very/long/path/to/endpoint"
         masked = _safe_mask_url(url)
@@ -1338,7 +1338,7 @@ class TestSafeMaskUrl:
         assert len(masked) < len(url)
 
     def test_exactly_20_chars(self):
-        from graphs.research_agent import _safe_mask_url
+        from graphs.research_agent import _safe_mask_url  # noqa: PLC0415
 
         url = "http://12345678901/"  # exactly 20
         assert _safe_mask_url(url) == url
@@ -1366,57 +1366,58 @@ class TestSafePresentConfigurableKeys:
 
 
 class TestGetApiKeyForModel:
-    """Tests for _get_api_key_for_model helper."""
+    """Tests for get_api_key_for_model (shared in graphs.llm)."""
 
     def test_openai_provider(self, monkeypatch):
-        from graphs.research_agent import _get_api_key_for_model
+        from graphs.llm import get_api_key_for_model
 
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
-        key = _get_api_key_for_model("openai:gpt-4o", {})
+        key = get_api_key_for_model("openai:gpt-4o", {})
         assert key == "sk-test-123"
 
     def test_anthropic_provider(self, monkeypatch):
-        from graphs.research_agent import _get_api_key_for_model
+        from graphs.llm import get_api_key_for_model
 
         monkeypatch.setenv("ANTHROPIC_API_KEY", "ant-key")
-        key = _get_api_key_for_model("anthropic:claude-sonnet-4-20250514", {})
+        key = get_api_key_for_model("anthropic:claude-sonnet-4-20250514", {})
         assert key == "ant-key"
 
     def test_custom_provider_from_configurable(self):
-        from graphs.research_agent import _get_api_key_for_model
+        from graphs.llm import get_api_key_for_model
 
         config = {"configurable": {"custom_api_key": "my-custom-key"}}
-        key = _get_api_key_for_model("custom:my-model", config)
+        key = get_api_key_for_model("custom:my-model", config)
         assert key == "my-custom-key"
 
     def test_custom_provider_falls_back_to_env(self, monkeypatch):
-        from graphs.research_agent import _get_api_key_for_model
+        from graphs.llm import get_api_key_for_model
 
         monkeypatch.setenv("OPENAI_API_KEY", "fallback-key")
-        key = _get_api_key_for_model("custom:my-model", {"configurable": {}})
+        monkeypatch.delenv("CUSTOM_API_KEY", raising=False)
+        key = get_api_key_for_model("custom:my-model", {"configurable": {}})
         assert key == "fallback-key"
 
     def test_unknown_provider_returns_none(self, monkeypatch):
-        from graphs.research_agent import _get_api_key_for_model
+        from graphs.llm import get_api_key_for_model
 
         # Ensure no matching env vars
         for var in ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]:
             monkeypatch.delenv(var, raising=False)
-        key = _get_api_key_for_model("unknownprovider:model", {})
+        key = get_api_key_for_model("unknownprovider:model", {})
         assert key is None
 
     def test_provider_without_colon(self, monkeypatch):
-        from graphs.research_agent import _get_api_key_for_model
+        from graphs.llm import get_api_key_for_model
 
         monkeypatch.setenv("OPENAI_API_KEY", "bare-key")
-        key = _get_api_key_for_model("openai", {})
+        key = get_api_key_for_model("openai", {})
         assert key == "bare-key"
 
     def test_google_provider(self, monkeypatch):
-        from graphs.research_agent import _get_api_key_for_model
+        from graphs.llm import get_api_key_for_model
 
         monkeypatch.setenv("GOOGLE_API_KEY", "goog-key")
-        key = _get_api_key_for_model("google:gemini-pro", {})
+        key = get_api_key_for_model("google:gemini-pro", {})
         assert key == "goog-key"
 
 
@@ -1442,9 +1443,7 @@ class TestGraphFactoryIntegration:
             }
         }
 
-        with patch(
-            "graphs.research_agent.init_chat_model", return_value=mock_model
-        ) as mock_init:
+        with patch("graphs.llm.init_chat_model", return_value=mock_model) as mock_init:
             from graphs.research_agent import graph
 
             compiled = await graph(config)
@@ -1468,9 +1467,7 @@ class TestGraphFactoryIntegration:
             }
         }
 
-        with patch(
-            "graphs.research_agent.ChatOpenAI", return_value=mock_model
-        ) as mock_openai:
+        with patch("graphs.llm.ChatOpenAI", return_value=mock_model) as mock_openai:
             from graphs.research_agent import graph
 
             compiled = await graph(config)
@@ -1497,9 +1494,7 @@ class TestGraphFactoryIntegration:
         # Ensure no OPENAI_API_KEY env var
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENAI_API_KEY", None)
-            with patch(
-                "graphs.research_agent.ChatOpenAI", return_value=mock_model
-            ) as mock_openai:
+            with patch("graphs.llm.ChatOpenAI", return_value=mock_model) as mock_openai:
                 from graphs.research_agent import graph
 
                 compiled = await graph(config)
@@ -1523,7 +1518,7 @@ class TestGraphFactoryIntegration:
             }
         }
 
-        with patch("graphs.research_agent.init_chat_model", return_value=mock_model):
+        with patch("graphs.llm.init_chat_model", return_value=mock_model):
             from graphs.research_agent import graph
 
             compiled = await graph(
@@ -1561,7 +1556,7 @@ class TestGraphFactoryIntegration:
         }
 
         with (
-            patch("graphs.research_agent.init_chat_model", return_value=mock_model),
+            patch("graphs.llm.init_chat_model", return_value=mock_model),
             patch(
                 "graphs.research_agent.MultiServerMCPClient",
                 return_value=mock_mcp_client,
@@ -1596,7 +1591,7 @@ class TestGraphFactoryIntegration:
         }
 
         with (
-            patch("graphs.research_agent.init_chat_model", return_value=mock_model),
+            patch("graphs.llm.init_chat_model", return_value=mock_model),
             patch(
                 "graphs.research_agent.MultiServerMCPClient",
                 side_effect=Exception("Connection refused"),
@@ -1634,7 +1629,7 @@ class TestGraphFactoryIntegration:
         }
 
         with (
-            patch("graphs.research_agent.init_chat_model", return_value=mock_model),
+            patch("graphs.llm.init_chat_model", return_value=mock_model),
             patch(
                 "graphs.research_agent.MultiServerMCPClient",
                 return_value=mock_mcp_client,
@@ -1673,7 +1668,7 @@ class TestGraphFactoryIntegration:
         }
 
         with (
-            patch("graphs.research_agent.init_chat_model", return_value=mock_model),
+            patch("graphs.llm.init_chat_model", return_value=mock_model),
             patch(
                 "graphs.research_agent.MultiServerMCPClient",
                 return_value=mock_mcp_client,
@@ -1708,7 +1703,7 @@ class TestGraphFactoryIntegration:
         }
 
         with (
-            patch("graphs.research_agent.init_chat_model", return_value=mock_model),
+            patch("graphs.llm.init_chat_model", return_value=mock_model),
             patch(
                 "graphs.react_agent.utils.token.fetch_tokens",
                 side_effect=Exception("No tokens"),
@@ -1755,7 +1750,7 @@ class TestGraphFactoryIntegration:
         }
 
         with (
-            patch("graphs.research_agent.init_chat_model", return_value=mock_model),
+            patch("graphs.llm.init_chat_model", return_value=mock_model),
             patch(
                 "graphs.research_agent.MultiServerMCPClient",
                 return_value=mock_mcp_client,
@@ -1813,7 +1808,7 @@ class TestGraphFactoryIntegration:
         }
 
         with (
-            patch("graphs.research_agent.init_chat_model", return_value=mock_model),
+            patch("graphs.llm.init_chat_model", return_value=mock_model),
             patch(
                 "graphs.research_agent.MultiServerMCPClient",
                 return_value=mock_mcp_client,
@@ -1938,7 +1933,7 @@ class TestGraphRegistryEdgeCases:
                 "auto_approve_phase2": True,
             }
         }
-        with patch("graphs.research_agent.init_chat_model", return_value=mock_model):
+        with patch("graphs.llm.init_chat_model", return_value=mock_model):
             result = await factory(config)
             assert result is not None
 

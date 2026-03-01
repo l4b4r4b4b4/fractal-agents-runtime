@@ -1,13 +1,12 @@
 import logging
-import os
 
 from langchain.agents import create_agent
-from langchain.chat_models import init_chat_model
 from langchain_core.runnables import RunnableConfig
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
+from graphs.configuration import MCPConfig, RagConfig
+from graphs.llm import create_chat_model
 from graphs.react_agent.utils.mcp_interceptors import (
     handle_interaction_required,
 )
@@ -106,35 +105,7 @@ DEFAULT_SYSTEM_PROMPT = (
 register_default_prompt("react-agent-system-prompt", DEFAULT_SYSTEM_PROMPT)
 
 
-class RagConfig(BaseModel):
-    rag_url: str | None = None
-    """The URL of the rag server"""
-    collections: list[str] | None = None
-    """The collections to use for rag"""
-
-
-class MCPServerConfig(BaseModel):
-    """Configuration for a single MCP server.
-
-    Attributes:
-        name: Stable identifier for this server entry. Used as the key when
-            creating the MultiServerMCPClient config dict.
-        url: Base URL for the MCP server (may or may not end with /mcp).
-        tools: Optional list of tool names to expose from this server.
-            If omitted/None, all tools from the server are exposed.
-        auth_required: Whether this server requires auth token exchange.
-    """
-
-    name: str = Field(default="default")
-    url: str
-    tools: list[str] | None = Field(default=None)
-    auth_required: bool = Field(default=False)
-
-
-class MCPConfig(BaseModel):
-    """Multi-server MCP configuration (no backward compatibility)."""
-
-    servers: list[MCPServerConfig] = Field(default_factory=list)
+# RagConfig, MCPServerConfig, MCPConfig imported from graphs.configuration
 
 
 class GraphConfigPydantic(BaseModel):
@@ -276,35 +247,7 @@ class GraphConfigPydantic(BaseModel):
     )
 
 
-def get_api_key_for_model(model_name: str, config: RunnableConfig):
-    model_name = model_name.lower()
-
-    # Handle custom endpoints
-    if model_name.startswith("custom:"):
-        # First check config for custom_api_key
-        custom_key = config.get("configurable", {}).get("custom_api_key")
-        if custom_key:
-            return custom_key
-        # Fallback to environment variable
-        return os.getenv("CUSTOM_API_KEY")
-
-    # Existing logic for standard providers
-    model_to_key = {
-        "openai:": "OPENAI_API_KEY",
-        "anthropic:": "ANTHROPIC_API_KEY",
-        "google": "GOOGLE_API_KEY",
-    }
-    key_name = next(
-        (key for prefix, key in model_to_key.items() if model_name.startswith(prefix)),
-        None,
-    )
-    if not key_name:
-        return None
-    api_keys = config.get("configurable", {}).get("apiKeys", {})
-    if api_keys and api_keys.get(key_name) and len(api_keys[key_name]) > 0:
-        return api_keys[key_name]
-    # Fallback to environment variable
-    return os.getenv(key_name)
+# get_api_key_for_model imported from graphs.llm
 
 
 async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
@@ -418,51 +361,29 @@ async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
             except Exception as e:
                 logger.warning("Failed to fetch MCP tools: %s", str(e))
 
-    # Initialize model based on configuration
-    if cfg.base_url:
-        # Custom endpoint - use ChatOpenAI with OpenAI-compatible base URL.
-        # LangChain's vLLM integration docs recommend `openai_api_base` + `openai_api_key="EMPTY"`.
-        masked_base_url = _safe_mask_url(cfg.base_url)
-        logger.info(
-            "LLM routing: custom endpoint enabled; base_url=%s", masked_base_url
-        )
+    # Initialize model via shared LLM factory
+    configurable = config.get("configurable", {}) or {}
 
-        # Get API key for custom endpoint (do not log the key)
-        api_key = get_api_key_for_model("custom:", config)
-        if not api_key:
-            # Use "EMPTY" for local vLLM that doesn't require authentication
-            api_key = "EMPTY"
-            logger.info("LLM auth: no custom API key provided; using EMPTY")
-        else:
-            logger.info("LLM auth: custom API key provided (masked)")
+    # Build routing metadata for the semantic router (or any proxy).
+    # These headers help the router make better routing decisions.
+    routing_metadata: dict[str, str] = {"x-sr-graph-id": "agent"}
+    org_id = configurable.get("x-org-id")
+    if org_id:
+        routing_metadata["x-sr-org-id"] = org_id
+    user_tier = configurable.get("x-user-tier")
+    if user_tier:
+        routing_metadata["x-sr-user-tier"] = user_tier
 
-        # Use custom model name if provided, otherwise use the configured model_name
-        model_name = cfg.custom_model_name or cfg.model_name
-        logger.info("LLM model: %s", model_name)
-
-        # Prefer the vLLM-recommended parameters. Avoid passing multiple aliases
-        # for the same setting to reduce ambiguity across versions.
-        model = ChatOpenAI(
-            openai_api_base=cfg.base_url,
-            openai_api_key=api_key,
-            model=model_name,
-            temperature=cfg.temperature,
-            max_tokens=cfg.max_tokens,
-        )
-    else:
-        # Standard provider - use init_chat_model
-        logger.info(
-            "LLM routing: standard provider enabled; model_name=%s", cfg.model_name
-        )
-        api_key = get_api_key_for_model(cfg.model_name, config)
-        logger.info("LLM auth: standard provider api key present=%s", bool(api_key))
-
-        model = init_chat_model(
-            cfg.model_name,
-            temperature=cfg.temperature,
-            max_tokens=cfg.max_tokens,
-            api_key=api_key or "No token found",
-        )
+    model = create_chat_model(
+        config,
+        model_name=cfg.model_name,
+        temperature=cfg.temperature,
+        max_tokens=cfg.max_tokens,
+        base_url=cfg.base_url,
+        custom_model_name=cfg.custom_model_name,
+        model_name_override=configurable.get("model_name_override"),
+        routing_metadata=routing_metadata,
+    )
 
     # Persistence components are injected by the runtime caller.
     # When None (the default), the agent runs without persistence.
