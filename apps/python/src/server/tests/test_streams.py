@@ -1263,92 +1263,145 @@ class TestExecuteRunStreamIntegration:
                 f"emit updates events, but got {len(updates_events)}"
             )
 
+    # ============================================================================
+    # Goal 45: LangGraph Auth User & Configurable Headers
+    # ============================================================================
 
-# ============================================================================
-# Goal 45: LangGraph Auth User & Configurable Headers
-# ============================================================================
 
+class FakeRobynHeaders:
+    """Mimics Robyn's Headers.get_headers() for testing."""
 
-class TestExtractConfigurableHeaders:
-    """Tests for _extract_configurable_headers helper (Goal 45)."""
+    def __init__(self, data: dict[str, str | list[str]]):
+        self._headers = {}
+        for k, v in data.items():
+            if isinstance(v, list):
+                self._headers[k.lower()] = v
+            else:
+                self._headers[k.lower()] = [v]
 
-    def test_forwards_x_headers(self):
-        """Include x-* headers following LangGraph Platform convention."""
-        from server.routes.streams import _extract_configurable_headers
+    def get_headers(self) -> dict[str, list[str]]:
+        return self._headers
 
-        headers = {
-            "x-organization-id": "org-123",
-            "x-user-id": "user-456",
-            "x-custom-header": "value",
-        }
-        result = _extract_configurable_headers(headers)
-        assert result == {
-            "x-organization-id": "org-123",
-            "x-user-id": "user-456",
-            "x-custom-header": "value",
-        }
+    def __bool__(self) -> bool:
+        return bool(self._headers)
 
-    def test_excludes_authorization_header(self):
-        """Exclude authorization (sensitive credential)."""
-        from server.routes.streams import _extract_configurable_headers
+    class TestExtractConfigurableHeaders:
+        """Tests for _extract_configurable_headers helper (Goal 45)."""
 
-        headers = {
-            "authorization": "Bearer secret",
-            "x-safe-header": "value",
-        }
-        result = _extract_configurable_headers(headers)
-        assert result == {"x-safe-header": "value"}
+        def test_forwards_x_headers(self):
+            """Include x-* headers following LangGraph Platform convention."""
+            from server.routes.streams import _extract_configurable_headers
 
-    def test_excludes_x_api_key(self):
-        """Exclude x-api-key (sensitive credential)."""
-        from server.routes.streams import _extract_configurable_headers
+            headers = FakeRobynHeaders(
+                {
+                    "x-organization-id": "org-123",
+                    "x-user-id": "user-456",
+                    "x-custom-header": "value",
+                }
+            )
+            result = _extract_configurable_headers(headers)
+            assert result == {
+                "x-organization-id": "org-123",
+                "x-user-id": "user-456",
+                "x-custom-header": "value",
+            }
 
-        headers = {
-            "x-api-key": "secret-key",
-            "x-organization-id": "org-123",
-        }
-        result = _extract_configurable_headers(headers)
-        assert result == {"x-organization-id": "org-123"}
+        def test_excludes_authorization_header(self):
+            """Exclude authorization (sensitive credential)."""
+            from server.routes.streams import _extract_configurable_headers
 
-    def test_lowercases_header_names(self):
-        """Header names are lowercased (LangGraph Platform behaviour)."""
-        from server.routes.streams import _extract_configurable_headers
+            headers = FakeRobynHeaders(
+                {
+                    "authorization": "Bearer secret",
+                    "x-safe-header": "value",
+                }
+            )
+            result = _extract_configurable_headers(headers)
+            assert result == {"x-safe-header": "value"}
 
-        headers = {
-            "X-Organization-Id": "org-123",
-            "X-USER-ID": "user-456",
-        }
-        result = _extract_configurable_headers(headers)
-        assert result == {
-            "x-organization-id": "org-123",
-            "x-user-id": "user-456",
-        }
+        def test_excludes_x_api_key(self):
+            """Exclude x-api-key (sensitive credential)."""
+            from server.routes.streams import _extract_configurable_headers
 
-    def test_ignores_non_x_headers(self):
-        """Only x-* headers are forwarded."""
-        from server.routes.streams import _extract_configurable_headers
+            headers = FakeRobynHeaders(
+                {
+                    "x-api-key": "secret-key",
+                    "x-organization-id": "org-123",
+                }
+            )
+            result = _extract_configurable_headers(headers)
+            assert result == {"x-organization-id": "org-123"}
 
-        headers = {
-            "content-type": "application/json",
-            "accept": "text/html",
-            "x-custom": "value",
-        }
-        result = _extract_configurable_headers(headers)
-        assert result == {"x-custom": "value"}
+        def test_lowercases_header_names(self):
+            """Header names are lowercased (LangGraph Platform behaviour)."""
+            from server.routes.streams import _extract_configurable_headers
 
-    def test_handles_none_headers(self):
-        """None headers → empty dict."""
-        from server.routes.streams import _extract_configurable_headers
+            headers = FakeRobynHeaders(
+                {
+                    "X-Organization-Id": "org-123",
+                    "X-USER-ID": "user-456",
+                }
+            )
+            result = _extract_configurable_headers(headers)
+            assert result == {
+                "x-organization-id": "org-123",
+                "x-user-id": "user-456",
+            }
 
-        result = _extract_configurable_headers(None)
-        assert result == {}
+        def test_ignores_non_x_headers(self):
+            """Only x-* headers are forwarded."""
+            from server.routes.streams import _extract_configurable_headers
 
-    def test_handles_empty_headers(self):
-        """Empty headers dict → empty dict."""
-        from server.routes.streams import _extract_configurable_headers
+            headers = FakeRobynHeaders(
+                {
+                    "content-type": "application/json",
+                    "accept": "text/html",
+                    "x-custom": "value",
+                }
+            )
+            result = _extract_configurable_headers(headers)
+            assert result == {"x-custom": "value"}
 
-        result = _extract_configurable_headers({})
-        assert result == {}
+        def test_multi_value_headers_takes_last(self):
+            """When a header has multiple values, take the last one."""
+            from server.routes.streams import _extract_configurable_headers
+
+            headers = FakeRobynHeaders(
+                {
+                    "x-org": ["old", "new"],
+                    "x-user": "active",
+                }
+            )
+            result = _extract_configurable_headers(headers)
+            assert result == {"x-org": "new", "x-user": "active"}
+
+        def test_handles_none_headers(self):
+            """None headers → empty dict."""
+            from server.routes.streams import _extract_configurable_headers
+
+            result = _extract_configurable_headers(FakeRobynHeaders({}))
+            assert result == {}
+
+        def test_multi_value_headers_takes_last_with_auth(self):
+            """When a header has multiple values and authorization, take the last one and exclude auth."""
+            from server.routes.streams import _extract_configurable_headers
+
+            headers = FakeRobynHeaders(
+                {
+                    "x-org": ["old", "new"],
+                    "x-user": "active",
+                    "authorization": "secret",
+                }
+            )
+            result = _extract_configurable_headers(headers)
+            assert result == {"x-org": "new", "x-user": "active"}
+
+        def test_handles_empty_headers(self):
+            """Empty headers dict → empty dict."""
+            from server.routes.streams import _extract_configurable_headers
+
+            result = _extract_configurable_headers(FakeRobynHeaders({}))
+            assert result == {}
 
 
 class TestBuildRunnableConfigAuthUser:

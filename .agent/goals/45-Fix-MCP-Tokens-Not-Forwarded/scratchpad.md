@@ -1,6 +1,6 @@
 # Goal 45: Fix MCP Auth Tokens Not Forwarded to Servers
 
-**Status:** 🟢 Complete
+**Status:** 🟡 In Progress — Token injection complete, but token exchange logic is broken (see Remaining Bug)
 **Priority:** P0 — Blocking (all MCP servers with `auth_required: true` are skipped)
 **Predecessor:** Goal 44 (Fix `get_config` outside runnable context) — 🟢 Complete
 **Bug Report:** `.agent/bugs/runtime-bug-mcp-tokens-not-forwarded.md`

@@ -61,7 +61,7 @@ _CONFIGURABLE_HEADERS_EXCLUDE = frozenset(
 
 
 def _extract_configurable_headers(
-    request_headers: dict[str, str] | None,
+    request_headers: Any,
 ) -> dict[str, str]:
     """Extract HTTP headers that should be forwarded into configurable.
 
@@ -69,22 +69,29 @@ def _extract_configurable_headers(
     Header names are lowercased to match LangGraph Platform behaviour.
 
     Args:
-        request_headers: Raw headers dict from the Robyn request.
+        request_headers: Robyn ``Headers`` object from the request.
 
     Returns:
-        Dict of header-name → value to merge into configurable.
+        Dict of header-name -> value to merge into configurable.
     """
     if not request_headers:
         return {}
 
+    # Robyn's Headers is a Rust/PyO3 object — no .items() or dict() support.
+    # Use .get_headers() which returns dict[str, list[str]].
+    all_headers: dict[str, list[str]] = request_headers.get_headers()
+
     forwarded: dict[str, str] = {}
-    for name, value in request_headers.items():
+    for name, values in all_headers.items():
+        # Robyn lowercases header names internally, but we lowercase anyway for safety
         lower_name = name.lower()
         if not lower_name.startswith("x-"):
             continue
         if lower_name in _CONFIGURABLE_HEADERS_EXCLUDE:
             continue
-        forwarded[lower_name] = value
+        # .get_headers() returns lists; take last value (matches Headers.get() behaviour)
+        if values:
+            forwarded[lower_name] = values[-1]
     return forwarded
 
 
@@ -183,7 +190,7 @@ def _build_runnable_config(
     run_config: dict[str, Any] | None,
     owner_id: str,
     auth_user: AuthUser | None = None,
-    request_headers: dict[str, str] | None = None,
+    request_headers: Any = None,
 ) -> RunnableConfig:
     """Build a RunnableConfig from assistant and run configurations.
 
@@ -932,7 +939,7 @@ async def execute_run_stream(
     assistant_config: dict[str, Any] | None = None,
     graph_id: str | None = None,
     auth_user: AuthUser | None = None,
-    request_headers: dict[str, str] | None = None,
+    request_headers: Any = None,
 ) -> AsyncGenerator[str, None]:
     """Execute a run using the agent graph and yield SSE events.
 
@@ -1333,7 +1340,7 @@ async def execute_run_wait(
     assistant_config: dict[str, Any] | None = None,
     graph_id: str | None = None,
     auth_user: AuthUser | None = None,
-    request_headers: dict[str, str] | None = None,
+    request_headers: Any = None,
 ) -> dict[str, Any]:
     """Execute a run using the agent graph and return the final state.
 
