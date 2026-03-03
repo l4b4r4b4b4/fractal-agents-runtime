@@ -1,9 +1,10 @@
 # Goal 42: Semantic Router Integration — Dynamic Model Routing (Python)
 
-> **Status**: 🟢 Complete
+> **Status**: 🟢 Complete (Phase B merged to main)
 > **Priority**: P1 (High)
 > **Created**: 2026-03-01
-> **Updated**: 2026-03-02
+> **Updated**: 2026-03-03
+> **PR**: [#56](https://github.com/l4b4r4b4b4/fractal-agents-runtime/pull/56) — squash-merged to `main`
 > **Source**: [User Story — Semantic Router Integration](../../user-stories/semantic-router-integration.md)
 > **Upstream**: docproc-platform Goal 73 (AI Model Registry & Admin Dashboard)
 
@@ -180,6 +181,12 @@ Task-01 (research)
 | 2026-03-02 | Modality routing possible for OCR | Router has `modality` signal (AR/DIFFUSION/BOTH) using mmBERT classifier + keyword detection. Could route vision LLM requests (OpenAI vision format with `image_url`) to OCR-capable models. Limited to `/v1/chat/completions` API shape — doesn't handle `/v1/audio/*` or `/v1/embeddings`. |
 | 2026-03-02 | Router override rules refined | `SEMANTIC_ROUTER_ENABLED` no longer hijacks agent-level custom endpoints. If `base_url` is set, the agent skips the router. If `model_name_override` (call-time) or `custom_model_name` (assistant-level) is set, the router passes through that explicit model (no MoM reclassification). Only when no pin exists does the router inject `MoM`. Tests updated to reflect this behavior. |
 | 2026-03-02 | Added DeepSeek OCR + Ministral routing in config | `config/semantic-router/config.yaml` updated to add `ais-ocr` (local vLLM via `vllm-ocr:80`) and `ministral-3b-instruct` (cluster vLLM via host port-forward). Added `ocr` domain signal and `ocr_query` decision (priority 300) and routed extraction + classification to Ministral, analysis to GPT-4o, chat/fallback to GPT-4o-mini. |
+| 2026-03-03 | Phase B model restructure — GPT-5.2/4.1 default | Added `gpt-5.2`, `gpt-5.2-mini` (tentative), `gpt-4.1` as default agentic models. Shifted routing: analysis→gpt-5.2, chat/fallback→gpt-4.1. Reserved `gpt-4o`/`gpt-4o-mini` for vision-only (image inputs in chat) — webapp must pin via `model_name_override` since BERT classifier can't auto-detect image_url blocks. |
+| 2026-03-03 | Port 8001→9541 | Dev vLLM port-forward changed to avoid conflict with other dev stacks. Updated Helm values-dev, README, DEPLOYMENT.md. |
+| 2026-03-03 | Pre-push hooks: parallel→piped (fail-fast) | Changed lefthook pre-push from `parallel: true` to `piped: true` with priority ordering: merge check→lint→type check→OpenAPI→tests. Saves ~40s when lint fails. |
+| 2026-03-03 | Fixed TS mock.module() pollution | `hardware-keys.test.ts` mock of `isUniqueViolation` only checked `.code`, not `.errno`. Leaked via Bun's module cache to `db.test.ts`, causing 1 test failure in full suite. Fixed mock to match real implementation. 958→958 TS tests pass. |
+| 2026-03-03 | CI permissions fix | Added `permissions: { contents: read, pull-requests: read }` to `ci.yml` for `dorny/paths-filter@v3` to access PR changed files. |
+| 2026-03-03 | PR #56 squash-merged to main | All CI checks passed. Branch deleted. Main rebased locally. Goals 40+42 now on main. |
 
 ### Open Questions
 
@@ -192,9 +199,12 @@ Task-01 (research)
 - [ ] Should we add a health check that verifies the semantic router is reachable at startup?
   - Deferred to future work. Not critical for MVP. Docker compose health check covers dev use case.
 - [ ] Should we add language-based routing rules for German document processing?
-  - Router supports `whatlanggo` language detection as a first-class signal. Config patterns documented in `docs/semantic-router.md`. Deferred to Phase B when we have multiple model backends.
+  - Router supports `whatlanggo` language detection as a first-class signal. Config patterns documented in `docs/semantic-router.md`. Deferred to Phase C.
 - [ ] Should we explore modality routing for OCR via vision LLMs?
-  - Router has `modality` signal (AR/DIFFUSION/BOTH). Could route OCR requests to vision models. Only works for `/v1/chat/completions` API shape. Documented in integration guide. Explore when we have a vision model endpoint.
+  - Router has `modality` signal (AR/DIFFUSION/BOTH). Could route OCR requests to vision models. Only works for `/v1/chat/completions` API shape. Documented in integration guide. Explore in Phase C when modality signal is configured.
+- [ ] Verify `gpt-5.2-mini` exists at OpenAI API — remove from config if unavailable.
+- [ ] Live-test semantic router with all 7 models + 6 decisions on dashboard.
+- [ ] Webapp integration testing — hand off `docs/webapp-integration-guide.md` to Next.js team.
 
 ## Technical Details
 

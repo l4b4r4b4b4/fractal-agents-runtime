@@ -33,6 +33,7 @@
 | 37 | ChromaDB Multi-Tenant Access Control with Supabase JWT | ⚪ Not Started | P2 | 2026-02-20 |
 | 38 | Store API Namespace Fix + OpenAPI Alignment | 🟢 Complete | P1 | 2026-02-20 |
 | 39 | Benchmark Methodology — Long-Duration Runs & Statistical Rigor | ⚪ Not Started | P3 | 2026-02-20 |
+| 43 | Remove Automatic Startup Agent Sync | 🟢 Complete | P1 | 2026-03-03 |
 
 ---
 
@@ -72,6 +73,7 @@
 - [31-Local-Langfuse-V3-Dev-Stack](./31-Local-Langfuse-V3-Dev-Stack/scratchpad.md)
 - [32-Resource-Profiled-Benchmarks](./32-Resource-Profiled-Benchmarks/scratchpad.md)
 - [33-TS-Runtime-Postgres-Native-Performance](./33-TS-Runtime-Postgres-Native-Performance/scratchpad.md)
+- [43-Exclude-Template-Agents-From-Startup-Sync](./43-Exclude-Template-Agents-From-Startup-Sync/scratchpad.md)
 
 ---
 
@@ -121,6 +123,17 @@ Goal 02 next priority — commit all, push, PR, Docker build, AKS deploy, tag v0
 ---
 
 ## Recent Activity
+
+### 2026-03-03 — Session (Goal 43 🟢 COMPLETE — Remove Automatic Startup Agent Sync)
+
+- Removed `startup_agent_sync()` function from `agent_sync.py` — multi-tenancy anti-pattern
+- Removed startup sync call and `AGENT_SYNC_SCOPE` env var handling from `app.py`
+- Added `is_global` field to `AgentSyncData` model + both SQL queries + row parser
+- Added `AND a.is_global = true` filter to `_build_fetch_agents_sql()` (defense-in-depth for batch queries)
+- Removed `TestStartupAgentSync` test class (4 tests), added 3 new `is_global` tests
+- All building blocks retained: `lazy_sync_agent`, `sync_single_agent`, `fetch_active_agents`, `fetch_active_agent_by_id`
+- **124 agent_sync tests pass**, **1780 total tests pass**, **77.22% coverage** (≥73% threshold)
+- Linting clean (`ruff check` + `ruff format`)
 
 ### 2026-02-20 — Session 42 (Auth + Store Namespace Fix + Benchmarks + Visualization — v0.1.0 Ready)
 

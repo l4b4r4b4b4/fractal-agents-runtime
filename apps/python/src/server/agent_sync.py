@@ -65,6 +65,8 @@ class AgentSyncData(BaseModel):
         runtime_model_name: Fully qualified provider model, e.g. "openai:gpt-4o".
         graph_id: LangGraph graph id to run (typically "agent").
         langgraph_assistant_id: Existing assistant id stored in Supabase (if any).
+        is_global: Whether this agent is a global org agent (synced at startup) or a
+            per-user template (synced lazily on first access).
         mcp_tools: List of MCP tools assigned to the agent.
     """
 
@@ -79,6 +81,7 @@ class AgentSyncData(BaseModel):
     runtime_model_name: str | None = None
     graph_id: str | None = None
     langgraph_assistant_id: str | None = None
+    is_global: bool = True
 
     mcp_tools: list[AgentSyncMcpTool] = Field(default_factory=list)
 
@@ -289,10 +292,16 @@ def _agent_from_row(row: dict[str, Any]) -> AgentSyncData:
     if runtime_model_name is not None:
         runtime_model_name = str(runtime_model_name)
 
+    # Parse is_global — defaults to True for backward compatibility with rows
+    # that predate the column.
+    is_global_raw = row.get("is_global")
+    is_global = bool(is_global_raw) if is_global_raw is not None else True
+
     data = AgentSyncData(
         agent_id=agent_id,
         organization_id=organization_id,
         name=str(row.get("name")) if row.get("name") is not None else None,
+        is_global=is_global,
         system_prompt=(
             str(row.get("system_prompt"))
             if row.get("system_prompt") is not None
@@ -364,6 +373,7 @@ def _build_fetch_agents_sql(scope: AgentSyncScope) -> tuple[str, dict[str, Any]]
       a.id AS agent_id,
       a.organization_id,
       a.name,
+      a.is_global,
       a.system_prompt,
       a.sampling_params,
       a.assistant_tool_ids,
@@ -382,6 +392,7 @@ def _build_fetch_agents_sql(scope: AgentSyncScope) -> tuple[str, dict[str, Any]]
     LEFT JOIN public.ai_models am ON am.id = gae.language_model_id
     WHERE a.status = 'active'
       AND a.deleted_at IS NULL
+      AND a.is_global = true
       {scope_filter_sql}
     ORDER BY a.organization_id, a.name
     """.strip("\n")
@@ -455,6 +466,7 @@ async def fetch_active_agent_by_id(
       a.id AS agent_id,
       a.organization_id,
       a.name,
+      a.is_global,
       a.system_prompt,
       a.sampling_params,
       a.assistant_tool_ids,
@@ -744,61 +756,18 @@ async def sync_single_agent(
     )
 
 
-async def startup_agent_sync(
-    get_connection: Any,
-    storage: AssistantStorageProtocol,
-    *,
-    scope: AgentSyncScope,
-    owner_id: str,
-) -> dict[str, int]:
-    """Sync agents at startup for the configured scope.
-
-    This is intended to *warm* assistant storage in dev/single-tenant scenarios.
-    In production multi-tenant environments, `scope` should usually be "none"
-    and lazy sync should be used.
-
-    Returns:
-        Summary counters: {"total": N, "created": X, "updated": Y, "skipped": Z, "failed": W}
-    """
-    if scope.type == "none":
-        return {"total": 0, "created": 0, "updated": 0, "skipped": 0, "failed": 0}
-
-    agents = await fetch_active_agents(get_connection, scope)
-    summary = {
-        "total": len(agents),
-        "created": 0,
-        "updated": 0,
-        "skipped": 0,
-        "failed": 0,
-    }
-
-    for agent in agents:
-        try:
-            result = await sync_single_agent(
-                get_connection,
-                storage,
-                agent=agent,
-                owner_id=owner_id,
-                write_back_assistant_id=True,
-            )
-            summary[result.action] += 1
-        except Exception as sync_error:
-            summary["failed"] += 1
-            logger.exception(
-                "Startup agent sync failed for agent %s: %s",
-                agent.agent_id,
-                sync_error,
-            )
-
-    logger.info(
-        "Startup sync summary: total=%d created=%d updated=%d skipped=%d failed=%d",
-        summary["total"],
-        summary["created"],
-        summary["updated"],
-        summary["skipped"],
-        summary["failed"],
-    )
-    return summary
+# startup_agent_sync() REMOVED (Goal 43).
+#
+# Automatic boot sync is a multi-tenancy anti-pattern — the runtime should
+# not decide at boot time which agents to load for which tenants.  Agent
+# instances are created on-demand via lazy_sync_agent() when the platform
+# or a user triggers it (e.g. opening a chat, visiting the agents page).
+#
+# The building blocks above remain available for on-demand use:
+#   - fetch_active_agents(scope)  → batch query ("what agents should exist for org X?")
+#   - fetch_active_agent_by_id()  → single agent lookup
+#   - sync_single_agent()         → create/update one runtime assistant
+#   - lazy_sync_agent()           → on-demand sync with TTL cache (below)
 
 
 async def lazy_sync_agent(
