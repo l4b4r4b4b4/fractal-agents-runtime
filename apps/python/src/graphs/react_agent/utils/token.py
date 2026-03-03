@@ -97,7 +97,10 @@ def _build_token_namespace(
     )
 
 
-async def get_tokens(config: RunnableConfig) -> dict[str, Any] | None:
+async def get_tokens(
+    config: RunnableConfig,
+    store: Any = None,
+) -> dict[str, Any] | None:
     """Return cached MCP tokens from the LangGraph store if present and valid.
 
     Uses the org-scoped namespace ``(org_id, user_id, assistant_id, "tokens")``.
@@ -107,8 +110,23 @@ async def get_tokens(config: RunnableConfig) -> dict[str, Any] | None:
     - Namespace components may be missing (returns None).
     - Token objects may have unexpected shapes.
     - Missing/invalid expiration metadata results in cache eviction + None.
+
+    Args:
+        config: The LangGraph runnable config.
+        store: An explicit ``AsyncPostgresStore`` instance.  When provided
+            (e.g. passed down from the graph build phase) it is used
+            directly, bypassing ``langgraph.config.get_store()`` which
+            requires an active runnable context.  Falls back to
+            ``get_store()`` when ``None`` and a runnable context exists.
     """
-    store = get_store()
+    if store is None:
+        try:
+            store = get_store()
+        except RuntimeError:
+            # Called outside a LangGraph runnable context (e.g. graph build
+            # phase).  No store available — skip cache read.
+            logger.debug("get_tokens: no runnable context and no store provided")
+            return None
     if store is None:
         return None
 
@@ -163,15 +181,33 @@ async def get_tokens(config: RunnableConfig) -> dict[str, Any] | None:
     return tokens_value
 
 
-async def set_tokens(config: RunnableConfig, tokens: dict[str, Any] | None) -> None:
+async def set_tokens(
+    config: RunnableConfig,
+    tokens: dict[str, Any] | None,
+    store: Any = None,
+) -> None:
     """Persist MCP tokens to the LangGraph store (best-effort).
 
     Uses the org-scoped namespace ``(org_id, user_id, assistant_id, "tokens")``.
+
+    Args:
+        config: The LangGraph runnable config.
+        tokens: Token dict to persist.  ``None`` is a no-op.
+        store: An explicit ``AsyncPostgresStore`` instance.  When provided
+            it is used directly.  Falls back to ``get_store()`` when
+            ``None`` and a runnable context exists.
     """
     if tokens is None:
         return
 
-    store = get_store()
+    if store is None:
+        try:
+            store = get_store()
+        except RuntimeError:
+            # Called outside a LangGraph runnable context (e.g. graph build
+            # phase).  Token will be exchanged fresh on the next request.
+            logger.debug("set_tokens: no runnable context and no store provided")
+            return
     if store is None:
         return
 
@@ -187,7 +223,10 @@ async def set_tokens(config: RunnableConfig, tokens: dict[str, Any] | None) -> N
         return
 
 
-async def fetch_tokens(config: RunnableConfig) -> dict[str, Any] | None:
+async def fetch_tokens(
+    config: RunnableConfig,
+    store: Any = None,
+) -> dict[str, Any] | None:
     """Fetch MCP access token if it doesn't already exist in the store.
 
     Supports the multi-server MCP config shape::
@@ -199,8 +238,15 @@ async def fetch_tokens(config: RunnableConfig) -> dict[str, Any] | None:
 
     Returns a token dict that can be reused for one or more auth-required
     MCP servers, or ``None`` when tokens are unavailable.
+
+    Args:
+        config: The LangGraph runnable config.
+        store: An explicit ``AsyncPostgresStore`` instance forwarded from
+            the graph build phase.  Passed through to ``get_tokens`` and
+            ``set_tokens`` so that caching works even when there is no
+            active LangGraph runnable context.
     """
-    current_tokens = await get_tokens(config)
+    current_tokens = await get_tokens(config, store=store)
     if isinstance(current_tokens, dict) and current_tokens:
         return current_tokens
 
@@ -239,5 +285,5 @@ async def fetch_tokens(config: RunnableConfig) -> dict[str, Any] | None:
     if mcp_tokens is None:
         return None
 
-    await set_tokens(config, mcp_tokens)
+    await set_tokens(config, mcp_tokens, store=store)
     return mcp_tokens

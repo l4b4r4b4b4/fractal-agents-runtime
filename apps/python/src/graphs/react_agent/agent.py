@@ -311,7 +311,7 @@ async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
         )
 
         if any_auth_required:
-            mcp_tokens = await fetch_tokens(config)
+            mcp_tokens = await fetch_tokens(config, store=store)
         else:
             mcp_tokens = None
 
