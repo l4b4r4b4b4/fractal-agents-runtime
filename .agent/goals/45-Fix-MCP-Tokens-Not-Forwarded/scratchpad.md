@@ -1,6 +1,6 @@
 # Goal 45: Fix MCP Auth Tokens Not Forwarded to Servers
 
-**Status:** ⚪ Not Started
+**Status:** 🟢 Complete
 **Priority:** P0 — Blocking (all MCP servers with `auth_required: true` are skipped)
 **Predecessor:** Goal 44 (Fix `get_config` outside runnable context) — 🟢 Complete
 **Bug Report:** `.agent/bugs/runtime-bug-mcp-tokens-not-forwarded.md`
@@ -301,24 +301,24 @@ We don't modify `verify_token_auto` / `verify_token_local` because:
 
 ## Success Criteria
 
-- [ ] `AuthUser` stores raw JWT token
-- [ ] `auth_middleware` saves raw token in `AuthUser.token`
-- [ ] `_build_runnable_config` populates `langgraph_auth_user`, `langgraph_auth_user_id`, and `x-supabase-access-token`
-- [ ] `_build_mcp_runnable_config` populates the same keys
-- [ ] All 4 authenticated route handlers pass `auth_user` through
-- [ ] `execute_run_stream` and `execute_run_wait` accept and forward `auth_user`
-- [ ] `fetch_tokens()` reads from `langgraph_auth_user` with fallback
-- [ ] RAG tools in `react_agent` read from `langgraph_auth_user` with fallback
-- [ ] RAG tools in `research_agent` read from `langgraph_auth_user` with fallback
-- [ ] `research_agent` passes `store=store` to `fetch_tokens()`
-- [ ] MCP token exchange completes (HTTP call to `/oauth/token`)
-- [ ] MCP servers connect with auth headers
-- [ ] Runtime logs show `INFO MCP server connected` instead of `WARNING MCP server skipped`
-- [ ] A2A handler still works (no JWT, `langgraph_auth_user` is None — graceful)
-- [ ] `execute_agent_run` still works (no JWT — graceful)
-- [ ] All existing tests pass
-- [ ] New tests cover `langgraph_auth_user` propagation
-- [ ] Coverage ≥ 73%
+- [x] `AuthUser` stores raw JWT token
+- [x] `auth_middleware` saves raw token in `AuthUser.token`
+- [x] `_build_runnable_config` populates `langgraph_auth_user`, `langgraph_auth_user_id`, and `x-supabase-access-token`
+- [x] `_build_mcp_runnable_config` populates the same keys
+- [x] All 4 authenticated route handlers pass `auth_user` through
+- [x] `execute_run_stream` and `execute_run_wait` accept and forward `auth_user`
+- [x] `fetch_tokens()` reads from `langgraph_auth_user` with fallback
+- [x] RAG tools in `react_agent` read from `langgraph_auth_user` with fallback
+- [x] RAG tools in `research_agent` read from `langgraph_auth_user` with fallback
+- [x] `research_agent` passes `store=store` to `fetch_tokens()`
+- [x] MCP token exchange completes (HTTP call to `/oauth/token`)
+- [x] MCP servers connect with auth headers
+- [x] Runtime logs show `INFO MCP server connected` instead of `WARNING MCP server skipped`
+- [x] A2A handler still works (no JWT, `langgraph_auth_user` is None — graceful)
+- [x] `execute_agent_run` still works (no JWT — graceful)
+- [x] All existing tests pass
+- [x] New tests cover `langgraph_auth_user` propagation
+- [x] Coverage ≥ 73%
 
 ---
 

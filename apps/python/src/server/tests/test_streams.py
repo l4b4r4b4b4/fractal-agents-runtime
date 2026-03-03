@@ -1262,3 +1262,234 @@ class TestExecuteRunStreamIntegration:
                 f"Internal chain end (ChatOpenAI inside analyzer) should NOT "
                 f"emit updates events, but got {len(updates_events)}"
             )
+
+
+# ============================================================================
+# Goal 45: LangGraph Auth User & Configurable Headers
+# ============================================================================
+
+
+class TestExtractConfigurableHeaders:
+    """Tests for _extract_configurable_headers helper (Goal 45)."""
+
+    def test_forwards_x_headers(self):
+        """Include x-* headers following LangGraph Platform convention."""
+        from server.routes.streams import _extract_configurable_headers
+
+        headers = {
+            "x-organization-id": "org-123",
+            "x-user-id": "user-456",
+            "x-custom-header": "value",
+        }
+        result = _extract_configurable_headers(headers)
+        assert result == {
+            "x-organization-id": "org-123",
+            "x-user-id": "user-456",
+            "x-custom-header": "value",
+        }
+
+    def test_excludes_authorization_header(self):
+        """Exclude authorization (sensitive credential)."""
+        from server.routes.streams import _extract_configurable_headers
+
+        headers = {
+            "authorization": "Bearer secret",
+            "x-safe-header": "value",
+        }
+        result = _extract_configurable_headers(headers)
+        assert result == {"x-safe-header": "value"}
+
+    def test_excludes_x_api_key(self):
+        """Exclude x-api-key (sensitive credential)."""
+        from server.routes.streams import _extract_configurable_headers
+
+        headers = {
+            "x-api-key": "secret-key",
+            "x-organization-id": "org-123",
+        }
+        result = _extract_configurable_headers(headers)
+        assert result == {"x-organization-id": "org-123"}
+
+    def test_lowercases_header_names(self):
+        """Header names are lowercased (LangGraph Platform behaviour)."""
+        from server.routes.streams import _extract_configurable_headers
+
+        headers = {
+            "X-Organization-Id": "org-123",
+            "X-USER-ID": "user-456",
+        }
+        result = _extract_configurable_headers(headers)
+        assert result == {
+            "x-organization-id": "org-123",
+            "x-user-id": "user-456",
+        }
+
+    def test_ignores_non_x_headers(self):
+        """Only x-* headers are forwarded."""
+        from server.routes.streams import _extract_configurable_headers
+
+        headers = {
+            "content-type": "application/json",
+            "accept": "text/html",
+            "x-custom": "value",
+        }
+        result = _extract_configurable_headers(headers)
+        assert result == {"x-custom": "value"}
+
+    def test_handles_none_headers(self):
+        """None headers → empty dict."""
+        from server.routes.streams import _extract_configurable_headers
+
+        result = _extract_configurable_headers(None)
+        assert result == {}
+
+    def test_handles_empty_headers(self):
+        """Empty headers dict → empty dict."""
+        from server.routes.streams import _extract_configurable_headers
+
+        result = _extract_configurable_headers({})
+        assert result == {}
+
+
+class TestBuildRunnableConfigAuthUser:
+    """Tests for _build_runnable_config langgraph_auth_user injection (Goal 45)."""
+
+    def test_populates_langgraph_auth_user_when_provided(self):
+        """auth_user → langgraph_auth_user in configurable."""
+        from server.auth import AuthUser
+        from server.routes.streams import _build_runnable_config
+
+        user = AuthUser(
+            identity="user-123",
+            email="test@example.com",
+            metadata={"role": "admin"},
+            token="jwt-abc",
+        )
+        config = _build_runnable_config(
+            run_id="run-1",
+            thread_id="thread-1",
+            assistant_id="asst-1",
+            assistant_config=None,
+            run_config=None,
+            owner_id="user-123",
+            auth_user=user,
+        )
+
+        assert "langgraph_auth_user" in config["configurable"]
+        auth_user_dict = config["configurable"]["langgraph_auth_user"]
+        assert auth_user_dict["identity"] == "user-123"
+        assert auth_user_dict["email"] == "test@example.com"
+        assert auth_user_dict["token"] == "jwt-abc"
+
+    def test_populates_langgraph_auth_user_id(self):
+        """auth_user → langgraph_auth_user_id set to identity."""
+        from server.auth import AuthUser
+        from server.routes.streams import _build_runnable_config
+
+        user = AuthUser(identity="user-456", token="jwt-xyz")
+        config = _build_runnable_config(
+            run_id="run-1",
+            thread_id="thread-1",
+            assistant_id="asst-1",
+            assistant_config=None,
+            run_config=None,
+            owner_id="user-456",
+            auth_user=user,
+        )
+
+        assert config["configurable"]["langgraph_auth_user_id"] == "user-456"
+
+    def test_populates_x_supabase_access_token_for_backward_compat(self):
+        """auth_user with token → x-supabase-access-token set (backward compat)."""
+        from server.auth import AuthUser
+        from server.routes.streams import _build_runnable_config
+
+        user = AuthUser(identity="user-789", token="jwt-legacy")
+        config = _build_runnable_config(
+            run_id="run-1",
+            thread_id="thread-1",
+            assistant_id="asst-1",
+            assistant_config=None,
+            run_config=None,
+            owner_id="user-789",
+            auth_user=user,
+        )
+
+        assert config["configurable"]["x-supabase-access-token"] == "jwt-legacy"
+
+    def test_skips_auth_keys_when_auth_user_none(self):
+        """auth_user=None → no langgraph_auth_user or x-supabase-access-token."""
+        from server.routes.streams import _build_runnable_config
+
+        config = _build_runnable_config(
+            run_id="run-1",
+            thread_id="thread-1",
+            assistant_id="asst-1",
+            assistant_config=None,
+            run_config=None,
+            owner_id="mcp-client",
+            auth_user=None,
+        )
+
+        assert "langgraph_auth_user" not in config["configurable"]
+        assert "langgraph_auth_user_id" not in config["configurable"]
+        assert "x-supabase-access-token" not in config["configurable"]
+
+    def test_skips_x_supabase_access_token_when_token_none(self):
+        """auth_user with token=None → x-supabase-access-token not set."""
+        from server.auth import AuthUser
+        from server.routes.streams import _build_runnable_config
+
+        user = AuthUser(identity="user-no-token", token=None)
+        config = _build_runnable_config(
+            run_id="run-1",
+            thread_id="thread-1",
+            assistant_id="asst-1",
+            assistant_config=None,
+            run_config=None,
+            owner_id="user-no-token",
+            auth_user=user,
+        )
+
+        # langgraph_auth_user still populated
+        assert "langgraph_auth_user" in config["configurable"]
+        # But x-supabase-access-token is NOT set
+        assert "x-supabase-access-token" not in config["configurable"]
+
+    def test_forwards_request_headers_into_configurable(self):
+        """request_headers with x-* → merged into configurable."""
+        from server.routes.streams import _build_runnable_config
+
+        headers = {
+            "x-organization-id": "org-999",
+            "x-custom-header": "custom-value",
+        }
+        config = _build_runnable_config(
+            run_id="run-1",
+            thread_id="thread-1",
+            assistant_id="asst-1",
+            assistant_config=None,
+            run_config=None,
+            owner_id="user-1",
+            request_headers=headers,
+        )
+
+        assert config["configurable"]["x-organization-id"] == "org-999"
+        assert config["configurable"]["x-custom-header"] == "custom-value"
+
+    def test_request_headers_none_is_safe(self):
+        """request_headers=None → no error, no headers in configurable."""
+        from server.routes.streams import _build_runnable_config
+
+        config = _build_runnable_config(
+            run_id="run-1",
+            thread_id="thread-1",
+            assistant_id="asst-1",
+            assistant_config=None,
+            run_config=None,
+            owner_id="user-1",
+            request_headers=None,
+        )
+
+        # No crash, config built successfully
+        assert config["configurable"]["thread_id"] == "thread-1"

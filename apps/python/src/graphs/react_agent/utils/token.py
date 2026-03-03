@@ -252,7 +252,12 @@ async def fetch_tokens(
 
     configurable = config.get("configurable", {}) or {}
 
-    supabase_token = configurable.get("x-supabase-access-token")
+    # Read token from langgraph_auth_user (LangGraph Platform convention)
+    # with fallback to the legacy x-supabase-access-token key.
+    auth_user = configurable.get("langgraph_auth_user") or {}
+    supabase_token = auth_user.get("token") or configurable.get(
+        "x-supabase-access-token"
+    )
     if not supabase_token:
         return None
 

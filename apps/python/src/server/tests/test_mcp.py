@@ -679,6 +679,58 @@ class TestAgentModule:
         assert "assistant" not in config["configurable"]
 
     @pytest.mark.asyncio
+    async def test_build_mcp_runnable_config_with_auth_user(self):
+        """Builds config with langgraph_auth_user when auth_user provided (Goal 45)."""
+        from server.agent import _build_mcp_runnable_config
+        from server.auth import AuthUser
+
+        user = AuthUser(
+            identity="user-123",
+            email="test@example.com",
+            token="jwt-token-abc",
+        )
+        config = _build_mcp_runnable_config(
+            thread_id="t-3",
+            assistant_id="agent",
+            assistant_config=None,
+            owner_id="user-123",
+            auth_user=user,
+        )
+
+        # Runtime metadata still present
+        assert config["configurable"]["thread_id"] == "t-3"
+        assert config["configurable"]["owner"] == "user-123"
+
+        # LangGraph Platform auth keys populated
+        assert "langgraph_auth_user" in config["configurable"]
+        auth_user_dict = config["configurable"]["langgraph_auth_user"]
+        assert auth_user_dict["identity"] == "user-123"
+        assert auth_user_dict["email"] == "test@example.com"
+        assert auth_user_dict["token"] == "jwt-token-abc"
+        assert config["configurable"]["langgraph_auth_user_id"] == "user-123"
+
+        # Backward compat key
+        assert config["configurable"]["x-supabase-access-token"] == "jwt-token-abc"
+
+    @pytest.mark.asyncio
+    async def test_build_mcp_runnable_config_auth_user_none(self):
+        """Config without auth_user doesn't populate auth keys."""
+        from server.agent import _build_mcp_runnable_config
+
+        config = _build_mcp_runnable_config(
+            thread_id="t-4",
+            assistant_id="agent",
+            assistant_config=None,
+            owner_id="mcp-client",
+            auth_user=None,
+        )
+
+        assert config["configurable"]["owner"] == "mcp-client"
+        assert "langgraph_auth_user" not in config["configurable"]
+        assert "langgraph_auth_user_id" not in config["configurable"]
+        assert "x-supabase-access-token" not in config["configurable"]
+
+    @pytest.mark.asyncio
     async def test_get_agent_tool_info_no_assistant(self):
         """Returns empty defaults when no assistant is found in storage."""
         from server.agent import get_agent_tool_info

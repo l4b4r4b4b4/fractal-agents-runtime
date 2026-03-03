@@ -51,15 +51,37 @@ def _make_config(
     assistant_id: str = "asst-1",
     supabase_token: str | None = "sb-token-abc",
     mcp_config: dict[str, Any] | None = None,
+    use_langgraph_auth_user: bool = True,
 ) -> RunnableConfig:
-    """Build a minimal RunnableConfig for token tests."""
+    """Build a minimal RunnableConfig for token tests.
+
+    Args:
+        org_id: Organization ID for namespace.
+        user_id: User ID for namespace.
+        assistant_id: Assistant ID for namespace.
+        supabase_token: The Supabase JWT token.
+        mcp_config: MCP server configuration.
+        use_langgraph_auth_user: If True, set langgraph_auth_user (LangGraph
+            Platform convention). If False, only set x-supabase-access-token
+            (legacy key) to test backward compatibility.
+    """
     configurable: dict[str, Any] = {
         "supabase_organization_id": org_id,
         "owner": user_id,
         "assistant_id": assistant_id,
     }
     if supabase_token is not None:
+        # Always set legacy key for backward compat tests
         configurable["x-supabase-access-token"] = supabase_token
+        # Also set langgraph_auth_user (LangGraph Platform convention)
+        if use_langgraph_auth_user:
+            configurable["langgraph_auth_user"] = {
+                "identity": user_id,
+                "email": None,
+                "metadata": {},
+                "token": supabase_token,
+            }
+            configurable["langgraph_auth_user_id"] = user_id
     if mcp_config is not None:
         configurable["mcp_config"] = mcp_config
     return RunnableConfig(configurable=configurable)
@@ -594,6 +616,117 @@ class TestFetchTokens:
         # Must use the first auth-required server, not the public one
         call_url = mock_http.call_args.args[1]
         assert "private.example.com" in call_url
+
+
+# ---------------------------------------------------------------------------
+# TestFetchTokensLanggraphAuthUser
+# ---------------------------------------------------------------------------
+
+
+class TestFetchTokensLanggraphAuthUser:
+    """Tests for fetch_tokens reading from langgraph_auth_user (Goal 45)."""
+
+    async def test_reads_token_from_langgraph_auth_user(self):
+        """fetch_tokens reads token from langgraph_auth_user["token"]."""
+        from graphs.react_agent.utils.token import fetch_tokens
+
+        store = _make_store(token_record=None)
+        # Config has langgraph_auth_user (LangGraph Platform convention)
+        config = _make_config(
+            supabase_token="jwt-from-auth-user",
+            mcp_config=_MCP_CONFIG_AUTH_REQUIRED,
+            use_langgraph_auth_user=True,
+        )
+        fresh_token = {"access_token": "mcp-tok", "expires_in": 3600}
+
+        with patch(
+            "graphs.react_agent.utils.token.get_mcp_access_token",
+            new=AsyncMock(return_value=fresh_token),
+        ) as mock_http:
+            result = await fetch_tokens(config, store=store)
+
+        assert result == fresh_token
+        # Token exchange used the JWT from langgraph_auth_user
+        call_token = mock_http.call_args.args[0]
+        assert call_token == "jwt-from-auth-user"
+
+    async def test_falls_back_to_x_supabase_access_token(self):
+        """fetch_tokens falls back to x-supabase-access-token if no langgraph_auth_user."""
+        from graphs.react_agent.utils.token import fetch_tokens
+
+        store = _make_store(token_record=None)
+        # Config has only the legacy key (backward compat)
+        config = _make_config(
+            supabase_token="jwt-legacy",
+            mcp_config=_MCP_CONFIG_AUTH_REQUIRED,
+            use_langgraph_auth_user=False,
+        )
+        fresh_token = {"access_token": "mcp-tok", "expires_in": 3600}
+
+        with patch(
+            "graphs.react_agent.utils.token.get_mcp_access_token",
+            new=AsyncMock(return_value=fresh_token),
+        ) as mock_http:
+            result = await fetch_tokens(config, store=store)
+
+        assert result == fresh_token
+        # Token exchange used the JWT from legacy key
+        call_token = mock_http.call_args.args[0]
+        assert call_token == "jwt-legacy"
+
+    async def test_prefers_langgraph_auth_user_over_legacy_key(self):
+        """When both keys present, langgraph_auth_user takes precedence."""
+        from graphs.react_agent.utils.token import fetch_tokens
+
+        store = _make_store(token_record=None)
+        # Config has BOTH keys (transition period)
+        config = RunnableConfig(
+            configurable={
+                "supabase_organization_id": "org-1",
+                "owner": "user-1",
+                "assistant_id": "asst-1",
+                "langgraph_auth_user": {
+                    "identity": "user-1",
+                    "token": "jwt-new",
+                },
+                "x-supabase-access-token": "jwt-old",
+                "mcp_config": _MCP_CONFIG_AUTH_REQUIRED,
+            }
+        )
+        fresh_token = {"access_token": "mcp-tok", "expires_in": 3600}
+
+        with patch(
+            "graphs.react_agent.utils.token.get_mcp_access_token",
+            new=AsyncMock(return_value=fresh_token),
+        ) as mock_http:
+            result = await fetch_tokens(config, store=store)
+
+        assert result == fresh_token
+        # Must use the NEW key from langgraph_auth_user
+        call_token = mock_http.call_args.args[0]
+        assert call_token == "jwt-new"
+
+    async def test_returns_none_when_auth_user_has_no_token(self):
+        """langgraph_auth_user present but token=None → None."""
+        from graphs.react_agent.utils.token import fetch_tokens
+
+        store = _make_store(token_record=None)
+        config = RunnableConfig(
+            configurable={
+                "supabase_organization_id": "org-1",
+                "owner": "user-1",
+                "assistant_id": "asst-1",
+                "langgraph_auth_user": {
+                    "identity": "user-1",
+                    "token": None,
+                },
+                "mcp_config": _MCP_CONFIG_AUTH_REQUIRED,
+            }
+        )
+
+        result = await fetch_tokens(config, store=store)
+
+        assert result is None
 
 
 # ---------------------------------------------------------------------------

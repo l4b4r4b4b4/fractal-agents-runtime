@@ -146,7 +146,11 @@ async def graph(
     tools: list[Any] = []
 
     # RAG tools
-    supabase_token = (config.get("configurable", {}) or {}).get(
+    # Read token from langgraph_auth_user (LangGraph Platform convention)
+    # with fallback to the legacy x-supabase-access-token key.
+    _configurable = config.get("configurable", {}) or {}
+    _auth_user = _configurable.get("langgraph_auth_user") or {}
+    supabase_token = _auth_user.get("token") or _configurable.get(
         "x-supabase-access-token"
     )
     if cfg.rag and cfg.rag.rag_url and cfg.rag.collections and supabase_token:
@@ -178,7 +182,7 @@ async def graph(
             try:
                 from graphs.react_agent.utils.token import fetch_tokens
 
-                mcp_tokens = await fetch_tokens(config)
+                mcp_tokens = await fetch_tokens(config, store=store)
             except Exception:
                 logger.warning(
                     "research_agent: failed to fetch MCP auth tokens",

@@ -35,7 +35,7 @@
 | 39 | Benchmark Methodology — Long-Duration Runs & Statistical Rigor | ⚪ Not Started | P3 | 2026-02-20 |
 | 43 | Remove Automatic Startup Agent Sync | 🟢 Complete | P1 | 2026-03-03 |
 | 44 | Fix MCP Token Fetch Outside Runnable Context | 🟢 Complete | P0 (Critical) | 2026-03-03 |
-| 45 | Fix MCP Auth Tokens Not Forwarded to Servers | 🟡 In Progress | P0 (Blocking) | 2026-03-03 |
+| 45 | Fix MCP Auth Tokens Not Forwarded to Servers | 🟢 Complete | P0 (Blocking) | 2026-03-03 |
 
 ---
 
