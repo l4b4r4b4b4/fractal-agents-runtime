@@ -38,7 +38,6 @@ from server.agent_sync import (
     fetch_active_agents,
     lazy_sync_agent,
     parse_agent_sync_scope,
-    startup_agent_sync,
     sync_single_agent,
 )
 
@@ -191,12 +190,14 @@ def _make_agent_row(
     mcp_auth_required: bool | None = None,
     sampling_params: dict[str, Any] | None = None,
     assistant_tool_ids: list[str] | None = None,
+    is_global: bool = True,
     **overrides: Any,
 ) -> dict[str, Any]:
     row: dict[str, Any] = {
         "agent_id": str(agent_id or AGENT_UUID),
         "organization_id": str(organization_id or ORG_UUID),
         "name": name,
+        "is_global": is_global,
         "system_prompt": system_prompt,
         "sampling_params": sampling_params if sampling_params is not None else {},
         "assistant_tool_ids": assistant_tool_ids
@@ -587,6 +588,23 @@ class TestAgentFromRow:
         agent = _agent_from_row(row)
         assert len(agent.mcp_tools) == 1
 
+    def test_row_with_is_global_true(self):
+        row = _make_agent_row(is_global=True)
+        agent = _agent_from_row(row)
+        assert agent.is_global is True
+
+    def test_row_with_is_global_false(self):
+        row = _make_agent_row(is_global=False)
+        agent = _agent_from_row(row)
+        assert agent.is_global is False
+
+    def test_row_with_is_global_missing_defaults_true(self):
+        """Rows from schemas that predate is_global default to True."""
+        row = _make_agent_row()
+        del row["is_global"]
+        agent = _agent_from_row(row)
+        assert agent.is_global is True
+
     def test_row_with_none_optional_strings(self):
         row = _make_agent_row(
             name=None,
@@ -681,9 +699,11 @@ class TestBuildFetchAgentsSql:
         sql, params = _build_fetch_agents_sql(AgentSyncScope.all())
         assert "public.agents" in sql
         assert "status = 'active'" in sql
+        assert "is_global = true" in sql
         assert "organization_id = ANY" not in sql
         assert params == {}
         # Verify new columns are queried instead of old ones
+        assert "a.is_global" in sql
         assert "a.sampling_params" in sql
         assert "a.assistant_tool_ids" in sql
         assert "a.temperature" not in sql
@@ -1285,84 +1305,12 @@ class TestSyncSingleAgent:
 
 
 # ============================================================================
-# startup_agent_sync
+# startup_agent_sync — REMOVED (Goal 43)
+#
+# Automatic boot sync is a multi-tenancy anti-pattern.  Tests for the removed
+# startup_agent_sync() function were deleted here.  The building blocks it
+# used (fetch_active_agents, sync_single_agent) are still tested above.
 # ============================================================================
-
-
-class TestStartupAgentSync:
-    """Tests for startup_agent_sync()."""
-
-    async def test_none_scope_returns_zeros(self):
-        factory, _ = _make_factory()
-        storage = FakeStorage()
-
-        summary = await startup_agent_sync(
-            factory, storage, scope=AgentSyncScope.none(), owner_id="system"
-        )
-
-        assert summary == {
-            "total": 0,
-            "created": 0,
-            "updated": 0,
-            "skipped": 0,
-            "failed": 0,
-        }
-
-    async def test_creates_agents(self):
-        rows = [_make_agent_row()]
-        factory, _ = _make_factory(
-            MockCursor(rows),  # fetch_active_agents
-            MockCursor(rowcount=1),  # write_back
-        )
-        storage = FakeStorage()
-
-        summary = await startup_agent_sync(
-            factory, storage, scope=AgentSyncScope.all(), owner_id="system"
-        )
-
-        assert summary["total"] == 1
-        assert summary["created"] == 1
-
-    async def test_handles_sync_failure(self):
-        """When sync_single_agent raises, it's counted as failed."""
-        rows = [_make_agent_row()]
-        factory, _ = _make_factory(MockCursor(rows))
-
-        # Make storage.assistants.create raise
-        storage = FakeStorage()
-
-        async def failing_create(payload, owner_id):
-            raise RuntimeError("boom")
-
-        storage.assistants.create = failing_create
-
-        summary = await startup_agent_sync(
-            factory, storage, scope=AgentSyncScope.all(), owner_id="system"
-        )
-
-        assert summary["total"] == 1
-        assert summary["failed"] == 1
-
-    async def test_multiple_agents_mixed_results(self):
-        uid1 = uuid4()
-        uid2 = uuid4()
-        rows = [
-            _make_agent_row(agent_id=uid1, name="Agent 1"),
-            _make_agent_row(agent_id=uid2, name="Agent 2"),
-        ]
-        factory, _ = _make_factory(
-            MockCursor(rows),  # fetch
-            MockCursor(rowcount=1),  # write_back for agent 1
-            MockCursor(rowcount=1),  # write_back for agent 2
-        )
-        storage = FakeStorage()
-
-        summary = await startup_agent_sync(
-            factory, storage, scope=AgentSyncScope.all(), owner_id="system"
-        )
-
-        assert summary["total"] == 2
-        assert summary["created"] == 2
 
 
 # ============================================================================
