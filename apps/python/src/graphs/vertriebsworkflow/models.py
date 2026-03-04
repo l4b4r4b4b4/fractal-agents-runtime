@@ -51,9 +51,7 @@ class ProjectData(BaseModel):
         default="unklar",
         description="Projektstatus: Vorplanung | Genehmigung | Ausfuehrungsplanung | unklar",
     )
-    quellen: list[str] = Field(
-        description="Liste von URLs (min. 1, max. 2)"
-    )
+    quellen: list[str] = Field(description="Liste von URLs (min. 1, max. 2)")
     info_qualitaet: str = Field(
         default="niedrig",
         description="Qualitaet der verfuegbaren Informationen: niedrig | mittel | hoch",
@@ -99,14 +97,30 @@ class FinalProjectData(BaseModel):
     projektstatus: str = Field(default="unklar", description="Projektstatus")
     quellen: list[str] = Field(description="Liste von URLs")
     info_qualitaet: str = Field(default="niedrig", description="Informationsqualitaet")
-    groessenordnung: str = Field(default="unklar", description="BGF / Einheiten / Investitionsvolumen")
-    projektkurzbeschreibung: str = Field(default="", description="2-3 Saetze Projektbeschreibung")
-    entwickler_investor: str = Field(default="unklar", description="Name des Entwicklers/Investors")
-    beratungspotenzial: str = Field(default="mittel", description="hoch | mittel | gering")
-    begruendung_potenzial: str = Field(default="", description="Begruendung des Beratungspotenzials")
-    ais_themenfelder: list[str] = Field(default_factory=list, description="Max. 3 AIS-Themenfelder")
-    ansprechpartner: list[Ansprechpartner] = Field(default_factory=list, description="Kontaktpersonen")
-    ist_relevant: bool = Field(default=True, description="False wenn kein echtes Immobilienprojekt")
+    groessenordnung: str = Field(
+        default="unklar", description="BGF / Einheiten / Investitionsvolumen"
+    )
+    projektkurzbeschreibung: str = Field(
+        default="", description="2-3 Saetze Projektbeschreibung"
+    )
+    entwickler_investor: str = Field(
+        default="unklar", description="Name des Entwicklers/Investors"
+    )
+    beratungspotenzial: str = Field(
+        default="mittel", description="hoch | mittel | gering"
+    )
+    begruendung_potenzial: str = Field(
+        default="", description="Begruendung des Beratungspotenzials"
+    )
+    ais_themenfelder: list[str] = Field(
+        default_factory=list, description="Max. 3 AIS-Themenfelder"
+    )
+    ansprechpartner: list[Ansprechpartner] = Field(
+        default_factory=list, description="Kontaktpersonen"
+    )
+    ist_relevant: bool = Field(
+        default=True, description="False wenn kein echtes Immobilienprojekt"
+    )
 
 
 class AggregatorProjectOutput(BaseModel):
@@ -131,7 +145,9 @@ class SearchQuery(BaseModel):
 class SearchQueriesOutput(BaseModel):
     """Output des Worker-Query-Nodes."""
 
-    new_queries: list[SearchQuery] = Field(default_factory=list, description="Neue Queries")
+    new_queries: list[SearchQuery] = Field(
+        default_factory=list, description="Neue Queries"
+    )
     strategy_notes: str = Field(description="Query-Strategie")
 
 
@@ -140,8 +156,12 @@ class TavilySearchResult(BaseModel):
 
     query_id: str = Field(description="ID der ausgefuehrten Query")
     query_text: str = Field(description="Text der Query")
-    results: list[dict] = Field(default_factory=list, description="Ergebnisse ueber Threshold")
-    filtered_results: list[dict] = Field(default_factory=list, description="Ergebnisse unter Threshold")
+    results: list[dict] = Field(
+        default_factory=list, description="Ergebnisse ueber Threshold"
+    )
+    filtered_results: list[dict] = Field(
+        default_factory=list, description="Ergebnisse unter Threshold"
+    )
     filtered_count: int = Field(default=0, description="Anzahl unter Threshold")
 
 
@@ -151,7 +171,9 @@ class QueryVerdict(BaseModel):
     query_id: str = Field(description="ID der bewerteten Query")
     quality: str = Field(description="Quality-Level: 'low', 'medium', 'high'")
     reasoning: str = Field(description="Begruendung")
-    improvement_suggestion: str = Field(default="", description="Verbesserungsvorschlag")
+    improvement_suggestion: str = Field(
+        default="", description="Verbesserungsvorschlag"
+    )
 
 
 class VerifierOutput(BaseModel):
@@ -165,4 +187,6 @@ class WorkerFinalOutput(BaseModel):
     """Output der Final Evaluation (Iter2)."""
 
     task_id: str = Field(description="ID der bearbeiteten Subtask")
-    projekte: list[ProjectData] = Field(default_factory=list, description="Extrahierte Projekte (max. 5)")
+    projekte: list[ProjectData] = Field(
+        default_factory=list, description="Extrahierte Projekte (max. 5)"
+    )

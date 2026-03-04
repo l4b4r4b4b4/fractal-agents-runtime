@@ -85,7 +85,9 @@ def _resolve_model(config: RunnableConfig, env_var: str, default: str) -> str:
     if env_value:
         return env_value
     configurable = (config or {}).get("configurable", {})
-    config_model = configurable.get("model_name") if isinstance(configurable, dict) else None
+    config_model = (
+        configurable.get("model_name") if isinstance(configurable, dict) else None
+    )
     if config_model:
         return config_model
     return default
@@ -169,7 +171,9 @@ Bisherige Suchhistorie:
 
     result: SearchQueriesOutput = structured_llm.invoke(
         messages,
-        config=merge_configs(config, {"run_name": f"worker_query_{task_id}_iter{iteration}"}),
+        config=merge_configs(
+            config, {"run_name": f"worker_query_{task_id}_iter{iteration}"}
+        ),
     )
 
     new_queries = [q.model_dump() for q in result.new_queries]
@@ -193,7 +197,9 @@ def execute_tavily_search(
     raw = tavily_tool.invoke({"query": query_text}, config=tavily_config)
 
     if isinstance(raw, dict) and "error" in raw:
-        logger.warning("Tavily [%s/%s]: API-Fehler: %s", task_id, query_id, raw["error"])
+        logger.warning(
+            "Tavily [%s/%s]: API-Fehler: %s", task_id, query_id, raw["error"]
+        )
         return []
 
     results = []
@@ -222,11 +228,17 @@ def tavily_search_node(state: WorkerSubgraphState, config: RunnableConfig) -> di
     logger.debug("Tavily Search [%s]: %s...", query_id, query_text[:50])
 
     try:
-        all_results = execute_tavily_search(query_text, query_id, task_id, iteration, config)
+        all_results = execute_tavily_search(
+            query_text, query_id, task_id, iteration, config
+        )
         all_results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
 
-        good_results = [r for r in all_results if r.get("score", 0.0) >= SCORE_THRESHOLD]
-        filtered_results = [r for r in all_results if r.get("score", 0.0) < SCORE_THRESHOLD]
+        good_results = [
+            r for r in all_results if r.get("score", 0.0) >= SCORE_THRESHOLD
+        ]
+        filtered_results = [
+            r for r in all_results if r.get("score", 0.0) < SCORE_THRESHOLD
+        ]
 
         result = TavilySearchResult(
             query_id=query_id,
@@ -238,17 +250,24 @@ def tavily_search_node(state: WorkerSubgraphState, config: RunnableConfig) -> di
         if not all_results:
             logger.warning(
                 "Tavily Search [%s/%s]: 0 Ergebnisse fuer '%s'",
-                task_id, query_id, query_text[:60],
+                task_id,
+                query_id,
+                query_text[:60],
             )
 
         logger.info(
             "Tavily Search [%s/%s]: %d ueber Threshold, %d darunter",
-            task_id, query_id, len(good_results), len(filtered_results),
+            task_id,
+            query_id,
+            len(good_results),
+            len(filtered_results),
         )
 
     except Exception as e:
         error_msg = str(e)
-        logger.warning("Tavily Search [%s/%s] FEHLGESCHLAGEN: %s", task_id, query_id, error_msg)
+        logger.warning(
+            "Tavily Search [%s/%s] FEHLGESCHLAGEN: %s", task_id, query_id, error_msg
+        )
 
         if "api_key" in error_msg.lower():
             logger.error("Tavily API Key fehlt oder ungueltig!")
@@ -290,7 +309,11 @@ def _query_evaluation(state: WorkerSubgraphState, config: RunnableConfig) -> dic
     task_id = worker_task.get("id", "unknown")
     description = worker_task.get("description", "")
 
-    logger.info("Verifier [%s] Iter1: Bewerte %d Suchergebnisse...", task_id, len(search_results))
+    logger.info(
+        "Verifier [%s] Iter1: Bewerte %d Suchergebnisse...",
+        task_id,
+        len(search_results),
+    )
 
     failed_searches = [
         r
@@ -299,13 +322,20 @@ def _query_evaluation(state: WorkerSubgraphState, config: RunnableConfig) -> dic
         and any("error" in fr for fr in r.get("filtered_results", []))
     ]
     if len(failed_searches) == len(search_results) and len(search_results) > 0:
-        logger.warning("Verifier [%s]: ALLE %d Suchen fehlgeschlagen!", task_id, len(failed_searches))
+        logger.warning(
+            "Verifier [%s]: ALLE %d Suchen fehlgeschlagen!",
+            task_id,
+            len(failed_searches),
+        )
 
     results_formatted = _format_search_results(search_results)
 
     history_text = (
         "\n".join(
-            [f"- Query '{h['query_id']}': Quality={h['quality']}" for h in search_history]
+            [
+                f"- Query '{h['query_id']}': Quality={h['quality']}"
+                for h in search_history
+            ]
         )
         if search_history
         else "Keine History"
@@ -334,13 +364,17 @@ Bewerte jede Query einzeln und entscheide ueber die Gesamt-Qualitaet.""",
 
     result: VerifierOutput = structured_llm.invoke(
         messages,
-        config=merge_configs(config, {"run_name": f"verifier_{task_id}_iter{iteration}"}),
+        config=merge_configs(
+            config, {"run_name": f"verifier_{task_id}_iter{iteration}"}
+        ),
     )
 
     new_history = list(search_history)
     new_good_ids = list(good_query_ids)
 
-    query_text_map = {r.get("query_id"): r.get("query_text", "") for r in search_results}
+    query_text_map = {
+        r.get("query_id"): r.get("query_text", "") for r in search_results
+    }
 
     for verdict in result.query_verdicts:
         entry = {
@@ -359,7 +393,13 @@ Bewerte jede Query einzeln und entscheide ueber die Gesamt-Qualitaet.""",
     medium_count = sum(1 for v in result.query_verdicts if v.quality == "medium")
     low_count = sum(1 for v in result.query_verdicts if v.quality == "low")
 
-    logger.info("Verifier [%s]: %d high, %d medium, %d low", task_id, high_count, medium_count, low_count)
+    logger.info(
+        "Verifier [%s]: %d high, %d medium, %d low",
+        task_id,
+        high_count,
+        medium_count,
+        low_count,
+    )
 
     return {
         "search_history": new_history,
@@ -381,17 +421,24 @@ def _final_evaluation(state: WorkerSubgraphState, config: RunnableConfig) -> dic
 
     logger.info(
         "Final Evaluator [%s]: %d Iter1-Results, %d Iter2-Results",
-        task_id, len(iter1_results), len(iter2_results),
+        task_id,
+        len(iter1_results),
+        len(iter2_results),
     )
 
     structured_llm = llm.with_structured_output(WorkerFinalOutput)
     alle_projekte = []
 
-    for group_name, group_results in [("iter1", iter1_results), ("iter2", iter2_results)]:
+    for group_name, group_results in [
+        ("iter1", iter1_results),
+        ("iter2", iter2_results),
+    ]:
         if not group_results:
             continue
 
-        results_formatted = _format_search_results(group_results, include_filtered=False)
+        results_formatted = _format_search_results(
+            group_results, include_filtered=False
+        )
 
         messages = [
             {"role": "system", "content": FINAL_EVALUATOR_PROMPT},
@@ -409,12 +456,16 @@ Evaluiere jedes Suchergebnis und extrahiere max. 5 echte Immobilienprojekte.""",
 
         result: WorkerFinalOutput = structured_llm.invoke(
             messages,
-            config=merge_configs(config, {"run_name": f"final_evaluator_{task_id}_{group_name}"}),
+            config=merge_configs(
+                config, {"run_name": f"final_evaluator_{task_id}_{group_name}"}
+            ),
         )
 
         logger.info(
             "Final Evaluator [%s/%s]: %d Projekte extrahiert",
-            task_id, group_name, len(result.projekte),
+            task_id,
+            group_name,
+            len(result.projekte),
         )
         alle_projekte.extend(result.projekte)
 
@@ -423,12 +474,16 @@ Evaluiere jedes Suchergebnis und extrahiere max. 5 echte Immobilienprojekte.""",
         "projekte": [p.model_dump() for p in alle_projekte],
     }
 
-    logger.info("Final Evaluator [%s]: %d Projekte gesamt (merged)", task_id, len(alle_projekte))
+    logger.info(
+        "Final Evaluator [%s]: %d Projekte gesamt (merged)", task_id, len(alle_projekte)
+    )
 
     return {"worker_results": [final_output]}
 
 
-def _format_search_results(search_results: list[dict], include_filtered: bool = True) -> str:
+def _format_search_results(
+    search_results: list[dict], include_filtered: bool = True
+) -> str:
     """Formatiert Suchergebnisse fuer LLM-Prompts."""
     results_text = []
     for r in search_results:
@@ -470,7 +525,8 @@ def _format_search_results(search_results: list[dict], include_filtered: bool = 
 def _filter_ansprechpartner(kontakte: list[dict]) -> list[dict]:
     """Entfernt Eintraege ohne konkreten Personennamen."""
     return [
-        k for k in kontakte
+        k
+        for k in kontakte
         if k.get("name", "unklar") not in ("unklar", "", "unbekannt")
     ]
 
@@ -485,7 +541,12 @@ def _extract_content_for_url(
         raw = tavily_extract.invoke({"urls": [url]}, config=extract_config)
 
         if isinstance(raw, dict) and "error" in raw:
-            logger.warning("Aggregator [%s] Extract [%s]: API-Fehler: %s", task_id, safe_name, raw["error"])
+            logger.warning(
+                "Aggregator [%s] Extract [%s]: API-Fehler: %s",
+                task_id,
+                safe_name,
+                raw["error"],
+            )
             return ""
 
         raw_results = raw.get("results", []) if isinstance(raw, dict) else []
@@ -493,7 +554,9 @@ def _extract_content_for_url(
             return raw_results[0].get("raw_content", "") or ""
 
     except Exception as e:
-        logger.warning("Aggregator [%s] Extract [%s]: Fehlgeschlagen: %s", task_id, safe_name, e)
+        logger.warning(
+            "Aggregator [%s] Extract [%s]: Fehlgeschlagen: %s", task_id, safe_name, e
+        )
 
     return ""
 
@@ -508,7 +571,11 @@ def aggregator_node(state: WorkerSubgraphState, config: RunnableConfig) -> dict:
     for result in worker_results:
         alle_projekte.extend(result.get("projekte", []))
 
-    logger.info("Aggregator [%s]: Starte Anreicherung von %d Projekten", task_id, len(alle_projekte))
+    logger.info(
+        "Aggregator [%s]: Starte Anreicherung von %d Projekten",
+        task_id,
+        len(alle_projekte),
+    )
 
     if not alle_projekte:
         logger.warning("Aggregator [%s]: Keine Projekte zum Anreichern", task_id)
@@ -517,7 +584,9 @@ def aggregator_node(state: WorkerSubgraphState, config: RunnableConfig) -> dict:
     llm = get_aggregator_llm(config)
 
     ais_liste = "\n".join(f"  - {t}" for t in AIS_THEMENFELDER)
-    enrichment_prompt = AGGREGATOR_ENRICH_PROMPT.format(ais_themenfelder_liste=ais_liste)
+    enrichment_prompt = AGGREGATOR_ENRICH_PROMPT.format(
+        ais_themenfelder_liste=ais_liste
+    )
 
     enriched_projects: list[dict] = []
     filtered_projects: list[dict] = []
@@ -529,7 +598,9 @@ def aggregator_node(state: WorkerSubgraphState, config: RunnableConfig) -> dict:
 
         extracted_content = ""
         if quellen:
-            extracted_content = _extract_content_for_url(quellen[0], task_id, safe_name, config)
+            extracted_content = _extract_content_for_url(
+                quellen[0], task_id, safe_name, config
+            )
 
         try:
             structured_llm = llm.with_structured_output(AggregatorProjectOutput)
@@ -548,15 +619,16 @@ def aggregator_node(state: WorkerSubgraphState, config: RunnableConfig) -> dict:
                 {
                     "role": "user",
                     "content": (
-                        f"BISHERIGE PROJEKTDATEN:\n{projekt_text}"
-                        f"{content_section}"
+                        f"BISHERIGE PROJEKTDATEN:\n{projekt_text}{content_section}"
                     ),
                 },
             ]
 
             result: AggregatorProjectOutput = structured_llm.invoke(
                 messages,
-                config=merge_configs(config, {"run_name": f"enrich_{task_id}_{safe_name}"}),
+                config=merge_configs(
+                    config, {"run_name": f"enrich_{task_id}_{safe_name}"}
+                ),
             )
 
             enriched = result.projekt.model_dump()
@@ -565,14 +637,19 @@ def aggregator_node(state: WorkerSubgraphState, config: RunnableConfig) -> dict:
             )
 
             if not enriched.get("ist_relevant", True):
-                logger.info("Aggregator [%s]: '%s' als nicht relevant -> aussortiert", task_id, projektname)
+                logger.info(
+                    "Aggregator [%s]: '%s' als nicht relevant -> aussortiert",
+                    task_id,
+                    projektname,
+                )
                 filtered_projects.append(enriched)
                 continue
 
             enriched_projects.append(enriched)
             logger.debug(
                 "Aggregator [%s]: '%s' angereichert (Potenzial: %s, Kontakte: %d)",
-                task_id, projektname,
+                task_id,
+                projektname,
                 enriched.get("beratungspotenzial", "?"),
                 len(enriched.get("ansprechpartner", [])),
             )
@@ -580,13 +657,18 @@ def aggregator_node(state: WorkerSubgraphState, config: RunnableConfig) -> dict:
         except Exception as e:
             logger.warning(
                 "Aggregator [%s] Enrich [%s]: Fehlgeschlagen: %s. Uebernehme Originaldaten.",
-                task_id, safe_name, e,
+                task_id,
+                safe_name,
+                e,
             )
             enriched_projects.append(projekt)
 
     logger.info(
         "Aggregator [%s]: %d relevant, %d aussortiert (von %d)",
-        task_id, len(enriched_projects), len(filtered_projects), len(alle_projekte),
+        task_id,
+        len(enriched_projects),
+        len(filtered_projects),
+        len(alle_projekte),
     )
 
     return {

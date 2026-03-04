@@ -211,4 +211,6 @@ def get_available_graph_ids() -> list[str]:
 
 register_graph("agent", module_path="graphs.react_agent", attribute="graph")
 register_graph("research_agent", module_path="graphs.research_agent", attribute="graph")
-register_graph("vertriebsworkflow", module_path="graphs.vertriebsworkflow", attribute="graph")
+register_graph(
+    "vertriebsworkflow", module_path="graphs.vertriebsworkflow", attribute="graph"
+)
