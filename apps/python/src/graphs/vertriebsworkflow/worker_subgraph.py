@@ -39,13 +39,26 @@ logger = logging.getLogger(__name__)
 
 SCORE_THRESHOLD = 0.5
 
-tavily_tool = TavilySearch(
-    api_key=os.getenv("TAVILY_API_KEY"),
-    time_range="year",
-    country="germany",
-)
+_tavily_tool: TavilySearch | None = None
+_tavily_extract: TavilyExtract | None = None
 
-tavily_extract = TavilyExtract(api_key=os.getenv("TAVILY_API_KEY"))
+
+def _get_tavily_tool() -> TavilySearch:
+    global _tavily_tool
+    if _tavily_tool is None:
+        _tavily_tool = TavilySearch(
+            api_key=os.getenv("TAVILY_API_KEY"),
+            time_range="year",
+            country="germany",
+        )
+    return _tavily_tool
+
+
+def _get_tavily_extract() -> TavilyExtract:
+    global _tavily_extract
+    if _tavily_extract is None:
+        _tavily_extract = TavilyExtract(api_key=os.getenv("TAVILY_API_KEY"))
+    return _tavily_extract
 
 
 # =============================================================================
@@ -194,7 +207,7 @@ def execute_tavily_search(
     run_name = f"tavily_{task_id}_{query_id}"
     tavily_config = merge_configs(config, {"run_name": run_name})
 
-    raw = tavily_tool.invoke({"query": query_text}, config=tavily_config)
+    raw = _get_tavily_tool().invoke({"query": query_text}, config=tavily_config)
 
     if isinstance(raw, dict) and "error" in raw:
         logger.warning(
@@ -538,7 +551,7 @@ def _extract_content_for_url(
     extract_config = merge_configs(config, {"run_name": f"extract_{safe_name}"})
 
     try:
-        raw = tavily_extract.invoke({"urls": [url]}, config=extract_config)
+        raw = _get_tavily_extract().invoke({"urls": [url]}, config=extract_config)
 
         if isinstance(raw, dict) and "error" in raw:
             logger.warning(
