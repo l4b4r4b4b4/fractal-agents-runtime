@@ -181,9 +181,15 @@ def _deduplicate_projects(projekte: list[dict]) -> list[dict]:
             existing = result[existing_idx]
             if _count_filled_fields(projekt) > _count_filled_fields(existing):
                 result[existing_idx] = projekt
-                logger.debug("Dedup: '%s' ersetzt aelteres Duplikat", projekt.get("projektname", ""))
+                logger.debug(
+                    "Dedup: '%s' ersetzt aelteres Duplikat",
+                    projekt.get("projektname", ""),
+                )
             else:
-                logger.debug("Dedup: '%s' uebersprungen (Duplikat)", projekt.get("projektname", ""))
+                logger.debug(
+                    "Dedup: '%s' uebersprungen (Duplikat)",
+                    projekt.get("projektname", ""),
+                )
         else:
             idx = len(result)
             result.append(projekt)
@@ -216,10 +222,7 @@ def _count_filled_fields(projekt: dict) -> int:
 
 def should_continue(state: WorkflowState) -> list[Send]:
     """Fuer jede Task einen parallelen Worker-Subgraph starten."""
-    return [
-        Send("worker", {"worker_task": task})
-        for task in state["task_list"]
-    ]
+    return [Send("worker", {"worker_task": task}) for task in state["task_list"]]
 
 
 # =============================================================================

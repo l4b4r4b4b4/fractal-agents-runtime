@@ -12,7 +12,6 @@ import hashlib
 import hmac
 import json
 import os
-import sys
 import time
 
 import httpx
@@ -26,18 +25,26 @@ TIMEOUT = httpx.Timeout(300.0, connect=10.0)
 
 def _make_dummy_jwt(secret: str) -> str:
     """Erzeugt ein minimales HS256-JWT fuer lokale Tests."""
-    header = base64.urlsafe_b64encode(
-        json.dumps({"alg": "HS256", "typ": "JWT"}).encode()
-    ).rstrip(b"=").decode()
+    header = (
+        base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+        .rstrip(b"=")
+        .decode()
+    )
 
-    payload = base64.urlsafe_b64encode(
-        json.dumps({
-            "sub": "00000000-0000-0000-0000-000000000000",
-            "email": "test@local.dev",
-            "exp": int(time.time()) + 3600,
-            "role": "authenticated",
-        }).encode()
-    ).rstrip(b"=").decode()
+    payload = (
+        base64.urlsafe_b64encode(
+            json.dumps(
+                {
+                    "sub": "00000000-0000-0000-0000-000000000000",
+                    "email": "test@local.dev",
+                    "exp": int(time.time()) + 3600,
+                    "role": "authenticated",
+                }
+            ).encode()
+        )
+        .rstrip(b"=")
+        .decode()
+    )
 
     sig_input = f"{header}.{payload}".encode("ascii")
     signature = hmac.new(secret.encode(), sig_input, hashlib.sha256).digest()
@@ -52,7 +59,7 @@ def main():
     if jwt_secret:
         token = _make_dummy_jwt(jwt_secret)
         headers["Authorization"] = f"Bearer {token}"
-        print(f"[Auth] JWT mit SUPABASE_JWT_SECRET erzeugt")
+        print("[Auth] JWT mit SUPABASE_JWT_SECRET erzeugt")
     else:
         print("[Auth] Kein SUPABASE_JWT_SECRET — teste ohne Auth-Header")
 
@@ -60,11 +67,14 @@ def main():
 
     # 1. Assistant erstellen
     print("[1] Assistant erstellen...")
-    resp = client.post("/assistants", json={
-        "graph_id": "vertriebsworkflow",
-        "config": {"configurable": {}},
-        "metadata": {"name": "Vertriebsworkflow Test"},
-    })
+    resp = client.post(
+        "/assistants",
+        json={
+            "graph_id": "vertriebsworkflow",
+            "config": {"configurable": {}},
+            "metadata": {"name": "Vertriebsworkflow Test"},
+        },
+    )
     print(f"    Status: {resp.status_code}")
     print(f"    Body: {resp.text[:500]}")
     resp.raise_for_status()
@@ -112,13 +122,25 @@ def main():
 
                             if event_type == "updates" and isinstance(data, dict):
                                 for node_name, node_data in data.items():
-                                    msgs = node_data.get("messages", []) if isinstance(node_data, dict) else []
+                                    msgs = (
+                                        node_data.get("messages", [])
+                                        if isinstance(node_data, dict)
+                                        else []
+                                    )
                                     if msgs:
                                         for m in msgs:
-                                            content = m.get("content", "") if isinstance(m, dict) else str(m)
+                                            content = (
+                                                m.get("content", "")
+                                                if isinstance(m, dict)
+                                                else str(m)
+                                            )
                                             print(f"  [{node_name}] {content[:200]}")
                                     else:
-                                        keys = list(node_data.keys()) if isinstance(node_data, dict) else []
+                                        keys = (
+                                            list(node_data.keys())
+                                            if isinstance(node_data, dict)
+                                            else []
+                                        )
                                         print(f"  [{node_name}] keys={keys}")
 
                             elif event_type == "values":
@@ -132,7 +154,9 @@ def main():
                                         print(f"    - {name} ({ak}, Potenzial: {pot})")
 
                             elif event_type == "error":
-                                print(f"  ERROR: {json.dumps(data, indent=2, ensure_ascii=False)}")
+                                print(
+                                    f"  ERROR: {json.dumps(data, indent=2, ensure_ascii=False)}"
+                                )
 
                         except json.JSONDecodeError:
                             print(f"  [raw] {data_str[:200]}")
