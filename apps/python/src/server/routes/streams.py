@@ -23,22 +23,23 @@ from pydantic import ValidationError
 from robyn import Request, Response, Robyn
 from robyn.responses import SSEResponse
 
+from graphs.registry import resolve_graph_factory
+from infra.tracing import inject_tracing
 from server.auth import AuthUser, AuthenticationError, require_user
+from server.database import checkpointer as create_checkpointer
+from server.database import store as create_store
 from server.models import RunCreate
 from server.routes.helpers import error_response, json_response, parse_json_body
 from server.routes.sse import (
     create_ai_message,
     format_error_event,
-    format_metadata_event,
     format_messages_tuple_event,
+    format_metadata_event,
     format_updates_event,
     format_values_event,
     sse_headers,
 )
 from server.storage import get_storage
-from graphs.registry import resolve_graph_factory
-from infra.tracing import inject_tracing
-from server.database import checkpointer as create_checkpointer, store as create_store
 
 logger = logging.getLogger(__name__)
 
@@ -767,128 +768,6 @@ def register_stream_routes(app: Robyn) -> None:
 
         run = await storage.runs.create(run_data, user.identity)
 
-        on_completion = create_data.on_completion
-
-        try:
-            await execute_run_wait(
-                run_id=run.run_id,
-                thread_id=thread_id,
-                assistant_id=assistant.assistant_id,
-                input_data=create_data.input,
-                config=create_data.config,
-                owner_id=user.identity,
-                assistant_config=assistant.config,
-                graph_id=assistant.graph_id,
-                auth_user=user,
-                request_headers=request.headers,
-            )
-            await storage.runs.update_status(run.run_id, "success", user.identity)
-            await storage.threads.update(thread_id, {"status": "idle"}, user.identity)
-
-            state = await storage.threads.get_state(thread_id, user.identity)
-        except Exception as execution_error:
-            logger.exception(
-                "Stateless background run %s failed for ephemeral thread %s",
-                run.run_id,
-                thread_id,
-            )
-            await storage.runs.update_status(run.run_id, "error", user.identity)
-            await storage.threads.update(thread_id, {"status": "idle"}, user.identity)
-
-            if on_completion == "delete":
-                await storage.runs.delete_by_thread(
-                    thread_id, run.run_id, user.identity
-                )
-                await storage.threads.delete(thread_id, user.identity)
-
-            return error_response(f"Agent execution failed: {execution_error}", 500)
-
-        # Handle on_completion behaviour
-        if on_completion == "delete":
-            await storage.runs.delete_by_thread(thread_id, run.run_id, user.identity)
-            await storage.threads.delete(thread_id, user.identity)
-
-        return json_response(
-            state if state else {"values": {}, "next": [], "tasks": []}
-        )
-
-    # ========================================================================
-    # Stateless Streaming - POST /runs/stream
-    # ========================================================================
-
-    @app.post("/runs/stream")
-    async def create_stateless_run_stream(request: Request):
-        """Create a stateless run and stream output via SSE.
-
-        Stateless runs don't persist thread state. The thread is created
-        temporarily and can be deleted after completion based on
-        on_completion setting.
-
-        Request body: RunCreate
-        Response: SSE stream
-        """
-        try:
-            user = require_user()
-        except AuthenticationError as auth_error:
-            return error_response(auth_error.message, 401)
-
-        try:
-            body = parse_json_body(request)
-            create_data = RunCreate(**body)
-        except json.JSONDecodeError:
-            return error_response("Invalid JSON in request body", 422)
-        except ValidationError as validation_error:
-            return error_response(str(validation_error), 422)
-
-        storage = get_storage()
-
-        # Check if assistant exists
-        assistant = await storage.assistants.get(
-            create_data.assistant_id, user.identity
-        )
-        if assistant is None:
-            assistants = await storage.assistants.list(user.identity)
-            assistant = next(
-                (a for a in assistants if a.graph_id == create_data.assistant_id),
-                None,
-            )
-            if assistant is None:
-                return error_response(
-                    f"Assistant {create_data.assistant_id} not found", 404
-                )
-
-        # Create a temporary thread for stateless execution
-        temp_thread = await storage.threads.create(
-            {
-                "metadata": {
-                    "stateless": True,
-                    "on_completion": create_data.on_completion,
-                }
-            },
-            user.identity,
-        )
-        thread_id = temp_thread.thread_id
-
-        # Build run data
-        run_data: dict[str, Any] = {
-            "thread_id": thread_id,
-            "assistant_id": assistant.assistant_id,
-            "status": "running",
-            "metadata": {**create_data.metadata, "stateless": True},
-            "kwargs": {
-                "input": create_data.input,
-                "config": create_data.config,
-                "context": create_data.context,
-                "interrupt_before": create_data.interrupt_before,
-                "interrupt_after": create_data.interrupt_after,
-                "stream_mode": create_data.stream_mode,
-                "webhook": create_data.webhook,
-            },
-            "multitask_strategy": create_data.multitask_strategy,
-        }
-
-        run = await storage.runs.create(run_data, user.identity)
-
         # Create the SSE generator
         async def stream_generator() -> AsyncGenerator[str, None]:
             try:
@@ -984,7 +863,6 @@ async def execute_run_stream(
     runnable_config = _build_runnable_config(
         run_id=run_id,
         thread_id=thread_id,
-        assistant_id=assistant_id,
         assistant_config=assistant_config,
         run_config=config,
         owner_id=owner_id,
