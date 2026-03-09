@@ -863,6 +863,7 @@ async def execute_run_stream(
     runnable_config = _build_runnable_config(
         run_id=run_id,
         thread_id=thread_id,
+        assistant_id=assistant_id,
         assistant_config=assistant_config,
         run_config=config,
         owner_id=owner_id,
