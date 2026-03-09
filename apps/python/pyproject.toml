@@ -115,6 +115,13 @@ file_line_coverage_min = 30      # SSE streaming — hard to unit-test
 # diff-cover — enforce coverage on new/changed lines in PRs
 # Runs after: pytest --cov --cov-report=xml && diff-cover coverage.xml ...
 # ---------------------------------------------------------------------------
+[tool.uv]
+constraint-dependencies = [
+    # requests 2.32.x checks chardet < 6 internally — pin to silence
+    # RequestsDependencyWarning at test/runtime startup.
+    "chardet<6",
+]
+
 [tool.diff_cover]
 compare_branch = "origin/development"
 fail_under = 80                  # new/changed code must be ≥80% covered
