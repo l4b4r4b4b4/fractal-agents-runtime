@@ -25,7 +25,7 @@ from robyn.responses import SSEResponse
 
 from graphs.registry import resolve_graph_factory
 from infra.tracing import inject_tracing
-from server.auth import AuthenticationError, require_user
+from server.auth import AuthUser, AuthenticationError, require_user
 from server.database import checkpointer as create_checkpointer
 from server.database import store as create_store
 from server.models import RunCreate
@@ -42,6 +42,58 @@ from server.routes.sse import (
 from server.storage import get_storage
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Configurable headers — LangGraph Platform convention
+# ---------------------------------------------------------------------------
+# The LangGraph Platform forwards select HTTP request headers into
+# config["configurable"] so graph code can read them via get_config().
+# We replicate that behaviour here for our Robyn runtime.
+#
+# Default policy (mirrors LangGraph Platform defaults):
+#   include: x-* headers (custom headers)
+#   exclude: authorization, x-api-key (sensitive credentials)
+#
+# See: https://docs.langchain.com/langsmith/configurable-headers
+
+_CONFIGURABLE_HEADERS_EXCLUDE = frozenset(
+    {"authorization", "x-api-key", "cookie", "x-forwarded-for"}
+)
+
+
+def _extract_configurable_headers(
+    request_headers: Any,
+) -> dict[str, str]:
+    """Extract HTTP headers that should be forwarded into configurable.
+
+    Includes all ``x-*`` headers except those in the exclude set.
+    Header names are lowercased to match LangGraph Platform behaviour.
+
+    Args:
+        request_headers: Robyn ``Headers`` object from the request.
+
+    Returns:
+        Dict of header-name -> value to merge into configurable.
+    """
+    if not request_headers:
+        return {}
+
+    # Robyn's Headers is a Rust/PyO3 object — no .items() or dict() support.
+    # Use .get_headers() which returns dict[str, list[str]].
+    all_headers: dict[str, list[str]] = request_headers.get_headers()
+
+    forwarded: dict[str, str] = {}
+    for name, values in all_headers.items():
+        # Robyn lowercases header names internally, but we lowercase anyway for safety
+        lower_name = name.lower()
+        if not lower_name.startswith("x-"):
+            continue
+        if lower_name in _CONFIGURABLE_HEADERS_EXCLUDE:
+            continue
+        # .get_headers() returns lists; take last value (matches Headers.get() behaviour)
+        if values:
+            forwarded[lower_name] = values[-1]
+    return forwarded
 
 
 def _parse_input_messages(input_data: Any) -> list[BaseMessage]:
@@ -138,6 +190,8 @@ def _build_runnable_config(
     assistant_config: Any | None,
     run_config: dict[str, Any] | None,
     owner_id: str,
+    auth_user: AuthUser | None = None,
+    request_headers: Any = None,
 ) -> RunnableConfig:
     """Build a RunnableConfig from assistant and run configurations.
 
@@ -148,6 +202,14 @@ def _build_runnable_config(
         assistant_config: Configuration from the assistant (dict or Pydantic model)
         run_config: Configuration from the run request (overrides assistant)
         owner_id: Owner ID for auth context
+        auth_user: Authenticated user from the request.  When provided,
+            populates ``configurable["langgraph_auth_user"]`` following the
+            LangGraph Platform convention, giving graph code access to the
+            user's identity and raw JWT for authenticated MCP / RAG calls.
+        request_headers: Raw HTTP headers from the Robyn request.  Matching
+            ``x-*`` headers (except sensitive ones) are forwarded into
+            configurable, mirroring the LangGraph Platform's
+            ``configurable_headers`` feature.
 
     Returns:
         RunnableConfig with merged configurable dict
@@ -181,6 +243,33 @@ def _build_runnable_config(
     configurable["assistant_id"] = assistant_id
     configurable["owner"] = owner_id
     configurable["user_id"] = owner_id
+
+    # Layer 4: Configurable headers — LangGraph Platform convention.
+    # Forward matching x-* HTTP request headers into configurable so graph
+    # code can read them via config["configurable"].get("x-header-name").
+    configurable_headers = _extract_configurable_headers(request_headers)
+    if configurable_headers:
+        configurable.update(configurable_headers)
+
+    # Layer 5: Authenticated user context — LangGraph Platform convention.
+    #
+    # Populate langgraph_auth_user so graph code can access the user's
+    # identity and JWT token via:
+    #   config["configurable"].get("langgraph_auth_user")
+    #
+    # This mirrors what the LangGraph Platform does when an
+    # @auth.authenticate handler returns user info.  See:
+    # https://docs.langchain.com/langsmith/custom-auth
+    #
+    # We also set x-supabase-access-token for backward compatibility with
+    # existing graph code that reads that key directly (fetch_tokens,
+    # create_rag_tool).  This can be removed once all consumers migrate to
+    # langgraph_auth_user.
+    if auth_user is not None:
+        configurable["langgraph_auth_user"] = auth_user.to_dict()
+        configurable["langgraph_auth_user_id"] = auth_user.identity
+        if auth_user.token:
+            configurable["x-supabase-access-token"] = auth_user.token
 
     # NOTE: checkpoint_ns intentionally NOT set here.
     #
@@ -323,6 +412,8 @@ def register_stream_routes(app: Robyn) -> None:
                     owner_id=user.identity,
                     assistant_config=assistant.config,
                     graph_id=assistant.graph_id,
+                    auth_user=user,
+                    request_headers=request.headers,
                 ):
                     yield event
             except Exception as stream_error:
@@ -569,6 +660,8 @@ def register_stream_routes(app: Robyn) -> None:
                 owner_id=user.identity,
                 assistant_config=assistant.config,
                 graph_id=assistant.graph_id,
+                auth_user=user,
+                request_headers=request.headers,
             )
             await storage.runs.update_status(run.run_id, "success", user.identity)
             await storage.threads.update(thread_id, {"status": "idle"}, user.identity)
@@ -675,126 +768,6 @@ def register_stream_routes(app: Robyn) -> None:
 
         run = await storage.runs.create(run_data, user.identity)
 
-        on_completion = create_data.on_completion
-
-        try:
-            await execute_run_wait(
-                run_id=run.run_id,
-                thread_id=thread_id,
-                assistant_id=assistant.assistant_id,
-                input_data=create_data.input,
-                config=create_data.config,
-                owner_id=user.identity,
-                assistant_config=assistant.config,
-                graph_id=assistant.graph_id,
-            )
-            await storage.runs.update_status(run.run_id, "success", user.identity)
-            await storage.threads.update(thread_id, {"status": "idle"}, user.identity)
-
-            state = await storage.threads.get_state(thread_id, user.identity)
-        except Exception as execution_error:
-            logger.exception(
-                "Stateless background run %s failed for ephemeral thread %s",
-                run.run_id,
-                thread_id,
-            )
-            await storage.runs.update_status(run.run_id, "error", user.identity)
-            await storage.threads.update(thread_id, {"status": "idle"}, user.identity)
-
-            if on_completion == "delete":
-                await storage.runs.delete_by_thread(
-                    thread_id, run.run_id, user.identity
-                )
-                await storage.threads.delete(thread_id, user.identity)
-
-            return error_response(f"Agent execution failed: {execution_error}", 500)
-
-        # Handle on_completion behaviour
-        if on_completion == "delete":
-            await storage.runs.delete_by_thread(thread_id, run.run_id, user.identity)
-            await storage.threads.delete(thread_id, user.identity)
-
-        return json_response(
-            state if state else {"values": {}, "next": [], "tasks": []}
-        )
-
-    # ========================================================================
-    # Stateless Streaming - POST /runs/stream
-    # ========================================================================
-
-    @app.post("/runs/stream")
-    async def create_stateless_run_stream(request: Request):
-        """Create a stateless run and stream output via SSE.
-
-        Stateless runs don't persist thread state. The thread is created
-        temporarily and can be deleted after completion based on
-        on_completion setting.
-
-        Request body: RunCreate
-        Response: SSE stream
-        """
-        try:
-            user = require_user()
-        except AuthenticationError as auth_error:
-            return error_response(auth_error.message, 401)
-
-        try:
-            body = parse_json_body(request)
-            create_data = RunCreate(**body)
-        except json.JSONDecodeError:
-            return error_response("Invalid JSON in request body", 422)
-        except ValidationError as validation_error:
-            return error_response(str(validation_error), 422)
-
-        storage = get_storage()
-
-        # Check if assistant exists
-        assistant = await storage.assistants.get(
-            create_data.assistant_id, user.identity
-        )
-        if assistant is None:
-            assistants = await storage.assistants.list(user.identity)
-            assistant = next(
-                (a for a in assistants if a.graph_id == create_data.assistant_id),
-                None,
-            )
-            if assistant is None:
-                return error_response(
-                    f"Assistant {create_data.assistant_id} not found", 404
-                )
-
-        # Create a temporary thread for stateless execution
-        temp_thread = await storage.threads.create(
-            {
-                "metadata": {
-                    "stateless": True,
-                    "on_completion": create_data.on_completion,
-                }
-            },
-            user.identity,
-        )
-        thread_id = temp_thread.thread_id
-
-        # Build run data
-        run_data: dict[str, Any] = {
-            "thread_id": thread_id,
-            "assistant_id": assistant.assistant_id,
-            "status": "running",
-            "metadata": {**create_data.metadata, "stateless": True},
-            "kwargs": {
-                "input": create_data.input,
-                "config": create_data.config,
-                "context": create_data.context,
-                "interrupt_before": create_data.interrupt_before,
-                "interrupt_after": create_data.interrupt_after,
-                "stream_mode": create_data.stream_mode,
-                "webhook": create_data.webhook,
-            },
-            "multitask_strategy": create_data.multitask_strategy,
-        }
-
-        run = await storage.runs.create(run_data, user.identity)
-
         # Create the SSE generator
         async def stream_generator() -> AsyncGenerator[str, None]:
             try:
@@ -807,6 +780,8 @@ def register_stream_routes(app: Robyn) -> None:
                     owner_id=user.identity,
                     assistant_config=assistant.config,
                     graph_id=assistant.graph_id,
+                    auth_user=user,
+                    request_headers=request.headers,
                 ):
                     yield event
             except Exception as stream_error:
@@ -842,6 +817,8 @@ async def execute_run_stream(
     owner_id: str,
     assistant_config: dict[str, Any] | None = None,
     graph_id: str | None = None,
+    auth_user: AuthUser | None = None,
+    request_headers: Any = None,
 ) -> AsyncGenerator[str, None]:
     """Execute a run using the agent graph and yield SSE events.
 
@@ -860,6 +837,11 @@ async def execute_run_stream(
         graph_id: The assistant's graph_id (e.g. ``"agent"``,
             ``"research_agent"``).  Falls back to ``"agent"`` if not
             provided.
+        auth_user: Authenticated user from the request.  Forwarded to
+            ``_build_runnable_config`` to populate ``langgraph_auth_user``.
+        request_headers: Raw HTTP headers from the Robyn request.
+            Forwarded to ``_build_runnable_config`` for configurable
+            header injection.
 
     Yields:
         SSE-formatted event strings
@@ -885,6 +867,8 @@ async def execute_run_stream(
         assistant_config=assistant_config,
         run_config=config,
         owner_id=owner_id,
+        auth_user=auth_user,
+        request_headers=request_headers,
     )
 
     # 3b. Inject Langfuse tracing (no-op if not configured)
@@ -1104,6 +1088,7 @@ async def execute_run_stream(
                     if isinstance(output, dict):
                         output_messages = output.get("messages", [])
                         if output_messages:
+                            # Convert messages to dicts
                             update_messages = []
                             for msg in output_messages:
                                 if isinstance(msg, BaseMessage):
@@ -1115,6 +1100,7 @@ async def execute_run_stream(
                                 yield format_updates_event(
                                     node_name, {"messages": update_messages}
                                 )
+                                # Use the last AI message for final values
                                 for msg in reversed(update_messages):
                                     if msg.get("type") == "ai":
                                         final_ai_message_dict = msg
@@ -1232,6 +1218,8 @@ async def execute_run_wait(
     owner_id: str,
     assistant_config: dict[str, Any] | None = None,
     graph_id: str | None = None,
+    auth_user: AuthUser | None = None,
+    request_headers: Any = None,
 ) -> dict[str, Any]:
     """Execute a run using the agent graph and return the final state.
 
@@ -1255,6 +1243,11 @@ async def execute_run_wait(
         graph_id: The assistant's ``graph_id`` (e.g. ``"agent"``,
             ``"research_agent"``).  Falls back to ``"agent"`` if not
             provided.
+        auth_user: Authenticated user from the request.  Forwarded to
+            ``_build_runnable_config`` to populate ``langgraph_auth_user``.
+        request_headers: Raw HTTP headers from the Robyn request.
+            Forwarded to ``_build_runnable_config`` for configurable
+            header injection.
 
     Returns:
         Dict with the final thread state, shaped as
@@ -1277,6 +1270,8 @@ async def execute_run_wait(
         assistant_config=assistant_config,
         run_config=config,
         owner_id=owner_id,
+        auth_user=auth_user,
+        request_headers=request_headers,
     )
 
     # 3. Inject Langfuse tracing (no-op if not configured)

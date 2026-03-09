@@ -283,7 +283,13 @@ async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
 
     tools = []
 
-    supabase_token = config.get("configurable", {}).get("x-supabase-access-token")
+    # Read token from langgraph_auth_user (LangGraph Platform convention)
+    # with fallback to the legacy x-supabase-access-token key.
+    _configurable = config.get("configurable", {}) or {}
+    _auth_user = _configurable.get("langgraph_auth_user") or {}
+    supabase_token = _auth_user.get("token") or _configurable.get(
+        "x-supabase-access-token"
+    )
     if cfg.rag and cfg.rag.rag_url and cfg.rag.collections and supabase_token:
         for collection in cfg.rag.collections:
             rag_tool = await create_rag_tool(
@@ -311,7 +317,7 @@ async def graph(config: RunnableConfig, *, checkpointer=None, store=None):
         )
 
         if any_auth_required:
-            mcp_tokens = await fetch_tokens(config)
+            mcp_tokens = await fetch_tokens(config, store=store)
         else:
             mcp_tokens = None
 

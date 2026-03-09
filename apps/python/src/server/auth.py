@@ -76,18 +76,32 @@ class AuthUser:
         identity: Supabase user ID (UUID string)
         email: User's email address (optional)
         metadata: Additional user metadata from Supabase
+        token: Raw JWT access token (without ``Bearer`` prefix).
+            Set by :func:`auth_middleware` after successful verification so
+            downstream code can include it in
+            ``config["configurable"]["langgraph_auth_user"]`` for
+            authenticated MCP tool calls and RAG requests.
     """
 
     identity: str
     email: str | None = None
     metadata: dict[str, Any] | None = None
+    token: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
+        """Convert to dictionary suitable for ``langgraph_auth_user``.
+
+        Returns a dict following the LangGraph Platform convention for
+        passing authenticated user context to graphs via
+        ``config["configurable"]["langgraph_auth_user"]``.
+
+        See: https://docs.langchain.com/langsmith/custom-auth
+        """
         return {
             "identity": self.identity,
             "email": self.email,
             "metadata": self.metadata or {},
+            "token": self.token,
         }
 
 
@@ -517,6 +531,10 @@ async def auth_middleware(request: Request) -> Request | Response:
     # Verify token with Supabase
     try:
         user = await verify_token_auto(token)
+        # Attach the raw JWT so config builders can forward it into
+        # config["configurable"]["langgraph_auth_user"]["token"] for
+        # authenticated MCP tool calls and RAG requests (Goal 45).
+        user.token = token
         _current_user.set(user)
         # Also store in thread-local as ContextVar may not persist across Robyn's Rust/Python boundary
         _thread_local.current_user = user

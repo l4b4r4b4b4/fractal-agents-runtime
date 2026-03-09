@@ -18,14 +18,19 @@ Example::
     )
 """
 
+from __future__ import annotations
+
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from infra.tracing import inject_tracing
+
+if TYPE_CHECKING:
+    from server.auth import AuthUser
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +43,7 @@ def _build_mcp_runnable_config(
     assistant_id: str,
     assistant_config: dict[str, Any] | None,
     owner_id: str,
+    auth_user: AuthUser | None = None,
 ) -> RunnableConfig:
     """Build a RunnableConfig for non-streaming agent invocation.
 
@@ -51,6 +57,10 @@ def _build_mcp_runnable_config(
         assistant_config: Configuration dict from the assistant record.
             Expected shape: ``{"configurable": {...}}`` or ``None``.
         owner_id: Owner/user identity string.
+        auth_user: Authenticated user from the request.  When provided,
+            populates ``configurable["langgraph_auth_user"]`` following the
+            LangGraph Platform convention, giving graph code access to the
+            user's identity and raw JWT for authenticated MCP / RAG calls.
 
     Returns:
         A RunnableConfig with merged configurable dict.
@@ -70,6 +80,14 @@ def _build_mcp_runnable_config(
     configurable["assistant_id"] = assistant_id
     configurable["owner"] = owner_id
     configurable["user_id"] = owner_id
+
+    # Layer 3: Authenticated user context — LangGraph Platform convention.
+    # See: https://docs.langchain.com/langsmith/custom-auth
+    if auth_user is not None:
+        configurable["langgraph_auth_user"] = auth_user.to_dict()
+        configurable["langgraph_auth_user_id"] = auth_user.identity
+        if auth_user.token:
+            configurable["x-supabase-access-token"] = auth_user.token
 
     # NOTE: checkpoint_ns intentionally NOT set here.
     #

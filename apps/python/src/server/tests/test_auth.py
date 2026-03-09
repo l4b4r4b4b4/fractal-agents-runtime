@@ -39,6 +39,7 @@ class TestAuthUser:
         assert user.identity == "user-123"
         assert user.email is None
         assert user.metadata is None
+        assert user.token is None
 
     def test_create_full(self):
         """Test creating AuthUser with all fields."""
@@ -50,6 +51,17 @@ class TestAuthUser:
         assert user.identity == "user-123"
         assert user.email == "test@example.com"
         assert user.metadata == {"role": "admin"}
+        assert user.token is None
+
+    def test_create_with_token(self):
+        """Test creating AuthUser with raw JWT token."""
+        user = AuthUser(
+            identity="user-123",
+            email="test@example.com",
+            token="eyJhbGciOiJIUzI1NiJ9.test.sig",
+        )
+        assert user.identity == "user-123"
+        assert user.token == "eyJhbGciOiJIUzI1NiJ9.test.sig"
 
     def test_to_dict_minimal(self):
         """Test to_dict with minimal fields."""
@@ -59,6 +71,7 @@ class TestAuthUser:
             "identity": "user-123",
             "email": None,
             "metadata": {},
+            "token": None,
         }
 
     def test_to_dict_full(self):
@@ -73,7 +86,34 @@ class TestAuthUser:
             "identity": "user-123",
             "email": "test@example.com",
             "metadata": {"role": "admin"},
+            "token": None,
         }
+
+    def test_to_dict_with_token(self):
+        """Test to_dict includes token — suitable for langgraph_auth_user."""
+        user = AuthUser(
+            identity="user-123",
+            email="test@example.com",
+            metadata={"role": "admin"},
+            token="eyJhbGciOiJIUzI1NiJ9.test.sig",
+        )
+        result = user.to_dict()
+        assert result == {
+            "identity": "user-123",
+            "email": "test@example.com",
+            "metadata": {"role": "admin"},
+            "token": "eyJhbGciOiJIUzI1NiJ9.test.sig",
+        }
+
+    def test_to_dict_is_langgraph_auth_user_compatible(self):
+        """to_dict returns a dict with 'identity' key as required by LangGraph."""
+        user = AuthUser(identity="user-456", token="jwt-abc")
+        auth_user_dict = user.to_dict()
+        # LangGraph Platform requires at least 'identity' in the dict
+        assert "identity" in auth_user_dict
+        assert auth_user_dict["identity"] == "user-456"
+        # Token must be accessible for MCP/RAG authenticated calls
+        assert auth_user_dict["token"] == "jwt-abc"
 
 
 # ============================================================================
@@ -317,6 +357,30 @@ class TestAuthMiddleware:
         # Should return the request (continue processing)
         assert result is request
         mock_verify.assert_called_once_with("valid-token")
+
+    @pytest.mark.asyncio
+    async def test_middleware_saves_raw_token_on_auth_user(self):
+        """auth_middleware sets AuthUser.token to the raw JWT (Goal 45)."""
+        mock_user = AuthUser(identity="user-123", email="test@example.com")
+        # Verify token starts without a token
+        assert mock_user.token is None
+
+        request = self._make_request(
+            path="/assistants", auth_header="Bearer my-raw-jwt-token"
+        )
+
+        with patch("server.auth.verify_token", new_callable=AsyncMock) as mock_verify:
+            mock_verify.return_value = mock_user
+            result = await auth_middleware(request)
+
+        assert result is request
+        # The middleware must save the raw JWT on the user object
+        assert mock_user.token == "my-raw-jwt-token"
+
+        # It should also be available via get_current_user()
+        current = get_current_user()
+        assert current is not None
+        assert current.token == "my-raw-jwt-token"
 
     @pytest.mark.asyncio
     async def test_valid_auth_header_token_invalid(self):

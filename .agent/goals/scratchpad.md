@@ -34,6 +34,9 @@
 | 38 | Store API Namespace Fix + OpenAPI Alignment | 🟢 Complete | P1 | 2026-02-20 |
 | 39 | Benchmark Methodology — Long-Duration Runs & Statistical Rigor | ⚪ Not Started | P3 | 2026-02-20 |
 | 43 | Remove Automatic Startup Agent Sync | 🟢 Complete | P1 | 2026-03-03 |
+| 44 | Fix MCP Token Fetch Outside Runnable Context | 🟢 Complete | P0 (Critical) | 2026-03-03 |
+| 45 | Fix MCP Auth Tokens Not Forwarded to Servers | 🟡 In Progress | P0 (Blocking) | 2026-03-03 |
+| 46 | Fix MCP Token Exchange — Remove Wrong OAuth Flow, Pass JWT Directly | ⚪ Not Started | P0 (Critical) | 2026-03-03 |
 
 ---
 
@@ -123,6 +126,18 @@ Goal 02 next priority — commit all, push, PR, Docker build, AKS deploy, tag v0
 ---
 
 ## Recent Activity
+
+### 2026-03-03 — Session (Goal 44 🟢 COMPLETE — Fix MCP Token Fetch Outside Runnable Context)
+
+- **Bug investigation**: `RuntimeError: Called get_config outside of a runnable context` blocks all `auth_required: true` MCP assistants
+- Traced call chain: `graph()` → `fetch_tokens()` → `get_tokens()` → `langgraph.config.get_store()` — crashes because `graph()` runs during graph **construction**, not inside a graph node
+- **Root cause**: `token.py` uses `langgraph.config.get_store()` (context-var-based) instead of using the `store` kwarg already passed to `graph()`
+- **Latent since initial commit** (`d7a75b4`) — never triggered because `auth_required` defaulted to `false` and no auth-required MCP servers were tested in production
+- Verified semantic router commit (`ac601c2`) is NOT the cause — only touched model initialization, never touched MCP/token code
+- **Fix (Option A)**: Added `store: Any = None` kwarg to `get_tokens()`, `set_tokens()`, `fetch_tokens()` in `token.py`; each falls back to `get_store()` with `try/except RuntimeError` guard; `agent.py` call site updated to pass `store=store`
+- **38 new tests** in `test_token.py` — all pass, including `test_fetch_tokens_does_not_raise_outside_runnable_context` regression test
+- **Task-02 deps**: 5 tiers of safe patch/minor upgrades — langgraph 1.0.8→1.0.10, langchain-core 1.2.11→1.2.17, langchain-openai/anthropic/google patches, psycopg 3.3.2→3.3.3, certifi CA bundle, pyjwt, orjson, requests, pyyaml, attrs, and more
+- **1818 passed, 35 skipped, 78.82% coverage** — all tiers green, lint clean, `uv lock --check` passes
 
 ### 2026-03-03 — Session (Goal 43 🟢 COMPLETE — Remove Automatic Startup Agent Sync)
 
