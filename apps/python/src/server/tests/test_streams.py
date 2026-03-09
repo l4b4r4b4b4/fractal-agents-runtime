@@ -1513,10 +1513,12 @@ class TestBuildRunnableConfigAuthUser:
         """request_headers with x-* → merged into configurable."""
         from server.routes.streams import _build_runnable_config
 
-        headers = {
-            "x-organization-id": "org-999",
-            "x-custom-header": "custom-value",
-        }
+        headers = FakeRobynHeaders(
+            {
+                "x-organization-id": "org-999",
+                "x-custom-header": "custom-value",
+            }
+        )
         config = _build_runnable_config(
             run_id="run-1",
             thread_id="thread-1",
