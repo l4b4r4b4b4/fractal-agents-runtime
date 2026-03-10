@@ -7,6 +7,12 @@ pre-commit:
     bun-version-check:
       run: bun run check:bun-version
 
+    python-lock-sync:
+      root: apps/python/
+      glob: "pyproject.toml"
+      run: uv lock
+      stage_fixed: true
+
     python-lint:
       root: apps/python/
       glob: "*.py"
@@ -54,7 +60,7 @@ pre-push:
     python-lint-check:
       priority: 2
       root: apps/python/
-      run: uv run ruff check . && uv run ruff format --check .
+      run: uv run --frozen ruff check . && uv run --frozen ruff format --check .
 
     # ── Stage 3: Type checking (~3s) ──────────────────────────────
     ts-type-check:
@@ -66,7 +72,7 @@ pre-push:
     python-openapi-validate:
       priority: 4
       root: apps/python/
-      run: uv run python scripts/generate_openapi.py --validate
+      run: uv run --frozen python scripts/generate_openapi.py --validate
 
     ts-openapi-validate:
       priority: 4
@@ -81,9 +87,9 @@ pre-push:
       # diff-cover MUST run after pytest generates fresh coverage.xml,
       # so both are chained in a single command (not parallel).
       run: >
-        uv run pytest -q --cov --cov-report=json --cov-report=xml --cov-report=term:skip-covered
-        && uv run coverage-threshold
-        && uv run diff-cover coverage.xml --fail-under=73 --compare-branch=origin/development
+        uv run --frozen pytest -q --cov --cov-report=json --cov-report=xml --cov-report=term:skip-covered
+        && uv run --frozen coverage-threshold
+        && uv run --frozen diff-cover coverage.xml --fail-under=73 --compare-branch=origin/development
 
     ts-test:
       priority: 6
