@@ -37,6 +37,7 @@
 | 44 | Fix MCP Token Fetch Outside Runnable Context | 🟢 Complete | P0 (Critical) | 2026-03-03 |
 | 45 | Fix MCP Auth Tokens Not Forwarded to Servers | 🟡 In Progress | P0 (Blocking) | 2026-03-03 |
 | 46 | Fix MCP Token Exchange — Remove Wrong OAuth Flow, Pass JWT Directly | ⚪ Not Started | P0 (Critical) | 2026-03-03 |
+| 47 | Python Release 0.1.1 | 🟡 In Progress | High | 2026-03-10 |
 
 ---
 
@@ -77,6 +78,7 @@
 - [32-Resource-Profiled-Benchmarks](./32-Resource-Profiled-Benchmarks/scratchpad.md)
 - [33-TS-Runtime-Postgres-Native-Performance](./33-TS-Runtime-Postgres-Native-Performance/scratchpad.md)
 - [43-Exclude-Template-Agents-From-Startup-Sync](./43-Exclude-Template-Agents-From-Startup-Sync/scratchpad.md)
+- [47-Python-Release-0.1.1](./47-Python-Release-0.1.1/scratchpad.md)
 
 ---
 
@@ -126,6 +128,13 @@ Goal 02 next priority — commit all, push, PR, Docker build, AKS deploy, tag v0
 ---
 
 ## Recent Activity
+
+### 2026-03-10 — Session (Goal 47 🟡 In Progress — Python Release 0.1.1)
+
+- Created Goal 47 and Task 01 scratchpads for the Python-only release.
+- Renamed the release branch to `python-release`.
+- Added `apps/python/CHANGELOG.md` with `0.1.1` and `0.1.0` entries.
+- Added Goal 47 to the goals index and quick links.
 
 ### 2026-03-03 — Session (Goal 44 🟢 COMPLETE — Fix MCP Token Fetch Outside Runnable Context)
 
