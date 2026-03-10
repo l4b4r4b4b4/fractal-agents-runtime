@@ -8,6 +8,8 @@
  *   bun run scripts/generate-openapi.ts --validate         # validate only, no write
  */
 
+/* Pure TS-only edit for workflow validation */
+
 import { OPENAPI_SPEC } from "../src/openapi";
 import { parseArgs } from "util";
 import { resolve, dirname } from "path";
