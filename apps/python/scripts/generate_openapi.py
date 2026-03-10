@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Trivial edit for workflow test
 """Generate OpenAPI spec JSON from the server's Python spec definition.
 
 Usage:

@@ -1,6 +1,6 @@
 # Task 01: Pre-Push Frozen uv Run
 
-**Status:** 🟡 In Progress  
+**Status:** 🟢 Complete  
 **Goal:** Fix Lefthook uv.lock Regeneration  
 **Scope:** Pre-push hook behavior (Python only)
 
@@ -14,10 +14,16 @@ The pre-push hook runs `uv run` commands that can regenerate `apps/python/uv.loc
 
 ## Plan
 
-- [ ] Identify all pre-push `uv run` commands in `lefthook.yml`.
-- [ ] Add frozen/locked flags so `uv` cannot modify `uv.lock`.
-- [ ] Verify no `uv.lock` diff after running the pre-push hook.
-- [ ] Update goal/task scratchpads with results.
+- [x] Identify all pre-push `uv run` commands in `lefthook.yml`.
+- [x] Add frozen/locked flags so `uv` cannot modify `uv.lock`.
+- [x] Verify no `uv.lock` diff after running the pre-push hook.
+- [x] Update goal/task scratchpads with results.
+
+## Completed Work
+
+- Added a pre-commit `python-lock-sync` hook to run `uv lock` and stage `uv.lock` automatically when `pyproject.toml` changes.
+- Added `--frozen` to all pre-push `uv run` commands so hooks are read-only and fail if the lockfile is stale.
+- Verified `uv.lock` remains clean after pre-push runs.
 
 ---
 

@@ -1,6 +1,6 @@
 # Goal 48: Fix Lefthook uv.lock Regeneration
 
-**Status:** 🟡 In Progress  
+**Status:** 🟢 Complete  
 **Priority:** High  
 **Scope:** Fix pre-push hook behavior to prevent unintended `uv.lock` changes.
 
@@ -32,10 +32,10 @@
 
 ## Tasks
 
-- [ ] Task 01: Make pre-push uv commands lockfile-safe
-  - [ ] Update lefthook commands to run `uv` in frozen/locked mode.
-  - [ ] Verify pre-push does not touch `uv.lock`.
-  - [ ] Document the change in the task scratchpad.
+- [x] Task 01: Make pre-push uv commands lockfile-safe
+  - [x] Update lefthook commands to run `uv` in frozen/locked mode.
+  - [x] Verify pre-push does not touch `uv.lock`.
+  - [x] Document the change in the task scratchpad.
 
 ---
 
