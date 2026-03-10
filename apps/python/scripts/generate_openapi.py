@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Pure Python-only edit for workflow validation
 """Generate OpenAPI spec JSON from the server's Python spec definition.
 
 Usage:
