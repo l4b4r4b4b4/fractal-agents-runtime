@@ -65,18 +65,22 @@ spec:
             secretKeyRef:
               name: {{ .Values.existingSecret.name }}
               key: {{ .Values.existingSecret.keys.supabaseKey }}
+        {{- if .Values.existingSecret.keys.supabaseSecret }}
         - name: SUPABASE_SECRET
           valueFrom:
             secretKeyRef:
               name: {{ .Values.existingSecret.name }}
               key: {{ .Values.existingSecret.keys.supabaseSecret }}
               optional: true
+        {{- end }}
+        {{- if .Values.existingSecret.keys.supabaseJwtSecret }}
         - name: SUPABASE_JWT_SECRET
           valueFrom:
             secretKeyRef:
               name: {{ .Values.existingSecret.name }}
               key: {{ .Values.existingSecret.keys.supabaseJwtSecret }}
               optional: true
+        {{- end }}
         {{- else if .Values.secrets.create }}
         - name: SUPABASE_KEY
           valueFrom:

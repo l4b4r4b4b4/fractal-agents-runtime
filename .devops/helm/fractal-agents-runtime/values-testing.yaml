@@ -13,9 +13,11 @@
 
 runtime: python
 
+fullnameOverride: "robyn-runtime"
+
 image:
   repository: ghcr.io/l4b4r4b4b4/fractal-agents-runtime-python
-  tag: "development"
+  tag: "latest"
   pullPolicy: Always
 
 replicaCount: 1
@@ -26,14 +28,14 @@ existingSecret:
   keys:
     supabaseKey: "anonKey"
     supabaseSecret: "secret"
-    supabaseJwtSecret: "jwtSecret"
+    supabaseJwtSecret: ""
     # LLM keys not needed — using local vLLM
     openaiApiKey: ""
     anthropicApiKey: ""
     langchainApiKey: ""
     langfuseSecretKey: ""
     langfusePublicKey: ""
-    databaseUrl: "databaseUrl"
+    databaseUrl: ""
 
 # Do not create Helm-managed secrets — we use the existing Supabase secret
 secrets:
@@ -46,7 +48,7 @@ python:
   workers: 2
   devMode: true
   database:
-    url: ""  # provided via existingSecret
+    url: "" # provided via existingSecret
     poolMinSize: 1
     poolMaxSize: 5
     poolTimeout: 30
